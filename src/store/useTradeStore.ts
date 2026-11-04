@@ -135,14 +135,14 @@ export const useTradeStore = create<TradeStoreState>()(
               cash: resolvedCash,
               user: {
                 id: "Admin",
-                name: "관리자",
+                name: "총괄관리자",
                 role: "admin",
                 cash: resolvedCash,
               },
             });
             return {
               success: true,
-              message: "관리자(Admin) 계정으로 로그인되었습니다.",
+              message: "총괄관리자(Admin) 계정으로 로그인되었습니다.",
               role: "admin",
             };
           }
@@ -181,13 +181,13 @@ export const useTradeStore = create<TradeStoreState>()(
         if (trimmedId === "Admin" && password !== "Admin1234") {
           return {
             success: false,
-            message: "'Admin'은 예약된 관리자 아이디입니다.",
+            message: "'Admin'은 예약된 총괄관리자 아이디입니다.",
           };
         }
 
         const isAdmin = trimmedId === "Admin" && password === "Admin1234";
         const displayName = isAdmin
-          ? "관리자"
+          ? "총괄관리자"
           : name?.trim() || trimmedId;
 
         set({
@@ -195,6 +195,7 @@ export const useTradeStore = create<TradeStoreState>()(
           holdings: {},
           transactions: [],
           realizedPnL: 0,
+          players: NORMALIZED_INITIAL_PLAYERS,
           user: {
             id: isAdmin ? "Admin" : trimmedId,
             name: displayName,
@@ -234,8 +235,20 @@ export const useTradeStore = create<TradeStoreState>()(
         const base = roundToTen(
           newPlayer.basePrice ?? newPlayer.initialPrice ?? 10000
         );
+        const tier =
+          newPlayer.tier ??
+          (base >= 15500 ? "S" : base >= 13000 ? "A" : "B");
+        const totalShares =
+          newPlayer.totalShares ??
+          (tier === "S" ? 450 : tier === "A" ? 1000 : tier === "B" ? 2500 : 5000);
+        const availableShares =
+          newPlayer.availableShares ?? Math.round(totalShares * 0.45);
+
         const normalized: Player = {
           ...newPlayer,
+          tier,
+          totalShares,
+          availableShares,
           basePrice: base,
           initialPrice: base,
           currentPrice: clampToPriceLimit(newPlayer.currentPrice, base),
@@ -264,7 +277,6 @@ export const useTradeStore = create<TradeStoreState>()(
         );
 
         const updatedPlayers = players.map((player) => {
-          // Permanent basePrice reference
           const basePrice = roundToTen(
             player.basePrice ?? player.initialPrice ?? 10000
           );
@@ -288,7 +300,6 @@ export const useTradeStore = create<TradeStoreState>()(
           }
 
           // Event-driven price calculation:
-          // 1. Draw match event from position pool
           const pool = POSITION_EVENTS[player.position];
           const chosen = pool[Math.floor(Math.random() * pool.length)];
 
@@ -296,15 +307,11 @@ export const useTradeStore = create<TradeStoreState>()(
             (chosen.statEffect === "goal" || chosen.statEffect === "assist") &&
             Math.random() < 0.25;
 
-          // 2. Calculate change rate:
-          // - Special goal/assist event uses event's minRate ~ maxRate weight
-          // - Normal tick uses zero-mean fluctuation (Math.random() * 0.05 - 0.025) to prevent inflation drift
           const changeRate = isSpecialGoalOrAssist
             ? chosen.minRate +
               Math.random() * (chosen.maxRate - chosen.minRate)
             : Math.random() * 0.05 - 0.025;
 
-          // 3. Apply rate and clamp to ±30% price limit
           let nextPrice = Math.round(safeCurrentPrice * (1 + changeRate));
           nextPrice = clampToPriceLimit(nextPrice, basePrice);
 
@@ -328,7 +335,10 @@ export const useTradeStore = create<TradeStoreState>()(
             chosen.statEffect === "assist"
           ) {
             nextStats.assists += 1;
-          } else if (chosen.statEffect === "shot" && nextPrice > safeCurrentPrice) {
+          } else if (
+            chosen.statEffect === "shot" &&
+            nextPrice > safeCurrentPrice
+          ) {
             nextStats.shotsOnTarget += 1;
           } else if (
             chosen.statEffect === "keyPass" &&
@@ -404,9 +414,18 @@ export const useTradeStore = create<TradeStoreState>()(
             message: "로그인이 필요한 서비스입니다.",
           };
         }
+
         const player = players.find((p) => p.id === playerId);
         if (!player) {
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
+        }
+
+        const available = player.availableShares ?? 0;
+        if (available <= 0 || quantity > available) {
+          return {
+            success: false,
+            message: `시장에 남은 수량이 부족합니다 (잔여: ${available.toLocaleString()}주)`,
+          };
         }
 
         const executedPrice = roundToTen(player.currentPrice);
@@ -424,6 +443,16 @@ export const useTradeStore = create<TradeStoreState>()(
         const newQty = prevQty + quantity;
         const newAvg = roundToTen((prevInvested + totalCost) / newQty);
         const nextCash = roundToTen(cash - totalCost);
+
+        // Deduct availableShares from market liquidity
+        const updatedPlayers = players.map((p) =>
+          p.id === playerId
+            ? {
+                ...p,
+                availableShares: Math.max(0, p.availableShares - quantity),
+              }
+            : p
+        );
 
         const newTx: PointTransaction = {
           id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -446,6 +475,7 @@ export const useTradeStore = create<TradeStoreState>()(
         set({
           cash: nextCash,
           user: user ? { ...user, cash: nextCash } : null,
+          players: updatedPlayers,
           holdings: {
             ...holdings,
             [playerId]: {
@@ -480,6 +510,7 @@ export const useTradeStore = create<TradeStoreState>()(
             message: "로그인이 필요한 서비스입니다.",
           };
         }
+
         const player = players.find((p) => p.id === playerId);
         if (!player) {
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
@@ -511,6 +542,19 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         }
 
+        // Restore sold shares back to market liquidity (availableShares += quantity)
+        const updatedPlayers = players.map((p) =>
+          p.id === playerId
+            ? {
+                ...p,
+                availableShares: Math.min(
+                  p.totalShares,
+                  p.availableShares + quantity
+                ),
+              }
+            : p
+        );
+
         const nextCash = roundToTen(cash + totalProceeds);
 
         const newTx: PointTransaction = {
@@ -536,6 +580,7 @@ export const useTradeStore = create<TradeStoreState>()(
           cash: nextCash,
           realizedPnL: nextRealizedPnL,
           user: user ? { ...user, cash: nextCash } : null,
+          players: updatedPlayers,
           holdings: nextHoldings,
           transactions: [newTx, ...transactions].slice(0, 40),
         });
@@ -568,7 +613,6 @@ export const useTradeStore = create<TradeStoreState>()(
         }
 
         if (!target) {
-          // Prioritize held players so user immediately sees portfolio PnL surge, otherwise pick from players not yet at +30% cap
           const heldIds = Object.keys(holdings).filter(
             (id) => (holdings[id]?.quantity ?? 0) > 0
           );
@@ -590,7 +634,6 @@ export const useTradeStore = create<TradeStoreState>()(
         const capPrice = roundToTen(basePrice * 1.3);
         const prevPrice = clampToPriceLimit(target.currentPrice, basePrice);
 
-        // Spike by +11% ~ +14% (clamped to +30% upper limit)
         const spikeMultiplier = 1.11 + Math.random() * 0.03;
         let nextPrice = clampToPriceLimit(
           Math.round(prevPrice * spikeMultiplier),
@@ -634,7 +677,6 @@ export const useTradeStore = create<TradeStoreState>()(
           p.id === updatedPlayer.id ? updatedPlayer : p
         );
 
-        // Also update the match score & highlight text so match cards stay in sync
         const nextMatches = matches.map((m) => {
           if (m.id !== updatedPlayer.matchId) return m;
           const isHome =

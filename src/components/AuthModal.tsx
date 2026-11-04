@@ -97,7 +97,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
           </div>
         </div>
 
-        {/* Form Body with Enlarged Padding (px-8) */}
+        {/* Form Body with Enlarged Padding (px-8 py-6+) */}
         <div className="px-8 pt-6 pb-8 space-y-6">
           {/* Mode Switcher Tabs (LOGIN / SIGNUP) */}
           <div className="grid grid-cols-2 rounded-2xl bg-gray-100 p-1.5">
@@ -138,7 +138,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
             <div>
               <label
                 htmlFor="auth-user-id"
-                className="block text-base font-bold text-gray-800 mb-2"
+                className="block text-base font-semibold text-gray-800 mb-2"
               >
                 아이디
               </label>
@@ -162,7 +162,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
             <div>
               <label
                 htmlFor="auth-user-pw"
-                className="block text-base font-bold text-gray-800 mb-2"
+                className="block text-base font-semibold text-gray-800 mb-2"
               >
                 비밀번호
               </label>

@@ -673,6 +673,28 @@ export function buildTeamLineupForMatch(
       basePrice
     );
 
+    const tier: Player["tier"] = isBench
+      ? "C"
+      : basePrice >= 15500
+      ? "S"
+      : basePrice >= 13000
+      ? "A"
+      : "B";
+    const totalShares =
+      tier === "S"
+        ? 450
+        : tier === "A"
+        ? 1000
+        : tier === "B"
+        ? 2500
+        : 5000;
+    const availableShares = Math.max(
+      25,
+      Math.round(
+        totalShares * (0.22 + (((teamSeed + slotIdx * 13) % 55) / 100))
+      )
+    );
+
     return {
       id: synId,
       name: koName,
@@ -684,6 +706,9 @@ export function buildTeamLineupForMatch(
       teamColor: activeTeam.color,
       position: slot.role,
       backNumber,
+      tier,
+      totalShares,
+      availableShares,
       basePrice,
       initialPrice: basePrice,
       currentPrice,

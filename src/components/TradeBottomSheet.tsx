@@ -636,6 +636,17 @@ export default function TradeBottomSheet({
   const diffFromBase = currentPrice - basePrice;
   const pctFromBase = basePrice > 0 ? (diffFromBase / basePrice) * 100 : 0;
 
+  // Market supply & liquidity metrics
+  const totalShares = player.totalShares ?? 1000;
+  const availableShares = Math.max(0, player.availableShares ?? totalShares);
+  const playerTier = player.tier ?? "A";
+  const isSoldOut = availableShares === 0;
+  const remainPct =
+    totalShares > 0
+      ? Math.min(100, Math.max(0, Math.round((availableShares / totalShares) * 100)))
+      : 0;
+  const isLowStock = !isSoldOut && remainPct <= 15;
+
   // Unrealized PnL for owned holdings
   const unrealizedPnL =
     ownedQty > 0 ? roundToTen((currentPrice - avgBuyPrice) * ownedQty) : 0;
@@ -659,8 +670,9 @@ export default function TradeBottomSheet({
   const timelineEvents = buildPlayerEventTimeline(player);
   const fotMobStats = buildFotMobStats(player);
 
-  // Max purchasable or sellable quantity
-  const maxBuyQty = Math.max(0, Math.floor(cash / currentPrice));
+  // Max purchasable or sellable quantity (capped by availableShares on BUY)
+  const affordableQty = user ? Math.max(0, Math.floor(cash / currentPrice)) : availableShares;
+  const maxBuyQty = Math.min(availableShares, affordableQty);
   const maxSellQty = ownedQty;
   const maxQty = tradeType === "BUY" ? maxBuyQty : maxSellQty;
 
@@ -674,17 +686,26 @@ export default function TradeBottomSheet({
       ? ownedQty + quantity
       : Math.max(0, ownedQty - quantity);
 
-  // Allow clicking confirm when unauthenticated so Auth Guard can intercept & open AuthModal
-  const canExecute = !user
+  const isBuySoldOut = tradeType === "BUY" && isSoldOut;
+
+  // Allow clicking confirm when unauthenticated (unless sold out on BUY) so Auth Guard can intercept & open AuthModal
+  const canExecute = isBuySoldOut
+    ? false
+    : !user
     ? quantity >= 1
     : quantity >= 1 &&
-      (tradeType === "BUY" ? totalAmount <= cash : quantity <= ownedQty);
+      (tradeType === "BUY"
+        ? totalAmount <= cash && quantity <= availableShares
+        : quantity <= ownedQty);
 
   const handleAdjust = (delta: number) => {
     setFeedback(null);
     setQuantity((prev) => {
       const next = prev + delta;
       if (next < 1) return 1;
+      if (tradeType === "BUY" && availableShares > 0 && next > availableShares) {
+        return availableShares;
+      }
       if (maxQty > 0 && next > maxQty) return maxQty;
       return next;
     });
@@ -846,12 +867,23 @@ export default function TradeBottomSheet({
         <div className="shrink-0 border-b border-gray-100 px-5 pb-2.5 pt-1">
           <div className="flex items-start justify-between gap-2">
             <div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="rounded-md bg-gray-900 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white">
                   #{player.backNumber}
                 </span>
                 <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-700">
                   {player.position}
+                </span>
+                <span
+                  className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] font-black ${
+                    playerTier === "S"
+                      ? "bg-amber-100 text-amber-800 border border-amber-300"
+                      : playerTier === "A"
+                      ? "bg-emerald-50 text-[#00985f] border border-emerald-200"
+                      : "bg-gray-100 text-gray-600"
+                  }`}
+                >
+                  {playerTier}티어
                 </span>
                 <span className="text-xs font-semibold text-gray-500">
                   {player.teamName}
@@ -1245,43 +1277,64 @@ export default function TradeBottomSheet({
           onSubmit={handleSubmit}
           className="shrink-0 border-t border-gray-200/80 bg-white px-5 pt-2.5 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-2"
         >
-          {/* Slim '내 보유 현황' Bar directly above Order Quantity Selector */}
-          <div className="flex h-9 items-center justify-between rounded-lg bg-gray-50 border border-gray-100 px-3 py-1.5">
-            {ownedQty > 0 ? (
-              <div className="flex w-full items-center justify-between text-[11px] font-medium text-gray-600">
-                <span>
-                  내 보유:{" "}
-                  <strong className="font-mono font-extrabold text-gray-900">
-                    {ownedQty}주
-                  </strong>
+          {/* Market Supply & Remaining Shares Liquidity Progress Bar */}
+          <div className="rounded-xl bg-gray-50 border border-gray-100 px-3 py-2 space-y-1.5">
+            <div className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-gray-700">
+                  시장 잔여:
                 </span>
-                <span className="text-gray-300">|</span>
-                <span>
-                  평균단가:{" "}
-                  <strong className="font-mono font-bold text-gray-800">
-                    {avgBuyPrice.toLocaleString()} P
-                  </strong>
-                </span>
-                <span className="text-gray-300">|</span>
-                <span>
-                  평가손익:{" "}
-                  <strong
-                    className={`font-mono font-extrabold ${
-                      unrealizedPnL >= 0 ? "text-[#00985f]" : "text-blue-600"
-                    }`}
-                  >
-                    {unrealizedPnL >= 0 ? "+" : ""}
-                    {unrealizedPnL.toLocaleString()} P (
-                    {unrealizedPnL >= 0 ? "+" : ""}
-                    {unrealizedPct.toFixed(1)}%)
-                  </strong>
+                <span
+                  className={`font-mono font-extrabold ${
+                    isSoldOut
+                      ? "text-rose-600"
+                      : isLowStock
+                      ? "text-amber-600"
+                      : "text-[#00985f]"
+                  }`}
+                >
+                  {availableShares.toLocaleString()}주 /{" "}
+                  {totalShares.toLocaleString()}주
                 </span>
               </div>
-            ) : (
-              <span className="text-xs font-medium text-gray-400">
-                현재 미보유 종목입니다 (첫 매수 가능)
-              </span>
-            )}
+
+              <div className="flex items-center gap-1.5">
+                {isSoldOut ? (
+                  <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-black text-rose-600">
+                    품절
+                  </span>
+                ) : isLowStock ? (
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-700">
+                    품절 임박 ({remainPct}%)
+                  </span>
+                ) : (
+                  <span className="font-mono text-[10px] font-semibold text-gray-400">
+                    유통 잔여 {remainPct}%
+                  </span>
+                )}
+
+                {ownedQty > 0 && (
+                  <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-[#00985f] border border-emerald-200/60">
+                    내 보유 {ownedQty}주 ({unrealizedPnL >= 0 ? "+" : ""}
+                    {unrealizedPct.toFixed(1)}%)
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Liquidity Progress Bar */}
+            <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200/80">
+              <div
+                style={{ width: `${remainPct}%` }}
+                className={`h-full rounded-full transition-all duration-300 ${
+                  isSoldOut
+                    ? "bg-rose-500"
+                    : isLowStock
+                    ? "bg-amber-500"
+                    : "bg-[#00985f]"
+                }`}
+              />
+            </div>
           </div>
 
           {/* Compact Resized Quantity Selector Row */}
@@ -1291,11 +1344,13 @@ export default function TradeBottomSheet({
                 주문 수량 선택
               </span>
               <span className="text-[11px] text-gray-500">
-                {tradeType === "BUY" ? "주문 가능" : "보유 수량"}:{" "}
-                <strong className="font-mono text-gray-900">{maxQty}주</strong>
+                {tradeType === "BUY" ? "매수 가능" : "보유 수량"}:{" "}
+                <strong className="font-mono text-gray-900">
+                  {maxQty.toLocaleString()}주
+                </strong>
                 {ownedQty > 0 && tradeType === "BUY" && (
                   <span className="ml-1 text-gray-400">
-                    (보유 {ownedQty}주)
+                    (내 보유 {ownedQty}주)
                   </span>
                 )}
               </span>
@@ -1306,7 +1361,7 @@ export default function TradeBottomSheet({
               <button
                 type="button"
                 onClick={() => handleAdjust(-1)}
-                disabled={quantity <= 1}
+                disabled={isBuySoldOut || quantity <= 1}
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-700 transition hover:bg-gray-100 active:scale-95 disabled:opacity-40"
               >
                 <Minus className="h-3.5 w-3.5" />
@@ -1317,13 +1372,14 @@ export default function TradeBottomSheet({
                   type="number"
                   min={1}
                   step={1}
+                  disabled={isBuySoldOut}
                   value={quantity}
                   onChange={(e) => {
                     const v = parseInt(e.target.value, 10);
                     setQuantity(Number.isNaN(v) || v < 1 ? 1 : v);
                     setFeedback(null);
                   }}
-                  className="h-9 w-full rounded-xl border border-gray-200 bg-[#f8f9fa] pr-5 pl-2 text-center font-mono text-sm font-black text-gray-900 focus:border-[#00985f] focus:bg-white focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  className="h-9 w-full rounded-xl border border-gray-200 bg-[#f8f9fa] pr-5 pl-2 text-center font-mono text-sm font-black text-gray-900 focus:border-[#00985f] focus:bg-white focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
                 <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-bold text-gray-400">
                   주
@@ -1333,7 +1389,8 @@ export default function TradeBottomSheet({
               <button
                 type="button"
                 onClick={() => handleAdjust(1)}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-700 transition hover:bg-gray-100 active:scale-95"
+                disabled={isBuySoldOut || (maxQty > 0 && quantity >= maxQty)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-700 transition hover:bg-gray-100 active:scale-95 disabled:opacity-40"
               >
                 <Plus className="h-3.5 w-3.5" />
               </button>
@@ -1341,7 +1398,8 @@ export default function TradeBottomSheet({
               <button
                 type="button"
                 onClick={() => handleAdjust(5)}
-                className="h-9 rounded-xl bg-[#f1f3f5] px-2.5 font-mono text-xs font-bold text-gray-700 transition hover:bg-gray-200 active:scale-95"
+                disabled={isBuySoldOut || (maxQty > 0 && quantity >= maxQty)}
+                className="h-9 rounded-xl bg-[#f1f3f5] px-2.5 font-mono text-xs font-bold text-gray-700 transition hover:bg-gray-200 active:scale-95 disabled:opacity-40"
               >
                 +5
               </button>
@@ -1349,7 +1407,7 @@ export default function TradeBottomSheet({
               <button
                 type="button"
                 onClick={handleSetMax}
-                disabled={maxQty <= 0}
+                disabled={isBuySoldOut || maxQty <= 0}
                 className="h-9 rounded-xl bg-emerald-50 border border-emerald-200 px-2.5 font-mono text-xs font-extrabold text-[#00985f] transition hover:bg-emerald-100 active:scale-95 disabled:opacity-40"
               >
                 MAX
@@ -1409,7 +1467,7 @@ export default function TradeBottomSheet({
             </div>
           )}
 
-          {/* [매수/매도 확정 버튼] with active:scale-95 transition-transform */}
+          {/* [매수/매도 확정 버튼] with Sold-out Guard & Auth Guard */}
           <button
             type="submit"
             disabled={!canExecute}
@@ -1421,7 +1479,9 @@ export default function TradeBottomSheet({
                 : "bg-blue-600 hover:bg-blue-700"
             }`}
           >
-            {tradeType === "BUY"
+            {isBuySoldOut
+              ? "매도 물량 대기 중 (품절)"
+              : tradeType === "BUY"
               ? `${player.name} ${quantity}주 매수 확정`
               : `${player.name} ${quantity}주 매도 확정`}
           </button>

@@ -186,7 +186,7 @@ export default function TopAssetHeader({
             </div>
             <div>
               <p className="text-sm font-extrabold text-gray-700">
-                로그인하여 자산 확인
+                🔒 로그인하여 자산 확인
               </p>
               <p className="mt-0.5 text-[11px] font-medium text-gray-500">
                 보유 포인트 및 실시간 수익률은 로그인 후 표시됩니다

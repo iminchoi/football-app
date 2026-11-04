@@ -1,5 +1,7 @@
 export type Position = "FW" | "MF" | "DF" | "GK";
 
+export type PlayerTier = "S" | "A" | "B" | "C";
+
 export type EventSentiment = "positive" | "negative" | "neutral";
 
 export type MatchStatus = "LIVE" | "UPCOMING" | "FT";
@@ -35,6 +37,9 @@ export interface Player {
   teamColor: string; // Hex color for team badge
   position: Position;
   backNumber: number;
+  tier: PlayerTier;
+  totalShares: number; // 총 발행 주식 수 (S티어 300~500, A티어 800~1200, B티어 2000~3000, C티어 5000)
+  availableShares: number; // 시장에서 즉시 매수 가능한 잔여 주수
   basePrice?: number; // Permanent initial reference price for ±30% cap/floor
   initialPrice: number;
   currentPrice: number;
