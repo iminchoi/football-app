@@ -26,6 +26,12 @@ export interface PricePoint {
   price: number;
 }
 
+export interface PersistedPlayerPrice {
+  currentPrice: number;
+  previousPrice: number;
+  priceHistory: PricePoint[];
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -38,8 +44,8 @@ export interface Player {
   position: Position;
   backNumber: number;
   tier: PlayerTier;
-  totalShares: number; // 총 발행 주식 수 (S티어 300~500, A티어 800~1200, B티어 2000~3000, C티어 5000)
-  availableShares: number; // 시장에서 즉시 매수 가능한 잔여 주수
+  totalShares: number; // 총 발행 주식 수 (S티어 500, A티어 1000, B티어 2500, C티어 5000)
+  marketSupply: number; // 초기 시장 잔여 한도 (정적 기준값)
   basePrice?: number; // Permanent initial reference price for ±30% cap/floor
   initialPrice: number;
   currentPrice: number;

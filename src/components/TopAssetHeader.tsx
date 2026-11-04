@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   TrendingUp,
   TrendingDown,
@@ -15,8 +15,47 @@ import { useTradeStore, roundToTen } from "@/store/useTradeStore";
 import { INITIAL_CASH } from "@/data/dummyData";
 
 interface TopAssetHeaderProps {
-  countdown: number;
+  countdown?: number;
   onOpenAuthModal: () => void;
+}
+
+/**
+ * 1초 주기 타이머 상태를 하위 뱃지 컴포넌트로 격리하여
+ * 상위 레이아웃(HomePage, TopAssetHeader, 각 탭 뷰)의 1초 주기 불필요한 전체 리렌더링을 완전히 차단합니다.
+ */
+function MarketCountdownBadge({
+  externalCountdown,
+}: {
+  externalCountdown?: number;
+}) {
+  const tickMarket = useTradeStore((s) => s.tickMarket);
+  const [countdown, setCountdown] = useState<number>(externalCountdown ?? 5);
+
+  useEffect(() => {
+    if (externalCountdown !== undefined) {
+      setCountdown(externalCountdown);
+      return;
+    }
+
+    let remaining = 5;
+    const timer = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        tickMarket();
+        remaining = Math.floor(Math.random() * 6) + 5;
+      }
+      setCountdown(remaining);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [externalCountdown, tickMarket]);
+
+  return (
+    <span className="ml-0.5 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-[#00985f] border border-emerald-200/60 shrink-0">
+      <span className="h-1.5 w-1.5 rounded-full bg-[#00985f] animate-pulse" />
+      {countdown}s
+    </span>
+  );
 }
 
 export default function TopAssetHeader({
@@ -34,12 +73,14 @@ export default function TopAssetHeader({
   let holdingsValue = 0;
   let holdingsInvested = 0;
 
-  for (const h of Object.values(holdings)) {
-    if (h.quantity <= 0) continue;
-    const p = players.find((pl) => pl.id === h.playerId);
-    if (!p) continue;
-    holdingsValue += roundToTen(p.currentPrice) * h.quantity;
-    holdingsInvested += roundToTen(h.avgBuyPrice) * h.quantity;
+  if (user) {
+    for (const h of Object.values(holdings)) {
+      if (h.quantity <= 0) continue;
+      const p = players.find((pl) => pl.id === h.playerId);
+      if (!p) continue;
+      holdingsValue += roundToTen(p.currentPrice) * h.quantity;
+      holdingsInvested += roundToTen(h.avgBuyPrice) * h.quantity;
+    }
   }
 
   const totalAssets = roundToTen(cash + holdingsValue);
@@ -52,7 +93,7 @@ export default function TopAssetHeader({
 
   return (
     <header className="sticky top-0 z-30 bg-white border-b border-gray-200/80 px-4 pt-3 pb-3">
-      {/* Row 1: FotMob-inspired Brand Header + Live Pulse + Right Auth/Profile Area */}
+      {/* Row 1: FotMob-inspired Brand Header + Isolated Live Pulse + Right Auth/Profile Area */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#00985f] text-white font-black text-sm tracking-tighter shadow-sm">
@@ -61,10 +102,7 @@ export default function TopAssetHeader({
           <span className="text-[17px] font-extrabold tracking-tight text-gray-900">
             Pitch<span className="text-[#00985f]">Trade</span>
           </span>
-          <span className="ml-0.5 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-[#00985f] border border-emerald-200/60 shrink-0">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#00985f] animate-pulse" />
-            {countdown}s
-          </span>
+          <MarketCountdownBadge externalCountdown={countdown} />
         </div>
 
         {/* Right: [로그인 / 프로필] 영역 */}

@@ -18,7 +18,9 @@ interface MarketChartTabViewProps {
 export default function MarketChartTabView({
   onSelectPlayerTrade,
 }: MarketChartTabViewProps) {
-  const { players, holdings } = useTradeStore();
+  const user = useTradeStore((s) => s.user);
+  const players = useTradeStore((s) => s.players);
+  const holdings = useTradeStore((s) => s.holdings);
 
   const [selectedPlayerId, setSelectedPlayerId] = useState<string>(
     players[0]?.id ?? "p-son"
@@ -336,7 +338,7 @@ export default function MarketChartTabView({
             const pct = ((diff / player.initialPrice) * 100).toFixed(2);
             const isUp = diff > 0;
             const isDown = diff < 0;
-            const holding = holdings[player.id];
+            const holding = user ? holdings[player.id] : undefined;
 
             return (
               <div
@@ -384,7 +386,7 @@ export default function MarketChartTabView({
                     </div>
                     <p className="text-[11px] text-gray-400 truncate">
                       평점 {player.stats.rating.toFixed(1)} ·{" "}
-                      {player. stats.goals}골 {player.stats.assists}도움
+                      {player.stats.goals}골 {player.stats.assists}도움
                     </p>
                   </div>
                 </div>

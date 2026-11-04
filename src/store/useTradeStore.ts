@@ -9,6 +9,7 @@ import {
   BottomTab,
   UserSession,
   UserRole,
+  PersistedPlayerPrice,
 } from "@/types";
 import {
   INITIAL_CASH,
@@ -16,6 +17,9 @@ import {
   INITIAL_PLAYERS,
   POSITION_EVENTS,
 } from "@/data/dummyData";
+import { getTierConfig, getAvailableShares } from "@/utils/tier";
+
+export { getAvailableShares };
 
 export interface AuthActionResult {
   success: boolean;
@@ -43,6 +47,7 @@ interface TradeStoreState {
   realizedPnL: number;
   matches: Match[];
   players: Player[];
+  playerPrices: Record<string, PersistedPlayerPrice>;
   holdings: Record<string, Holding>;
   transactions: PointTransaction[];
   selectedDate: DateKey;
@@ -78,14 +83,18 @@ export const clampToPriceLimit = (price: number, basePrice: number): number => {
   return Math.max(floorPrice, Math.min(capPrice, rounded));
 };
 
-// Normalize initial players so basePrice is permanently preserved and prices are 10-unit integers
+// Normalize initial players using getTierConfig(basePrice) as Single Source of Truth
 const NORMALIZED_INITIAL_PLAYERS: Player[] = INITIAL_PLAYERS.map((p) => {
   const basePrice = roundToTen(p.basePrice ?? p.initialPrice);
+  const tierCfg = getTierConfig(basePrice);
   const currentPrice = clampToPriceLimit(p.currentPrice, basePrice);
   const previousPrice = clampToPriceLimit(p.previousPrice, basePrice);
 
   return {
     ...p,
+    tier: p.tier ?? tierCfg.tier,
+    totalShares: p.totalShares ?? tierCfg.totalShares,
+    marketSupply: p.marketSupply ?? tierCfg.marketSupply,
     basePrice,
     initialPrice: basePrice,
     currentPrice,
@@ -97,6 +106,43 @@ const NORMALIZED_INITIAL_PLAYERS: Player[] = INITIAL_PLAYERS.map((p) => {
   };
 });
 
+// Overlay persisted playerPrices onto base players list
+function applyPersistedPrices(
+  basePlayers: Player[],
+  playerPrices: Record<string, PersistedPlayerPrice>
+): Player[] {
+  if (!playerPrices || Object.keys(playerPrices).length === 0) {
+    return basePlayers;
+  }
+
+  return basePlayers.map((player) => {
+    const saved = playerPrices[player.id];
+    if (!saved) return player;
+
+    const basePrice = roundToTen(
+      player.basePrice ?? player.initialPrice ?? 10000
+    );
+    const currentPrice = clampToPriceLimit(saved.currentPrice, basePrice);
+    const previousPrice = clampToPriceLimit(saved.previousPrice, basePrice);
+    const priceHistory =
+      Array.isArray(saved.priceHistory) && saved.priceHistory.length > 0
+        ? saved.priceHistory.map((pt) => ({
+            timeLabel: pt.timeLabel,
+            price: clampToPriceLimit(pt.price, basePrice),
+          }))
+        : player.priceHistory;
+
+    return {
+      ...player,
+      basePrice,
+      initialPrice: basePrice,
+      currentPrice,
+      previousPrice,
+      priceHistory,
+    };
+  });
+}
+
 export const useTradeStore = create<TradeStoreState>()(
   persist(
     (set, get) => ({
@@ -105,6 +151,7 @@ export const useTradeStore = create<TradeStoreState>()(
       realizedPnL: 0,
       matches: INITIAL_MATCHES,
       players: NORMALIZED_INITIAL_PLAYERS,
+      playerPrices: {},
       holdings: {},
       transactions: [],
       selectedDate: "TODAY",
@@ -121,10 +168,11 @@ export const useTradeStore = create<TradeStoreState>()(
         }
 
         const state = get();
-        const hasActivePortfolio =
+        const hasPersistedSessionState =
+          state.cash !== INITIAL_CASH ||
           Object.values(state.holdings).some((h) => h.quantity > 0) ||
           state.transactions.length > 0;
-        const resolvedCash = hasActivePortfolio
+        const resolvedCash = hasPersistedSessionState
           ? roundToTen(state.cash)
           : INITIAL_CASH;
 
@@ -195,6 +243,7 @@ export const useTradeStore = create<TradeStoreState>()(
           holdings: {},
           transactions: [],
           realizedPnL: 0,
+          playerPrices: {},
           players: NORMALIZED_INITIAL_PLAYERS,
           user: {
             id: isAdmin ? "Admin" : trimmedId,
@@ -231,38 +280,61 @@ export const useTradeStore = create<TradeStoreState>()(
       },
 
       ensurePlayerInStore: (newPlayer) => {
-        const { players } = get();
-        const base = roundToTen(
-          newPlayer.basePrice ?? newPlayer.initialPrice ?? 10000
-        );
-        const tier =
-          newPlayer.tier ??
-          (base >= 15500 ? "S" : base >= 13000 ? "A" : "B");
-        const totalShares =
-          newPlayer.totalShares ??
-          (tier === "S" ? 450 : tier === "A" ? 1000 : tier === "B" ? 2500 : 5000);
-        const availableShares =
-          newPlayer.availableShares ?? Math.round(totalShares * 0.45);
-
-        const normalized: Player = {
-          ...newPlayer,
-          tier,
-          totalShares,
-          availableShares,
-          basePrice: base,
-          initialPrice: base,
-          currentPrice: clampToPriceLimit(newPlayer.currentPrice, base),
-          previousPrice: clampToPriceLimit(newPlayer.previousPrice, base),
-        };
+        const { players, playerPrices } = get();
         const existingIdx = players.findIndex((p) => p.id === newPlayer.id);
         if (existingIdx !== -1) {
           return;
         }
-        set({ players: [...players, normalized] });
+
+        const base = roundToTen(
+          newPlayer.basePrice ?? newPlayer.initialPrice ?? 10000
+        );
+        const tierCfg = getTierConfig(base);
+        const savedPrice = playerPrices[newPlayer.id];
+
+        const currentPrice = clampToPriceLimit(
+          savedPrice?.currentPrice ?? newPlayer.currentPrice,
+          base
+        );
+        const previousPrice = clampToPriceLimit(
+          savedPrice?.previousPrice ?? newPlayer.previousPrice,
+          base
+        );
+        const priceHistory =
+          savedPrice?.priceHistory && savedPrice.priceHistory.length > 0
+            ? savedPrice.priceHistory.map((pt) => ({
+                timeLabel: pt.timeLabel,
+                price: clampToPriceLimit(pt.price, base),
+              }))
+            : newPlayer.priceHistory;
+
+        const normalized: Player = {
+          ...newPlayer,
+          tier: newPlayer.tier ?? tierCfg.tier,
+          totalShares: newPlayer.totalShares ?? tierCfg.totalShares,
+          marketSupply: newPlayer.marketSupply ?? tierCfg.marketSupply,
+          basePrice: base,
+          initialPrice: base,
+          currentPrice,
+          previousPrice,
+          priceHistory,
+        };
+
+        set({
+          players: [...players, normalized],
+          playerPrices: {
+            ...playerPrices,
+            [normalized.id]: {
+              currentPrice: normalized.currentPrice,
+              previousPrice: normalized.previousPrice,
+              priceHistory: normalized.priceHistory,
+            },
+          },
+        });
       },
 
       tickMarket: () => {
-        const { matches, players } = get();
+        const { matches, players, playerPrices } = get();
 
         const updatedMatches = matches.map((m) => {
           const isMatchLive =
@@ -275,6 +347,10 @@ export const useTradeStore = create<TradeStoreState>()(
         const liveMatchMap = new Map(
           updatedMatches.map((m) => [m.id, m] as const)
         );
+
+        const nextPlayerPrices: Record<string, PersistedPlayerPrice> = {
+          ...playerPrices,
+        };
 
         const updatedPlayers = players.map((player) => {
           const basePrice = roundToTen(
@@ -299,7 +375,8 @@ export const useTradeStore = create<TradeStoreState>()(
             };
           }
 
-          // Event-driven price calculation:
+          // Event-driven price calculation with Single Source of Truth tier config (Wonderkid Rule):
+          const tierCfg = getTierConfig(basePrice);
           const pool = POSITION_EVENTS[player.position];
           const chosen = pool[Math.floor(Math.random() * pool.length)];
 
@@ -307,12 +384,15 @@ export const useTradeStore = create<TradeStoreState>()(
             (chosen.statEffect === "goal" || chosen.statEffect === "assist") &&
             Math.random() < 0.25;
 
-          const changeRate = isSpecialGoalOrAssist
+          // Mean of natural fluctuation is strictly 0% (Math.random() * 0.05 - 0.025)
+          // Both special events and natural ticks scale by tier volatilityMultiplier (S: 1.2x ~ C: 2.2x)
+          const baseRate = isSpecialGoalOrAssist
             ? chosen.minRate +
               Math.random() * (chosen.maxRate - chosen.minRate)
             : Math.random() * 0.05 - 0.025;
+          const rawRate = baseRate * tierCfg.volatilityMultiplier;
 
-          let nextPrice = Math.round(safeCurrentPrice * (1 + changeRate));
+          let nextPrice = Math.round(safeCurrentPrice * (1 + rawRate));
           nextPrice = clampToPriceLimit(nextPrice, basePrice);
 
           if (nextPrice === safeCurrentPrice) {
@@ -368,16 +448,24 @@ export const useTradeStore = create<TradeStoreState>()(
               : "🔄 수비 대형 유지 및 볼 순환"
             : chosen.text;
 
+          const nextHistory = [
+            ...player.priceHistory.slice(-9),
+            { timeLabel, price: nextPrice },
+          ];
+
+          nextPlayerPrices[player.id] = {
+            currentPrice: nextPrice,
+            previousPrice: safeCurrentPrice,
+            priceHistory: nextHistory,
+          };
+
           return {
             ...player,
             basePrice,
             initialPrice: basePrice,
             previousPrice: safeCurrentPrice,
             currentPrice: nextPrice,
-            priceHistory: [
-              ...player.priceHistory.slice(-9),
-              { timeLabel, price: nextPrice },
-            ],
+            priceHistory: nextHistory,
             lastEvent: {
               text: displayEventText,
               sentiment: (
@@ -396,6 +484,7 @@ export const useTradeStore = create<TradeStoreState>()(
         set({
           matches: updatedMatches,
           players: updatedPlayers,
+          playerPrices: nextPlayerPrices,
         });
       },
 
@@ -420,11 +509,15 @@ export const useTradeStore = create<TradeStoreState>()(
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
         }
 
-        const available = player.availableShares ?? 0;
-        if (available <= 0 || quantity > available) {
+        // Dynamic remaining supply calculation: marketSupply - current holdings
+        const availableShares = Math.max(
+          0,
+          player.marketSupply - (holdings[player.id]?.quantity ?? 0)
+        );
+        if (availableShares <= 0 || quantity > availableShares) {
           return {
             success: false,
-            message: `시장에 남은 수량이 부족합니다 (잔여: ${available.toLocaleString()}주)`,
+            message: `시장에 남은 수량이 부족합니다 (잔여: ${availableShares.toLocaleString()}주)`,
           };
         }
 
@@ -443,16 +536,6 @@ export const useTradeStore = create<TradeStoreState>()(
         const newQty = prevQty + quantity;
         const newAvg = roundToTen((prevInvested + totalCost) / newQty);
         const nextCash = roundToTen(cash - totalCost);
-
-        // Deduct availableShares from market liquidity
-        const updatedPlayers = players.map((p) =>
-          p.id === playerId
-            ? {
-                ...p,
-                availableShares: Math.max(0, p.availableShares - quantity),
-              }
-            : p
-        );
 
         const newTx: PointTransaction = {
           id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -475,7 +558,6 @@ export const useTradeStore = create<TradeStoreState>()(
         set({
           cash: nextCash,
           user: user ? { ...user, cash: nextCash } : null,
-          players: updatedPlayers,
           holdings: {
             ...holdings,
             [playerId]: {
@@ -542,19 +624,6 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         }
 
-        // Restore sold shares back to market liquidity (availableShares += quantity)
-        const updatedPlayers = players.map((p) =>
-          p.id === playerId
-            ? {
-                ...p,
-                availableShares: Math.min(
-                  p.totalShares,
-                  p.availableShares + quantity
-                ),
-              }
-            : p
-        );
-
         const nextCash = roundToTen(cash + totalProceeds);
 
         const newTx: PointTransaction = {
@@ -580,7 +649,6 @@ export const useTradeStore = create<TradeStoreState>()(
           cash: nextCash,
           realizedPnL: nextRealizedPnL,
           user: user ? { ...user, cash: nextCash } : null,
-          players: updatedPlayers,
           holdings: nextHoldings,
           transactions: [newTx, ...transactions].slice(0, 40),
         });
@@ -604,7 +672,7 @@ export const useTradeStore = create<TradeStoreState>()(
       },
 
       triggerForceGoalEvent: (targetPlayerId) => {
-        const { players, holdings, matches } = get();
+        const { players, playerPrices, holdings, matches } = get();
         if (players.length === 0) return null;
 
         let target: Player | undefined;
@@ -631,10 +699,13 @@ export const useTradeStore = create<TradeStoreState>()(
         const basePrice = roundToTen(
           target.basePrice ?? target.initialPrice ?? 10000
         );
+        const tierCfg = getTierConfig(basePrice);
         const capPrice = roundToTen(basePrice * 1.3);
         const prevPrice = clampToPriceLimit(target.currentPrice, basePrice);
 
-        const spikeMultiplier = 1.11 + Math.random() * 0.03;
+        // Apply Wonderkid volatilityMultiplier (S: 1.2x ~ C: 2.2x) to forced goal event
+        const baseGoalRate = 0.065 + Math.random() * 0.02;
+        const spikeMultiplier = 1 + baseGoalRate * tierCfg.volatilityMultiplier;
         let nextPrice = clampToPriceLimit(
           Math.round(prevPrice * spikeMultiplier),
           basePrice
@@ -648,16 +719,18 @@ export const useTradeStore = create<TradeStoreState>()(
         const currentMinute = match?.minute ?? 77;
         const timeLabel = `${currentMinute}'`;
 
+        const nextHistory = [
+          ...target.priceHistory.slice(-9),
+          { timeLabel, price: nextPrice },
+        ];
+
         const updatedPlayer: Player = {
           ...target,
           basePrice,
           initialPrice: basePrice,
           previousPrice: prevPrice,
           currentPrice: nextPrice,
-          priceHistory: [
-            ...target.priceHistory.slice(-9),
-            { timeLabel, price: nextPrice },
-          ],
+          priceHistory: nextHistory,
           lastEvent: {
             text: "⚽ [GOAL] 환상적인 원더골 작렬!! (시세 급등)",
             sentiment: "positive",
@@ -676,6 +749,15 @@ export const useTradeStore = create<TradeStoreState>()(
         const nextPlayers = players.map((p) =>
           p.id === updatedPlayer.id ? updatedPlayer : p
         );
+
+        const nextPlayerPrices: Record<string, PersistedPlayerPrice> = {
+          ...playerPrices,
+          [updatedPlayer.id]: {
+            currentPrice: nextPrice,
+            previousPrice: prevPrice,
+            priceHistory: nextHistory,
+          },
+        };
 
         const nextMatches = matches.map((m) => {
           if (m.id !== updatedPlayer.matchId) return m;
@@ -698,7 +780,11 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         });
 
-        set({ players: nextPlayers, matches: nextMatches });
+        set({
+          players: nextPlayers,
+          playerPrices: nextPlayerPrices,
+          matches: nextMatches,
+        });
 
         const ratePct =
           prevPrice > 0 ? ((nextPrice - prevPrice) / prevPrice) * 100 : 0;
@@ -717,6 +803,7 @@ export const useTradeStore = create<TradeStoreState>()(
         if (typeof window !== "undefined") {
           window.localStorage.removeItem("pitch-trade-storage-v1");
           window.localStorage.removeItem("fotmob-pitchtrade-storage-v2");
+          window.localStorage.removeItem("fotmob-pitchtrade-storage-v3");
         }
         set({
           cash: INITIAL_CASH,
@@ -724,6 +811,7 @@ export const useTradeStore = create<TradeStoreState>()(
           user: user ? { ...user, cash: INITIAL_CASH } : null,
           matches: INITIAL_MATCHES,
           players: NORMALIZED_INITIAL_PLAYERS,
+          playerPrices: {},
           holdings: {},
           transactions: [],
           selectedDate: "TODAY",
@@ -734,24 +822,41 @@ export const useTradeStore = create<TradeStoreState>()(
     {
       name: "fotmob-pitchtrade-storage-v3",
       storage: createJSONStorage(() => localStorage),
-      // Persist only user session & asset data (never master matches/players)
+      // Persist only user session, asset data, and lightweight playerPrices map (never master matches/players)
       partialize: (state) => ({
         cash: state.cash,
         holdings: state.holdings,
         transactions: state.transactions,
         realizedPnL: state.realizedPnL,
         user: state.user,
+        playerPrices: state.playerPrices,
       }),
-      onRehydrateStorage: () => (state) => {
-        if (!state) return;
-        state.cash = roundToTen(state.cash ?? INITIAL_CASH);
-        state.realizedPnL = roundToTen(state.realizedPnL ?? 0);
-        if (state.user) {
-          state.user = {
-            ...state.user,
-            cash: state.cash,
-          };
-        }
+      merge: (persistedState, currentState) => {
+        const persisted = (persistedState as Partial<TradeStoreState>) ?? {};
+        const cash = roundToTen(persisted.cash ?? currentState.cash);
+        const realizedPnL = roundToTen(
+          persisted.realizedPnL ?? currentState.realizedPnL
+        );
+        const playerPrices = persisted.playerPrices ?? {};
+        const mergedPlayers = applyPersistedPrices(
+          currentState.players,
+          playerPrices
+        );
+
+        return {
+          ...currentState,
+          ...persisted,
+          cash,
+          realizedPnL,
+          playerPrices,
+          players: mergedPlayers,
+          user: persisted.user
+            ? {
+                ...persisted.user,
+                cash,
+              }
+            : null,
+        };
       },
     }
   )

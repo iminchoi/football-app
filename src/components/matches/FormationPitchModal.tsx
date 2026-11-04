@@ -20,6 +20,7 @@ import {
   ApiLineupPlayer,
 } from "@/types";
 import { roundToTen, clampToPriceLimit } from "@/store/useTradeStore";
+import { getTierConfig } from "@/utils/tier";
 
 interface FormationPitchModalProps {
   match: Match | null;
@@ -97,7 +98,7 @@ export const STARTING_11_TEMPLATE: RosterSlot[] = [
       "Isak",
       "Pinamonti",
     ],
-    basePriceSeed: 17000,
+    basePriceSeed: 18000,
   },
   {
     role: "FW",
@@ -422,7 +423,7 @@ const BENCH_5_TEMPLATE: RosterSlot[] = [
       "Zaire-Emery",
       "Mainoo",
     ],
-    basePriceSeed: 11400,
+    basePriceSeed: 4800,
   },
   {
     role: "MF",
@@ -451,7 +452,7 @@ const BENCH_5_TEMPLATE: RosterSlot[] = [
       "Pavlovic",
       "Miretti",
     ],
-    basePriceSeed: 10600,
+    basePriceSeed: 4600,
   },
   {
     role: "DF",
@@ -480,7 +481,7 @@ const BENCH_5_TEMPLATE: RosterSlot[] = [
       "L. Hernandez",
       "J. Gomez",
     ],
-    basePriceSeed: 9800,
+    basePriceSeed: 4500,
   },
   {
     role: "GK",
@@ -509,7 +510,7 @@ const BENCH_5_TEMPLATE: RosterSlot[] = [
       "Mamardashvili",
       "Nubel",
     ],
-    basePriceSeed: 8600,
+    basePriceSeed: 4200,
   },
 ];
 
@@ -574,7 +575,6 @@ export function buildTeamLineupForMatch(
   }
 
   // Only include non-synthetic base players (from dummyData) that strictly belong to this match & team
-  // Synthetic players ("pitch-...") are matched 1:1 by their exact slot ID (`synId`) to prevent cross-slot duplication!
   const baseTeamPlayersFromStore = storePlayers.filter(
     (p) =>
       !p.id.startsWith("pitch-") &&
@@ -665,7 +665,7 @@ export function buildTeamLineupForMatch(
     );
 
     const basePrice = roundToTen(
-      slot.basePriceSeed + ((teamSeed + slotIdx * 17) % 12) * 100
+      slot.basePriceSeed + ((teamSeed + slotIdx * 17) % 8) * 100
     );
     const deltaPct = (((teamSeed + slotIdx * 7) % 13) - 6) * 0.008;
     const currentPrice = clampToPriceLimit(
@@ -673,27 +673,8 @@ export function buildTeamLineupForMatch(
       basePrice
     );
 
-    const tier: Player["tier"] = isBench
-      ? "C"
-      : basePrice >= 15500
-      ? "S"
-      : basePrice >= 13000
-      ? "A"
-      : "B";
-    const totalShares =
-      tier === "S"
-        ? 450
-        : tier === "A"
-        ? 1000
-        : tier === "B"
-        ? 2500
-        : 5000;
-    const availableShares = Math.max(
-      25,
-      Math.round(
-        totalShares * (0.22 + (((teamSeed + slotIdx * 13) % 55) / 100))
-      )
-    );
+    // Use Single Source of Truth getTierConfig(basePrice)
+    const tierCfg = getTierConfig(basePrice);
 
     return {
       id: synId,
@@ -706,9 +687,9 @@ export function buildTeamLineupForMatch(
       teamColor: activeTeam.color,
       position: slot.role,
       backNumber,
-      tier,
-      totalShares,
-      availableShares,
+      tier: tierCfg.tier,
+      totalShares: tierCfg.totalShares,
+      marketSupply: tierCfg.marketSupply,
       basePrice,
       initialPrice: basePrice,
       currentPrice,

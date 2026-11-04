@@ -10,6 +10,8 @@ import {
   Eye,
 } from "lucide-react";
 import { Match, Player, Holding, TradeType } from "@/types";
+import { useTradeStore } from "@/store/useTradeStore";
+import { getAvailableShares } from "@/utils/tier";
 import { buildTeamLineupForMatch } from "./FormationPitchModal";
 
 interface MatchAccordionCardProps {
@@ -31,6 +33,7 @@ export default function MatchAccordionCard({
   onSelectPlayerTrade,
   onOpenPitchView,
 }: MatchAccordionCardProps) {
+  const storeHoldings = useTradeStore((s) => s.holdings);
   const [selectedSide, setSelectedSide] = useState<"HOME" | "AWAY">("HOME");
   const [activeKeyPlayers, setActiveKeyPlayers] = useState<Player[]>([]);
   const [showUpcomingPreview, setShowUpcomingPreview] = useState<boolean>(false);
@@ -40,14 +43,40 @@ export default function MatchAccordionCard({
     match.rawStatus === "TIMED" ||
     match.rawStatus === "SCHEDULED";
 
-  // Build deduplicated 3 key players (FW / MF aces) for Home and Away teams
+  // Build deduplicated 3 key players for Home and Away teams (prioritizing base players from store)
   const { homeKeyPlayers, awayKeyPlayers } = useMemo(() => {
-    const homeLineup = buildTeamLineupForMatch(match, "HOME", players);
-    const awayLineup = buildTeamLineupForMatch(match, "AWAY", players);
+    const pickTop3 = (side: "HOME" | "AWAY"): Player[] => {
+      const team = side === "HOME" ? match.homeTeam : match.awayTeam;
+      const baseTeamPlayers = players.filter(
+        (p) =>
+          !p.id.startsWith("pitch-") &&
+          p.matchId === match.id &&
+          (p.teamId === team.id ||
+            p.teamShort.toUpperCase() === team.shortName.toUpperCase())
+      );
+
+      if (baseTeamPlayers.length >= 3) {
+        return baseTeamPlayers.slice(0, 3);
+      }
+
+      const lineup = buildTeamLineupForMatch(match, side, players);
+      const merged: Player[] = [...baseTeamPlayers];
+      for (const candidate of lineup.startingLineup) {
+        if (merged.length >= 3) break;
+        if (
+          !merged.some(
+            (m) => m.id === candidate.id || m.name === candidate.name
+          )
+        ) {
+          merged.push(candidate);
+        }
+      }
+      return merged.slice(0, 3);
+    };
 
     return {
-      homeKeyPlayers: homeLineup.startingLineup.slice(0, 3),
-      awayKeyPlayers: awayLineup.startingLineup.slice(0, 3),
+      homeKeyPlayers: pickTop3("HOME"),
+      awayKeyPlayers: pickTop3("AWAY"),
     };
   }, [players, match]);
 
@@ -256,7 +285,7 @@ export default function MatchAccordionCard({
                 </span>
               </div>
 
-              {/* Compact Key Player Rows: [등번호] [선수명] [포지션] [현재 시세] [등락률(%)] [매수 버튼] */}
+              {/* Compact Key Player Rows: [등번호] [선수명] [포지션] [잔여/보유] [현재 시세] [등락률(%)] [매수 버튼] */}
               <div className="space-y-1.5">
                 {activeKeyPlayers.slice(0, 3).map((player) => {
                   const base = player.basePrice ?? player.initialPrice;
@@ -265,6 +294,11 @@ export default function MatchAccordionCard({
                   const isUp = diff > 0;
                   const isDown = diff < 0;
                   const holding = holdings[player.id];
+                  const availableShares = getAvailableShares(
+                    player,
+                    storeHoldings
+                  );
+                  const isSoldOut = availableShares === 0;
 
                   return (
                     <div
@@ -272,7 +306,7 @@ export default function MatchAccordionCard({
                       onClick={() => onSelectPlayerTrade(player, "BUY")}
                       className="flex cursor-pointer items-center justify-between gap-2 rounded-xl border border-gray-200/80 bg-white px-3 py-2 transition hover:border-[#00985f]/50 active:scale-[0.99]"
                     >
-                      {/* Left: [등번호] [선수명] [포지션] */}
+                      {/* Left: [등번호] [선수명] [포지션] [잔여/보유] */}
                       <div className="flex items-center gap-2 min-w-0">
                         <span
                           style={{ backgroundColor: player.teamColor }}
@@ -288,6 +322,16 @@ export default function MatchAccordionCard({
                         <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">
                           {player.position}
                         </span>
+
+                        {isSoldOut ? (
+                          <span className="shrink-0 rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-black text-rose-600">
+                            품절
+                          </span>
+                        ) : availableShares <= 50 ? (
+                          <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[9px] font-bold text-amber-700 border border-amber-200">
+                            잔여 {availableShares}주
+                          </span>
+                        ) : null}
 
                         {holding && holding.quantity > 0 && (
                           <span className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.2 text-[9px] font-extrabold text-[#00985f] border border-emerald-200">
@@ -322,9 +366,13 @@ export default function MatchAccordionCard({
                             e.stopPropagation();
                             onSelectPlayerTrade(player, "BUY");
                           }}
-                          className="rounded-lg bg-[#00985f] px-2.5 py-1.5 text-[11px] font-bold text-white shadow-sm transition hover:bg-[#007f4f] active:scale-95"
+                          className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold shadow-sm transition active:scale-95 ${
+                            isSoldOut
+                              ? "bg-gray-200 text-gray-500"
+                              : "bg-[#00985f] text-white hover:bg-[#007f4f]"
+                          }`}
                         >
-                          매수
+                          {isSoldOut ? "품절" : "매수"}
                         </button>
                       </div>
                     </div>

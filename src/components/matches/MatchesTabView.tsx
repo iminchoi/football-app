@@ -11,7 +11,7 @@ import {
   Calendar as CalendarIcon,
 } from "lucide-react";
 import { useTradeStore } from "@/store/useTradeStore";
-import { Match, Player, TradeType } from "@/types";
+import { Holding, Match, Player, TradeType } from "@/types";
 import MatchAccordionCard from "./MatchAccordionCard";
 import FormationPitchModal from "./FormationPitchModal";
 
@@ -20,6 +20,7 @@ interface MatchesTabViewProps {
 }
 
 const WEEKDAYS_KO = ["일", "월", "화", "수", "목", "금", "토"];
+const EMPTY_HOLDINGS: Record<string, Holding> = {};
 
 function toDateStr(date: Date): string {
   const yyyy = date.getFullYear();
@@ -78,13 +79,14 @@ function formatKoreanDateLabel(dateStr: string, todayStr: string): {
 export default function MatchesTabView({
   onSelectPlayerTrade,
 }: MatchesTabViewProps) {
-  const {
-    matches: storeMockMatches,
-    players,
-    holdings,
-    expandedMatchIds,
-    toggleExpandMatch,
-  } = useTradeStore();
+  const user = useTradeStore((s) => s.user);
+  const storeMockMatches = useTradeStore((s) => s.matches);
+  const players = useTradeStore((s) => s.players);
+  const holdings = useTradeStore((s) => s.holdings);
+  const expandedMatchIds = useTradeStore((s) => s.expandedMatchIds);
+  const toggleExpandMatch = useTradeStore((s) => s.toggleExpandMatch);
+
+  const visibleHoldings = user ? holdings : EMPTY_HOLDINGS;
 
   const todayStr = useState(() => toDateStr(new Date()))[0];
   const [selectedDateStr, setSelectedDateStr] = useState<string>(todayStr);
@@ -198,24 +200,6 @@ export default function MatchesTabView({
     acc[match.leagueId].items.push(match);
     return acc;
   }, {});
-
-  // Deterministically assign mock players to any real API match so live stock trading always works
-  const getPlayersForMatch = (match: Match, matchIdx: number): Player[] => {
-    const direct = players.filter((p) => p.matchId === match.id);
-    if (direct.length > 0) return direct;
-
-    const byTeam = players.filter(
-      (p) =>
-        p.teamId === match.homeTeam.id ||
-        p.teamId === match.awayTeam.id ||
-        p.teamShort === match.homeTeam.shortName ||
-        p.teamShort === match.awayTeam.shortName
-    );
-    if (byTeam.length >= 6) return byTeam;
-
-    const start = (matchIdx * 3) % Math.max(1, players.length - 6);
-    return players.slice(start, start + 6);
-  };
 
   // Calendar grid helper
   const renderMiniCalendar = () => {
@@ -518,7 +502,7 @@ export default function MatchesTabView({
                     key={match.id}
                     match={match}
                     players={players}
-                    holdings={holdings}
+                    holdings={visibleHoldings}
                     isExpanded={expandedMatchIds.includes(match.id)}
                     onToggleExpand={() => toggleExpandMatch(match.id)}
                     onSelectPlayerTrade={onSelectPlayerTrade}
@@ -535,7 +519,7 @@ export default function MatchesTabView({
       <FormationPitchModal
         match={pitchViewMatch}
         players={players}
-        holdings={holdings}
+        holdings={visibleHoldings}
         onClose={() => setPitchViewMatch(null)}
         onSelectPlayerTrade={onSelectPlayerTrade}
       />

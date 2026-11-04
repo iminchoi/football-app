@@ -5,6 +5,7 @@ import {
   Position,
   EventSentiment,
 } from "@/types";
+import { getTierConfig } from "@/utils/tier";
 
 export const INITIAL_CASH = 100000;
 
@@ -224,18 +225,23 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#132257",
     position: "FW",
     backNumber: 7,
-    tier: "S",
-    totalShares: 400,
-    availableShares: 68,
-    initialPrice: 15000,
-    currentPrice: 16400,
-    previousPrice: 15900,
+    ...(() => {
+      const cfg = getTierConfig(18000);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: 68,
+      };
+    })(),
+    initialPrice: 18000,
+    currentPrice: 19400,
+    previousPrice: 18900,
     priceHistory: [
-      { timeLabel: "15'", price: 15000 },
-      { timeLabel: "30'", price: 15350 },
-      { timeLabel: "45'", price: 15800 },
-      { timeLabel: "55'", price: 15900 },
-      { timeLabel: "67'", price: 16400 },
+      { timeLabel: "15'", price: 18000 },
+      { timeLabel: "30'", price: 18350 },
+      { timeLabel: "45'", price: 18800 },
+      { timeLabel: "55'", price: 18900 },
+      { timeLabel: "67'", price: 19400 },
     ],
     lastEvent: {
       text: "⚽ 페널티 박스 좌측 감아차기 골!!",
@@ -261,9 +267,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#132257",
     position: "MF",
     backNumber: 10,
-    tier: "B",
-    totalShares: 2200,
-    availableShares: 1450,
+    ...(() => {
+      const cfg = getTierConfig(11500);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
     initialPrice: 11500,
     currentPrice: 12100,
     previousPrice: 11900,
@@ -298,9 +309,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#132257",
     position: "DF",
     backNumber: 17,
-    tier: "B",
-    totalShares: 2500,
-    availableShares: 1820,
+    ...(() => {
+      const cfg = getTierConfig(9500);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
     initialPrice: 9500,
     currentPrice: 9750,
     previousPrice: 9600,
@@ -335,9 +351,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#EF0107",
     position: "FW",
     backNumber: 7,
-    tier: "A",
-    totalShares: 1000,
-    availableShares: 310,
+    ...(() => {
+      const cfg = getTierConfig(14500);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
     initialPrice: 14500,
     currentPrice: 14950,
     previousPrice: 15100,
@@ -372,9 +393,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#EF0107",
     position: "MF",
     backNumber: 8,
-    tier: "A",
-    totalShares: 1100,
-    availableShares: 420,
+    ...(() => {
+      const cfg = getTierConfig(13200);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
     initialPrice: 13200,
     currentPrice: 12900,
     previousPrice: 13050,
@@ -411,9 +437,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#6CABDD",
     position: "FW",
     backNumber: 9,
-    tier: "S",
-    totalShares: 500,
-    availableShares: 42, // 품절 임박 연출
+    ...(() => {
+      const cfg = getTierConfig(18000);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: 42, // 품절 임박 연출 (S티어 총 500주 중 초기 시장 잔여 42주)
+      };
+    })(),
     initialPrice: 18000,
     currentPrice: 19200,
     previousPrice: 18750,
@@ -448,9 +479,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#6CABDD",
     position: "FW",
     backNumber: 47,
-    tier: "A",
-    totalShares: 1000,
-    availableShares: 215,
+    ...(() => {
+      const cfg = getTierConfig(15200);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: 215, // A티어 총 1,000주 중 초기 시장 잔여 215주
+      };
+    })(),
     initialPrice: 15200,
     currentPrice: 15850,
     previousPrice: 15500,
@@ -485,9 +521,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#6CABDD",
     position: "MF",
     backNumber: 17,
-    tier: "A",
-    totalShares: 900,
-    availableShares: 180,
+    ...(() => {
+      const cfg = getTierConfig(15500);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
     initialPrice: 15500,
     currentPrice: 16150,
     previousPrice: 15900,
@@ -522,18 +563,23 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#C8102E",
     position: "FW",
     backNumber: 11,
-    tier: "S",
-    totalShares: 500,
-    availableShares: 94,
-    initialPrice: 16000,
-    currentPrice: 16850,
-    previousPrice: 16400,
+    ...(() => {
+      const cfg = getTierConfig(18200);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
+    initialPrice: 18200,
+    currentPrice: 19100,
+    previousPrice: 18600,
     priceHistory: [
-      { timeLabel: "10'", price: 16000 },
-      { timeLabel: "20'", price: 15850 },
-      { timeLabel: "28'", price: 16200 },
-      { timeLabel: "34'", price: 16400 },
-      { timeLabel: "38'", price: 16850 },
+      { timeLabel: "10'", price: 18200 },
+      { timeLabel: "20'", price: 18050 },
+      { timeLabel: "28'", price: 18400 },
+      { timeLabel: "34'", price: 18600 },
+      { timeLabel: "38'", price: 19100 },
     ],
     lastEvent: {
       text: "⚽ 역습 찬스 침착한 마무리 동점골!",
@@ -559,9 +605,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#C8102E",
     position: "DF",
     backNumber: 4,
-    tier: "B",
-    totalShares: 2000,
-    availableShares: 1120,
+    ...(() => {
+      const cfg = getTierConfig(10800);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
     initialPrice: 10800,
     currentPrice: 10650,
     previousPrice: 10750,
@@ -598,18 +649,23 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#3b4252",
     position: "MF",
     backNumber: 5,
-    tier: "S",
-    totalShares: 450,
-    availableShares: 85,
-    initialPrice: 16500,
-    currentPrice: 17300,
-    previousPrice: 17000,
+    ...(() => {
+      const cfg = getTierConfig(18500);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
+    initialPrice: 18500,
+    currentPrice: 19300,
+    previousPrice: 19000,
     priceHistory: [
-      { timeLabel: "15'", price: 16500 },
-      { timeLabel: "30'", price: 16750 },
-      { timeLabel: "45'", price: 16900 },
-      { timeLabel: "50'", price: 17000 },
-      { timeLabel: "54'", price: 17300 },
+      { timeLabel: "15'", price: 18500 },
+      { timeLabel: "30'", price: 18750 },
+      { timeLabel: "45'", price: 18900 },
+      { timeLabel: "50'", price: 19000 },
+      { timeLabel: "54'", price: 19300 },
     ],
     lastEvent: {
       text: "✨ 중원 탈압박 후 환상적인 아웃프런트 패스",
@@ -635,18 +691,23 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#DC052D",
     position: "DF",
     backNumber: 3,
-    tier: "A",
-    totalShares: 1000,
-    availableShares: 360,
-    initialPrice: 10500,
-    currentPrice: 11250,
-    previousPrice: 10950,
+    ...(() => {
+      const cfg = getTierConfig(12000);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
+    initialPrice: 12000,
+    currentPrice: 12750,
+    previousPrice: 12450,
     priceHistory: [
-      { timeLabel: "15'", price: 10500 },
-      { timeLabel: "30'", price: 10650 },
-      { timeLabel: "45'", price: 10800 },
-      { timeLabel: "50'", price: 10950 },
-      { timeLabel: "54'", price: 11250 },
+      { timeLabel: "15'", price: 12000 },
+      { timeLabel: "30'", price: 12150 },
+      { timeLabel: "45'", price: 12300 },
+      { timeLabel: "50'", price: 12450 },
+      { timeLabel: "54'", price: 12750 },
     ],
     lastEvent: {
       text: "🧱 상대 단독 드리블 돌파 완벽 차단!",
@@ -672,18 +733,23 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#DC052D",
     position: "FW",
     backNumber: 9,
-    tier: "S",
-    totalShares: 450,
-    availableShares: 110,
-    initialPrice: 15800,
-    currentPrice: 16200,
-    previousPrice: 16050,
+    ...(() => {
+      const cfg = getTierConfig(18000);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
+    initialPrice: 18000,
+    currentPrice: 18400,
+    previousPrice: 18250,
     priceHistory: [
-      { timeLabel: "15'", price: 15800 },
-      { timeLabel: "30'", price: 16100 },
-      { timeLabel: "45'", price: 15950 },
-      { timeLabel: "50'", price: 16050 },
-      { timeLabel: "54'", price: 16200 },
+      { timeLabel: "15'", price: 18000 },
+      { timeLabel: "30'", price: 18300 },
+      { timeLabel: "45'", price: 18150 },
+      { timeLabel: "50'", price: 18250 },
+      { timeLabel: "54'", price: 18400 },
     ],
     lastEvent: {
       text: "🎯 2선으로 내려와 날카로운 연계 패스",
@@ -711,9 +777,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#034694",
     position: "MF",
     backNumber: 20,
-    tier: "A",
-    totalShares: 1200,
-    availableShares: 340,
+    ...(() => {
+      const cfg = getTierConfig(14000);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
     initialPrice: 14000,
     currentPrice: 14350,
     previousPrice: 14200,
@@ -748,9 +819,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#DA291C",
     position: "MF",
     backNumber: 8,
-    tier: "B",
-    totalShares: 2400,
-    availableShares: 1580,
+    ...(() => {
+      const cfg = getTierConfig(12800);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
     initialPrice: 12800,
     currentPrice: 12950,
     previousPrice: 12850,
@@ -785,18 +861,23 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#DA291C",
     position: "MF",
     backNumber: 37,
-    tier: "C",
-    totalShares: 5000,
-    availableShares: 4320,
-    initialPrice: 9200,
-    currentPrice: 9400,
-    previousPrice: 9250,
+    ...(() => {
+      const cfg = getTierConfig(4800);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
+    initialPrice: 4800,
+    currentPrice: 4950,
+    previousPrice: 4850,
     priceHistory: [
-      { timeLabel: "-60'", price: 9200 },
-      { timeLabel: "-45'", price: 9220 },
-      { timeLabel: "-30'", price: 9250 },
-      { timeLabel: "-15'", price: 9300 },
-      { timeLabel: "선발", price: 9400 },
+      { timeLabel: "-60'", price: 4800 },
+      { timeLabel: "-45'", price: 4820 },
+      { timeLabel: "-30'", price: 4850 },
+      { timeLabel: "-15'", price: 4900 },
+      { timeLabel: "선발", price: 4950 },
     ],
     lastEvent: {
       text: "🌟 신예 중원 엔진 선발 출격 · 풍부한 유통 물량",
@@ -824,9 +905,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#004170",
     position: "MF",
     backNumber: 19,
-    tier: "A",
-    totalShares: 1200,
-    availableShares: 280,
+    ...(() => {
+      const cfg = getTierConfig(12000);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
     initialPrice: 12000,
     currentPrice: 13450,
     previousPrice: 13200,
@@ -861,9 +947,14 @@ export const INITIAL_PLAYERS: Player[] = [
     teamColor: "#A50044",
     position: "FW",
     backNumber: 19,
-    tier: "A",
-    totalShares: 1000,
-    availableShares: 195,
+    ...(() => {
+      const cfg = getTierConfig(14200);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
     initialPrice: 14200,
     currentPrice: 15100,
     previousPrice: 14850,

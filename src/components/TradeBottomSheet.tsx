@@ -19,6 +19,7 @@ import {
   roundToTen,
   clampToPriceLimit,
 } from "@/store/useTradeStore";
+import { getTierConfig, getAvailableShares } from "@/utils/tier";
 import { Player, TradeType } from "@/types";
 import PlayerDetailModal from "@/components/PlayerDetailModal";
 
@@ -625,7 +626,7 @@ export default function TradeBottomSheet({
 
   if (!playerId || !player) return null;
 
-  const holding = holdings[player.id];
+  const holding = user ? holdings[player.id] : undefined;
   const ownedQty = holding?.quantity ?? 0;
   const avgBuyPrice = holding ? roundToTen(holding.avgBuyPrice) : 0;
 
@@ -636,14 +637,22 @@ export default function TradeBottomSheet({
   const diffFromBase = currentPrice - basePrice;
   const pctFromBase = basePrice > 0 ? (diffFromBase / basePrice) * 100 : 0;
 
-  // Market supply & liquidity metrics
-  const totalShares = player.totalShares ?? 1000;
-  const availableShares = Math.max(0, player.availableShares ?? totalShares);
-  const playerTier = player.tier ?? "A";
+  // Market supply & liquidity metrics (Single Source of Truth + Dynamic availableShares)
+  const tierCfg = getTierConfig(basePrice);
+  const totalShares = player.totalShares ?? tierCfg.totalShares;
+  const marketSupply = player.marketSupply ?? tierCfg.marketSupply;
+  const availableShares = getAvailableShares(
+    { id: player.id, marketSupply },
+    holdings
+  );
+  const playerTier = player.tier ?? tierCfg.tier;
   const isSoldOut = availableShares === 0;
   const remainPct =
     totalShares > 0
-      ? Math.min(100, Math.max(0, Math.round((availableShares / totalShares) * 100)))
+      ? Math.min(
+          100,
+          Math.max(0, Math.round((availableShares / totalShares) * 100))
+        )
       : 0;
   const isLowStock = !isSoldOut && remainPct <= 15;
 
@@ -746,6 +755,8 @@ export default function TradeBottomSheet({
         text: res.message,
       });
       if (res.success) {
+        const nextRemaining = Math.max(0, availableShares - execQty);
+        setQuantity(nextRemaining > 0 ? Math.min(quantity, nextRemaining) : 1);
         triggerToast(
           `✓ 체결 완료: ${player.name} ${execQty}주를 ${execTotal.toLocaleString()}P (단가 ${unitExec.toLocaleString()}P)에 매수했습니다.`,
           "BUY"
@@ -760,6 +771,8 @@ export default function TradeBottomSheet({
         text: res.message,
       });
       if (res.success) {
+        const nextOwned = Math.max(0, ownedQty - execQty);
+        setQuantity(nextOwned > 0 ? Math.min(quantity, nextOwned) : 1);
         triggerToast(
           `✓ 체결 완료: ${player.name} ${execQty}주를 ${execTotal.toLocaleString()}P (단가 ${unitExec.toLocaleString()}P)에 매도했습니다.`,
           "SELL"
@@ -1370,13 +1383,31 @@ export default function TradeBottomSheet({
               <div className="relative w-20 shrink-0">
                 <input
                   type="number"
-                  min={1}
+                  min={isBuySoldOut ? 0 : 1}
+                  max={tradeType === "BUY" ? availableShares : undefined}
                   step={1}
                   disabled={isBuySoldOut}
-                  value={quantity}
+                  value={isBuySoldOut ? 0 : quantity}
                   onChange={(e) => {
                     const v = parseInt(e.target.value, 10);
-                    setQuantity(Number.isNaN(v) || v < 1 ? 1 : v);
+                    if (Number.isNaN(v) || v < 1) {
+                      setQuantity(1);
+                    } else if (
+                      tradeType === "BUY" &&
+                      availableShares > 0 &&
+                      v > availableShares
+                    ) {
+                      setQuantity(availableShares);
+                    } else if (
+                      tradeType === "SELL" &&
+                      user &&
+                      ownedQty > 0 &&
+                      v > ownedQty
+                    ) {
+                      setQuantity(ownedQty);
+                    } else {
+                      setQuantity(v);
+                    }
                     setFeedback(null);
                   }}
                   className="h-9 w-full rounded-xl border border-gray-200 bg-[#f8f9fa] pr-5 pl-2 text-center font-mono text-sm font-black text-gray-900 focus:border-[#00985f] focus:bg-white focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -1480,7 +1511,7 @@ export default function TradeBottomSheet({
             }`}
           >
             {isBuySoldOut
-              ? "매도 물량 대기 중 (품절)"
+              ? "[매도 물량 대기 중 (품절)]"
               : tradeType === "BUY"
               ? `${player.name} ${quantity}주 매수 확정`
               : `${player.name} ${quantity}주 매도 확정`}

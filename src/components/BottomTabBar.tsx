@@ -6,14 +6,14 @@ import { BottomTab } from "@/types";
 import { useTradeStore } from "@/store/useTradeStore";
 
 export default function BottomTabBar() {
+  const user = useTradeStore((s) => s.user);
   const activeTab = useTradeStore((s) => s.activeTab);
   const setActiveTab = useTradeStore((s) => s.setActiveTab);
   const holdings = useTradeStore((s) => s.holdings);
 
-  const totalHoldingsQty = Object.values(holdings).reduce(
-    (sum, h) => sum + h.quantity,
-    0
-  );
+  const totalHoldingsQty = user
+    ? Object.values(holdings).reduce((sum, h) => sum + h.quantity, 0)
+    : 0;
 
   const tabs: {
     key: BottomTab;

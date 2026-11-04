@@ -14,13 +14,11 @@ import AdminPanel from "@/components/AdminPanel";
 
 export default function HomePage() {
   const activeTab = useTradeStore((state) => state.activeTab);
-  const tickMarket = useTradeStore((state) => state.tickMarket);
   const ensurePlayerInStore = useTradeStore(
     (state) => state.ensurePlayerInStore
   );
 
   const [mounted, setMounted] = useState(false);
-  const [countdown, setCountdown] = useState<number>(5);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
 
   // Bottom sheet modal state
@@ -30,21 +28,6 @@ export default function HomePage() {
   useEffect(() => {
     setMounted(true);
   }, []);
-
-  // 5~10 second live market tick timer (side-effect separated from state updater)
-  useEffect(() => {
-    if (!mounted) return;
-    let remaining = 5;
-    const timer = setInterval(() => {
-      remaining -= 1;
-      if (remaining <= 0) {
-        tickMarket(); // 부수효과를 순수 블록 안에서 1회만 호출
-        remaining = Math.floor(Math.random() * 6) + 5;
-      }
-      setCountdown(remaining);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [mounted, tickMarket]);
 
   const handleOpenTradeSheet = (player: Player, type: TradeType = "BUY") => {
     ensurePlayerInStore(player);
@@ -72,10 +55,7 @@ export default function HomePage() {
   return (
     <div className="mx-auto min-h-screen w-full max-w-[480px] bg-[#f8f9fa] pb-20 shadow-[0_0_40px_rgba(0,0,0,0.06)] border-x border-gray-200/70">
       {/* 1. Top Navigation & My Asset Summary Header */}
-      <TopAssetHeader
-        countdown={countdown}
-        onOpenAuthModal={() => setIsAuthModalOpen(true)}
-      />
+      <TopAssetHeader onOpenAuthModal={() => setIsAuthModalOpen(true)} />
 
       {/* 2. Main Tab Content */}
       <main>
