@@ -8,8 +8,9 @@ import {
   Star,
   TrendingUp,
 } from "lucide-react";
-import { useTradeStore } from "@/store/useTradeStore";
+import { useTradeStore, roundToTen } from "@/store/useTradeStore";
 import { Player, TradeType } from "@/types";
+import MatchTimelineChart from "@/components/market/MatchTimelineChart";
 
 interface MarketChartTabViewProps {
   onSelectPlayerTrade: (player: Player, type: TradeType) => void;
@@ -32,7 +33,7 @@ export default function MarketChartTabView({
   const activePlayer =
     players.find((p) => p.id === selectedPlayerId) ?? players[0];
 
-  // Featured popular players for quick chart switcher
+  // Featured popular players for quick chart switcher (includes LIVE & FT matches)
   const featuredIds = [
     "p-son",
     "p-haaland",
@@ -40,49 +41,29 @@ export default function MarketChartTabView({
     "p-lee",
     "p-salah",
     "p-kim",
+    "p-yamal",
+    "p-palmer",
   ];
-  const featuredPlayers = players.filter((p) => featuredIds.includes(p.id));
+  const featuredPlayers = featuredIds
+    .map((id) => players.find((p) => p.id === id))
+    .filter((p): p is Player => Boolean(p));
 
-  // Calculate SVG Line Chart coordinates for activePlayer
-  const history = activePlayer.priceHistory;
-  const prices = history.map((h) => h.price);
-  const minP = Math.min(...prices);
-  const maxP = Math.max(...prices);
-  const range = Math.max(200, maxP - minP);
-
-  const chartW = 380;
-  const chartH = 140;
-  const padX = 16;
-  const padY = 20;
-
-  const coords = history.map((pt, idx) => {
-    const x =
-      padX +
-      (idx / Math.max(1, history.length - 1)) * (chartW - padX * 2);
-    const y =
-      chartH -
-      padY -
-      ((pt.price - minP) / range) * (chartH - padY * 2);
-    return { x, y, ...pt };
-  });
-
-  const polylinePoints = coords.map((c) => `${c.x},${c.y}`).join(" ");
-  const areaPoints =
-    coords.length > 0
-      ? `${coords[0].x},${chartH - padY} ${polylinePoints} ${
-          coords[coords.length - 1].x
-        },${chartH - padY}`
-      : "";
-
-  const activeDiff = activePlayer.currentPrice - activePlayer.initialPrice;
-  const activePct = ((activeDiff / activePlayer.initialPrice) * 100).toFixed(2);
+  const openPrice = roundToTen(
+    activePlayer.openPrice ??
+      activePlayer.priceHistory[0]?.price ??
+      activePlayer.initialPrice
+  );
+  const activeDiff = activePlayer.currentPrice - openPrice;
+  const activePct = ((activeDiff / Math.max(1, openPrice)) * 100).toFixed(2);
   const isActiveUp = activeDiff >= 0;
 
   // Sort all players for the ranking list
   const rankedPlayers = [...players].sort((a, b) => {
     if (rankFilter === "GAINERS") {
-      const rateA = (a.currentPrice - a.initialPrice) / a.initialPrice;
-      const rateB = (b.currentPrice - b.initialPrice) / b.initialPrice;
+      const openA = a.openPrice ?? a.initialPrice;
+      const openB = b.openPrice ?? b.initialPrice;
+      const rateA = (a.currentPrice - openA) / Math.max(1, openA);
+      const rateB = (b.currentPrice - openB) / Math.max(1, openB);
       return rateB - rateA;
     }
     if (rankFilter === "PRICE") {
@@ -93,17 +74,17 @@ export default function MarketChartTabView({
 
   return (
     <div className="px-4 pt-4 pb-8 space-y-5">
-      {/* 1. Interactive Featured Player Chart Card */}
+      {/* 1. Interactive Featured Player 0~90m Match Timeline Chart Card */}
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-1.5">
             <Flame className="h-4 w-4 text-[#00985f]" />
             <h2 className="text-sm font-extrabold text-gray-900">
-              인기 선수 실시간 시세 차트
+              0~90분 실시간 매치 타임라인 차트
             </h2>
           </div>
           <span className="text-[11px] font-medium text-gray-400">
-            5초 주기 자동 갱신
+            시가 기준 · 이벤트 마커 연동
           </span>
         </div>
 
@@ -136,7 +117,7 @@ export default function MarketChartTabView({
         </div>
 
         {/* Selected Player Header Info */}
-        <div className="mt-3 flex items-center justify-between border-t border-gray-100 pt-3">
+        <div className="mt-3 mb-3 flex items-center justify-between border-t border-gray-100 pt-3">
           <div className="flex items-center gap-2.5">
             <div
               style={{ backgroundColor: activePlayer.teamColor }}
@@ -175,7 +156,7 @@ export default function MarketChartTabView({
             </div>
             <div
               className={`inline-flex items-center gap-0.5 text-xs font-bold ${
-                isActiveUp ? "text-[#00985f]" : "text-rose-600"
+                isActiveUp ? "text-[#00985f]" : "text-blue-600"
               }`}
             >
               {isActiveUp ? (
@@ -184,7 +165,7 @@ export default function MarketChartTabView({
                 <ArrowDownRight className="h-3.5 w-3.5" />
               )}
               <span>
-                {isActiveUp ? "+" : ""}
+                시가대비 {isActiveUp ? "+" : ""}
                 {activeDiff.toLocaleString()}P ({isActiveUp ? "+" : ""}
                 {activePct}%)
               </span>
@@ -192,87 +173,11 @@ export default function MarketChartTabView({
           </div>
         </div>
 
-        {/* SVG Line Chart Box */}
-        <div className="mt-3 rounded-xl bg-[#f8f9fa] border border-gray-100 p-3">
-          <svg
-            viewBox={`0 0 ${chartW} ${chartH}`}
-            className="w-full h-36 overflow-visible"
-          >
-            <defs>
-              <linearGradient id="chartGradUp" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#00985f" stopOpacity="0.22" />
-                <stop offset="100%" stopColor="#00985f" stopOpacity="0.0" />
-              </linearGradient>
-              <linearGradient id="chartGradDown" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#e11d48" stopOpacity="0.22" />
-                <stop offset="100%" stopColor="#e11d48" stopOpacity="0.0" />
-              </linearGradient>
-            </defs>
-
-            {/* Horizontal Reference Grid Lines */}
-            {[0.2, 0.5, 0.8].map((ratio, idx) => (
-              <line
-                key={idx}
-                x1={padX}
-                x2={chartW - padX}
-                y1={chartH * ratio}
-                y2={chartH * ratio}
-                stroke="#e5e7eb"
-                strokeDasharray="3 3"
-                strokeWidth="1"
-              />
-            ))}
-
-            {/* Shaded Area under Line */}
-            {areaPoints && (
-              <polygon
-                points={areaPoints}
-                fill={isActiveUp ? "url(#chartGradUp)" : "url(#chartGradDown)"}
-              />
-            )}
-
-            {/* Main Price Line */}
-            <polyline
-              fill="none"
-              stroke={isActiveUp ? "#00985f" : "#e11d48"}
-              strokeWidth="2.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              points={polylinePoints}
-            />
-
-            {/* Data Points + Labels */}
-            {coords.map((c, idx) => {
-              const isLast = idx === coords.length - 1;
-              return (
-                <g key={idx}>
-                  <circle
-                    cx={c.x}
-                    cy={c.y}
-                    r={isLast ? 4.5 : 2.5}
-                    fill={isLast ? (isActiveUp ? "#00985f" : "#e11d48") : "#fff"}
-                    stroke={isActiveUp ? "#00985f" : "#e11d48"}
-                    strokeWidth="2"
-                  />
-                  {/* Time Label at Bottom */}
-                  <text
-                    x={c.x}
-                    y={chartH - 3}
-                    textAnchor="middle"
-                    className="fill-gray-400 text-[9px] font-mono"
-                  >
-                    {c.timeLabel}
-                  </text>
-                </g>
-              );
-            })}
-          </svg>
-
-          {/* Latest Match Event & Stats Footer */}
-          <div className="mt-2 flex items-center justify-between border-t border-gray-200/70 pt-2.5 text-xs">
-            <span className="truncate text-gray-600 font-medium">
-              {activePlayer.lastEvent.text}
-            </span>
+        {/* Dedicated 0~90 Minute Match Timeline Chart Component */}
+        <MatchTimelineChart
+          player={activePlayer}
+          showEventSimulator={true}
+          footerAction={
             <button
               type="button"
               onClick={() => onSelectPlayerTrade(activePlayer, "BUY")}
@@ -280,8 +185,8 @@ export default function MarketChartTabView({
             >
               즉시 주문
             </button>
-          </div>
-        </div>
+          }
+        />
       </div>
 
       {/* 2. All Players Ranking Section */}
@@ -334,8 +239,9 @@ export default function MarketChartTabView({
 
         <div className="divide-y divide-gray-100">
           {rankedPlayers.map((player, index) => {
-            const diff = player.currentPrice - player.initialPrice;
-            const pct = ((diff / player.initialPrice) * 100).toFixed(2);
+            const pOpen = player.openPrice ?? player.initialPrice;
+            const diff = player.currentPrice - pOpen;
+            const pct = ((diff / Math.max(1, pOpen)) * 100).toFixed(2);
             const isUp = diff > 0;
             const isDown = diff < 0;
             const holding = user ? holdings[player.id] : undefined;
@@ -386,7 +292,8 @@ export default function MarketChartTabView({
                     </div>
                     <p className="text-[11px] text-gray-400 truncate">
                       평점 {player.stats.rating.toFixed(1)} ·{" "}
-                      {player.stats.goals}골 {player.stats.assists}도움
+                      {player.stats.goals}골 {player.stats.assists}도움 · 시가{" "}
+                      {pOpen.toLocaleString()}P
                     </p>
                   </div>
                 </div>
@@ -401,7 +308,7 @@ export default function MarketChartTabView({
                         isUp
                           ? "bg-emerald-50 text-[#00985f]"
                           : isDown
-                          ? "bg-rose-50 text-rose-600"
+                          ? "bg-blue-50 text-blue-600"
                           : "bg-gray-100 text-gray-500"
                       }`}
                     >

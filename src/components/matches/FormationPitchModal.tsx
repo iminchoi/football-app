@@ -731,17 +731,35 @@ function buildSparklineHistory(
   const points = [];
   const count = 12;
   for (let i = 0; i < count; i++) {
+    const minute = Math.min(90, i * 6);
     if (i === 0) {
-      points.push({ timeLabel: "시초", price: basePrice });
+      points.push({
+        minute: 0,
+        timeLabel: "0'",
+        price: basePrice,
+        changePercentFromOpen: 0,
+      });
     } else if (i === count - 1) {
-      points.push({ timeLabel: "현재", price: currentPrice });
+      points.push({
+        minute,
+        timeLabel: `${minute}'`,
+        price: currentPrice,
+        changePercentFromOpen: Number(
+          (((currentPrice - basePrice) / Math.max(1, basePrice)) * 100).toFixed(2)
+        ),
+      });
     } else {
       const progress = i / (count - 1);
       const linear = basePrice + (currentPrice - basePrice) * progress;
       const wave = (((seed + i * 19) % 9) - 4) * 0.006 * basePrice;
+      const p = clampToPriceLimit(linear + wave, basePrice);
       points.push({
-        timeLabel: `${i * 5}'`,
-        price: clampToPriceLimit(linear + wave, basePrice),
+        minute,
+        timeLabel: `${minute}'`,
+        price: p,
+        changePercentFromOpen: Number(
+          (((p - basePrice) / Math.max(1, basePrice)) * 100).toFixed(2)
+        ),
       });
     }
   }

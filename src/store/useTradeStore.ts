@@ -13,6 +13,9 @@ import {
   StoredUserAccount,
   PersistedPlayerPrice,
   Position,
+  PricePoint,
+  ChartEventType,
+  ChartEventMarker,
   getPositionLine,
   normalizeDetailedPosition,
 } from "@/types";
@@ -76,6 +79,10 @@ interface TradeStoreState {
   sellPlayer: (playerId: string, quantity: number) => TradeExecutionResult;
   addAdminCash: (amount?: number) => { added: number; nextCash: number };
   triggerForceGoalEvent: (targetPlayerId?: string) => ForceGoalResult | null;
+  triggerMatchEvent: (
+    targetPlayerId?: string,
+    eventType?: ChartEventType
+  ) => ForceGoalResult | null;
   resetAll: () => void;
 }
 
@@ -341,12 +348,111 @@ export function filterPlayersForMatch(
   return players.filter((player) => doesPlayerBelongToMatch(player, match));
 }
 
+export function parseMinuteFromLabel(
+  rawMinute?: number,
+  timeLabel?: string,
+  fallback = 0
+): number {
+  if (typeof rawMinute === "number" && Number.isFinite(rawMinute) && rawMinute >= 0) {
+    return Math.min(95, Math.max(0, Math.round(rawMinute)));
+  }
+  if (!timeLabel) return fallback;
+  const trimmed = timeLabel.trim().toUpperCase();
+  if (trimmed === "FT" || trimmed === "종료") return 90;
+  if (trimmed === "HT") return 45;
+  if (trimmed === "시초" || trimmed === "선발" || trimmed.startsWith("-")) return 0;
+  const matchPlus = trimmed.match(/^90\+(\d+)/);
+  if (matchPlus) {
+    return Math.min(95, 90 + parseInt(matchPlus[1], 10));
+  }
+  const numMatch = trimmed.match(/(\d+)/);
+  if (numMatch) {
+    return Math.min(95, Math.max(0, parseInt(numMatch[1], 10)));
+  }
+  return fallback;
+}
+
+export function formatMinuteLabel(minute: number): string {
+  if (minute > 90) {
+    return `90+${minute - 90}'`;
+  }
+  return `${Math.max(0, Math.round(minute))}'`;
+}
+
+export function normalizePriceHistory(
+  rawHistory: PricePoint[] | undefined,
+  openPrice: number,
+  basePrice: number
+): PricePoint[] {
+  const safeOpen = clampToPriceLimit(openPrice, basePrice);
+  if (!Array.isArray(rawHistory) || rawHistory.length === 0) {
+    return [
+      {
+        minute: 0,
+        timeLabel: "0'",
+        price: safeOpen,
+        changePercentFromOpen: 0,
+      },
+    ];
+  }
+
+  const byMinute = new Map<number, PricePoint>();
+  rawHistory.forEach((pt, idx) => {
+    const inferredMin = parseMinuteFromLabel(
+      pt.minute,
+      pt.timeLabel,
+      idx === 0 ? 0 : idx * 15
+    );
+    const safePrice = clampToPriceLimit(pt.price, basePrice);
+    const changePct =
+      safeOpen > 0
+        ? Number((((safePrice - safeOpen) / safeOpen) * 100).toFixed(2))
+        : 0;
+    const prev = byMinute.get(inferredMin);
+    byMinute.set(inferredMin, {
+      minute: inferredMin,
+      timeLabel: pt.timeLabel || formatMinuteLabel(inferredMin),
+      price: safePrice,
+      changePercentFromOpen: changePct,
+      event: pt.event ?? prev?.event,
+    });
+  });
+
+  if (!byMinute.has(0)) {
+    byMinute.set(0, {
+      minute: 0,
+      timeLabel: "0'",
+      price: safeOpen,
+      changePercentFromOpen: 0,
+    });
+  } else {
+    const zeroPt = byMinute.get(0)!;
+    byMinute.set(0, {
+      ...zeroPt,
+      minute: 0,
+      timeLabel: "0'",
+      price: safeOpen,
+      changePercentFromOpen: 0,
+    });
+  }
+
+  return Array.from(byMinute.values()).sort((a, b) => a.minute - b.minute);
+}
+
 // Normalize initial players using getTierConfig(basePrice) as Single Source of Truth
 const NORMALIZED_INITIAL_PLAYERS: Player[] = INITIAL_PLAYERS.map((p) => {
   const basePrice = roundToTen(p.basePrice ?? p.initialPrice);
+  const openPrice = clampToPriceLimit(
+    p.openPrice ?? p.basePrice ?? p.initialPrice,
+    basePrice
+  );
   const tierCfg = getTierConfig(basePrice);
   const currentPrice = clampToPriceLimit(p.currentPrice, basePrice);
   const previousPrice = clampToPriceLimit(p.previousPrice, basePrice);
+  const closePrice =
+    p.closePrice !== undefined
+      ? clampToPriceLimit(p.closePrice, basePrice)
+      : undefined;
 
   return {
     ...p,
@@ -354,13 +460,12 @@ const NORMALIZED_INITIAL_PLAYERS: Player[] = INITIAL_PLAYERS.map((p) => {
     totalShares: p.totalShares ?? tierCfg.totalShares,
     marketSupply: p.marketSupply ?? tierCfg.marketSupply,
     basePrice,
+    openPrice,
+    ...(closePrice !== undefined ? { closePrice } : {}),
     initialPrice: basePrice,
     currentPrice,
     previousPrice,
-    priceHistory: p.priceHistory.map((pt) => ({
-      ...pt,
-      price: clampToPriceLimit(pt.price, basePrice),
-    })),
+    priceHistory: normalizePriceHistory(p.priceHistory, openPrice, basePrice),
   };
 });
 
@@ -380,19 +485,52 @@ function applyPersistedPrices(
     const basePrice = roundToTen(
       player.basePrice ?? player.initialPrice ?? 10000
     );
+    const openPrice = clampToPriceLimit(
+      saved.openPrice ?? player.openPrice ?? basePrice,
+      basePrice
+    );
     const currentPrice = clampToPriceLimit(saved.currentPrice, basePrice);
     const previousPrice = clampToPriceLimit(saved.previousPrice, basePrice);
-    const priceHistory =
+    const closePrice =
+      saved.closePrice !== undefined
+        ? clampToPriceLimit(saved.closePrice, basePrice)
+        : player.closePrice;
+
+    // Merge events from default dummy data if saved history lost them from an older version
+    const baseEventsByMin = new Map<number, ChartEventMarker>();
+    for (const bp of player.priceHistory ?? []) {
+      if (bp.event && typeof bp.minute === "number") {
+        baseEventsByMin.set(bp.minute, bp.event);
+      }
+    }
+
+    const rawSavedHistory =
       Array.isArray(saved.priceHistory) && saved.priceHistory.length > 0
-        ? saved.priceHistory.map((pt) => ({
-            timeLabel: pt.timeLabel,
-            price: clampToPriceLimit(pt.price, basePrice),
-          }))
+        ? saved.priceHistory.map((pt, idx) => {
+            const min = parseMinuteFromLabel(
+              pt.minute,
+              pt.timeLabel,
+              idx * 15
+            );
+            return {
+              ...pt,
+              minute: min,
+              event: pt.event ?? baseEventsByMin.get(min),
+            };
+          })
         : player.priceHistory;
+
+    const priceHistory = normalizePriceHistory(
+      rawSavedHistory,
+      openPrice,
+      basePrice
+    );
 
     return {
       ...player,
       basePrice,
+      openPrice,
+      ...(closePrice !== undefined ? { closePrice } : {}),
       initialPrice: basePrice,
       currentPrice,
       previousPrice,
@@ -702,6 +840,10 @@ export const useTradeStore = create<TradeStoreState>()(
         );
         const tierCfg = getTierConfig(base);
         const savedPrice = playerPrices[newPlayer.id];
+        const openPrice = clampToPriceLimit(
+          savedPrice?.openPrice ?? newPlayer.openPrice ?? base,
+          base
+        );
 
         const currentPrice = clampToPriceLimit(
           savedPrice?.currentPrice ?? newPlayer.currentPrice,
@@ -711,13 +853,15 @@ export const useTradeStore = create<TradeStoreState>()(
           savedPrice?.previousPrice ?? newPlayer.previousPrice,
           base
         );
-        const priceHistory =
+        const rawHistory =
           savedPrice?.priceHistory && savedPrice.priceHistory.length > 0
-            ? savedPrice.priceHistory.map((pt) => ({
-                timeLabel: pt.timeLabel,
-                price: clampToPriceLimit(pt.price, base),
-              }))
+            ? savedPrice.priceHistory
             : newPlayer.priceHistory;
+        const priceHistory = normalizePriceHistory(
+          rawHistory,
+          openPrice,
+          base
+        );
 
         const normalized: Player = {
           ...newPlayer,
@@ -729,6 +873,7 @@ export const useTradeStore = create<TradeStoreState>()(
           totalShares: tierCfg.totalShares,
           marketSupply: tierCfg.marketSupply,
           basePrice: base,
+          openPrice,
           initialPrice: base,
           currentPrice,
           previousPrice,
@@ -740,6 +885,8 @@ export const useTradeStore = create<TradeStoreState>()(
           playerPrices: {
             ...playerPrices,
             [normalized.id]: {
+              openPrice: normalized.openPrice,
+              closePrice: normalized.closePrice,
               currentPrice: normalized.currentPrice,
               previousPrice: normalized.previousPrice,
               priceHistory: normalized.priceHistory,
@@ -920,6 +1067,10 @@ export const useTradeStore = create<TradeStoreState>()(
               );
               const tierCfg = getTierConfig(basePrice);
               const savedPrice = nextPlayerPrices[newId];
+              const openPrice = clampToPriceLimit(
+                savedPrice?.openPrice ?? basePrice,
+                basePrice
+              );
 
               const currentPrice = clampToPriceLimit(
                 savedPrice?.currentPrice ?? basePrice,
@@ -929,19 +1080,56 @@ export const useTradeStore = create<TradeStoreState>()(
                 savedPrice?.previousPrice ?? basePrice,
                 basePrice
               );
-              const priceHistory =
+              const isMatchFT =
+                match.status === "FT" || match.rawStatus === "FINISHED";
+              const closePrice = isMatchFT
+                ? clampToPriceLimit(
+                    savedPrice?.closePrice ?? currentPrice,
+                    basePrice
+                  )
+                : savedPrice?.closePrice;
+
+              const curMin = Math.min(
+                90,
+                Math.max(0, match.minute ?? (isMatchFT ? 90 : 45))
+              );
+              const rawHistory =
                 savedPrice?.priceHistory && savedPrice.priceHistory.length > 0
-                  ? savedPrice.priceHistory.map((pt) => ({
-                      timeLabel: pt.timeLabel,
-                      price: clampToPriceLimit(pt.price, basePrice),
-                    }))
+                  ? savedPrice.priceHistory
                   : [
-                      { timeLabel: "15'", price: basePrice },
-                      { timeLabel: "30'", price: basePrice },
-                      { timeLabel: "45'", price: previousPrice },
-                      { timeLabel: "60'", price: previousPrice },
-                      { timeLabel: "현재", price: currentPrice },
+                      {
+                        minute: 0,
+                        timeLabel: "0'",
+                        price: openPrice,
+                        changePercentFromOpen: 0,
+                      },
+                      {
+                        minute: 15,
+                        timeLabel: "15'",
+                        price: openPrice,
+                        changePercentFromOpen: 0,
+                      },
+                      {
+                        minute: 30,
+                        timeLabel: "30'",
+                        price: previousPrice,
+                      },
+                      {
+                        minute: 45,
+                        timeLabel: "45'",
+                        price: previousPrice,
+                      },
+                      {
+                        minute: Math.max(46, curMin),
+                        timeLabel: formatMinuteLabel(Math.max(46, curMin)),
+                        price: currentPrice,
+                      },
                     ];
+              const priceHistory = normalizePriceHistory(
+                rawHistory,
+                openPrice,
+                basePrice
+              );
 
               const clubName =
                 !isAMatch
@@ -966,6 +1154,8 @@ export const useTradeStore = create<TradeStoreState>()(
                 totalShares: tierCfg.totalShares,
                 marketSupply: tierCfg.marketSupply,
                 basePrice,
+                openPrice,
+                closePrice,
                 initialPrice: basePrice,
                 currentPrice,
                 previousPrice,
@@ -989,6 +1179,8 @@ export const useTradeStore = create<TradeStoreState>()(
 
               nextPlayers.push(newListedPlayer);
               nextPlayerPrices[newId] = {
+                openPrice,
+                closePrice,
                 currentPrice,
                 previousPrice,
                 priceHistory,
@@ -1048,7 +1240,7 @@ export const useTradeStore = create<TradeStoreState>()(
           const isMatchLive =
             m.status === "LIVE" || m.rawStatus === "IN_PLAY";
           if (!isMatchLive) return m;
-          const nextMin = (m.minute ?? 45) >= 89 ? 46 : (m.minute ?? 45) + 1;
+          const nextMin = (m.minute ?? 45) >= 90 ? 46 : (m.minute ?? 45) + 1;
           return { ...m, minute: nextMin };
         });
 
@@ -1063,6 +1255,10 @@ export const useTradeStore = create<TradeStoreState>()(
         const updatedPlayers = players.map((player) => {
           const basePrice = roundToTen(
             player.basePrice ?? player.initialPrice ?? 10000
+          );
+          const openPrice = clampToPriceLimit(
+            player.openPrice ?? player.priceHistory[0]?.price ?? basePrice,
+            basePrice
           );
           const safeCurrentPrice = clampToPriceLimit(
             player.currentPrice,
@@ -1082,12 +1278,18 @@ export const useTradeStore = create<TradeStoreState>()(
               ) ?? directMatch;
           const isLive =
             match?.status === "LIVE" || match?.rawStatus === "IN_PLAY";
+          const isFT =
+            match?.status === "FT" || match?.rawStatus === "FINISHED";
 
           // Guard: Only fluctuate prices for LIVE matches (FT and UPCOMING stay fixed)
           if (!isLive) {
             return {
               ...player,
               basePrice,
+              openPrice,
+              closePrice: isFT
+                ? player.closePrice ?? safeCurrentPrice
+                : player.closePrice,
               initialPrice: basePrice,
               currentPrice: safeCurrentPrice,
             };
@@ -1120,13 +1322,17 @@ export const useTradeStore = create<TradeStoreState>()(
             return {
               ...player,
               basePrice,
+              openPrice,
               initialPrice: basePrice,
               currentPrice: safeCurrentPrice,
             };
           }
 
-          const currentMinute = match?.minute ?? player.lastEvent.minute;
-          const timeLabel = `${currentMinute}'`;
+          const currentMinute = Math.max(
+            1,
+            Math.min(95, match?.minute ?? player.lastEvent.minute ?? 46)
+          );
+          const timeLabel = formatMinuteLabel(currentMinute);
 
           const nextStats = { ...player.stats };
           if (isSpecialGoalOrAssist && chosen.statEffect === "goal") {
@@ -1169,12 +1375,78 @@ export const useTradeStore = create<TradeStoreState>()(
               : "🔄 수비 대형 유지 및 볼 순환"
             : chosen.text;
 
-          const nextHistory = [
-            ...player.priceHistory.slice(-9),
-            { timeLabel, price: nextPrice },
-          ];
+          const tickImpactPct = Number(
+            (
+              ((nextPrice - safeCurrentPrice) /
+                Math.max(1, safeCurrentPrice)) *
+              100
+            ).toFixed(1)
+          );
+
+          const isMilestoneChartEvent =
+            isSpecialGoalOrAssist ||
+            (Boolean(chosen.chartEventType) &&
+              chosen.chartEventType !== "GOAL" &&
+              chosen.chartEventType !== "ASSIST" &&
+              Math.random() < 0.12 &&
+              ((chosen.chartEventType === "YELLOW_CARD" &&
+                nextPrice < safeCurrentPrice) ||
+                (chosen.chartEventType === "SAVE" &&
+                  nextPrice > safeCurrentPrice)));
+
+          const eventMarker: ChartEventMarker | undefined =
+            isMilestoneChartEvent && chosen.chartEventType
+              ? {
+                  type: chosen.chartEventType,
+                  label: `${chosen.chartEventTitle ?? "⚡ 주요 장면"} (${
+                    tickImpactPct >= 0 ? "+" : ""
+                  }${tickImpactPct.toFixed(1)}%)`,
+                  impactPercent: tickImpactPct,
+                }
+              : undefined;
+
+          const changePercentFromOpen = Number(
+            (
+              ((nextPrice - openPrice) / Math.max(1, openPrice)) *
+              100
+            ).toFixed(2)
+          );
+
+          // Sequential 0~90 minute timeline preservation:
+          // Keep points strictly before currentMinute, always preserving 0' (openPrice) and any event points
+          const priorPoints = player.priceHistory.filter(
+            (pt) => pt.minute < currentMinute
+          );
+          const sameMinuteExisting = player.priceHistory.find(
+            (pt) => pt.minute === currentMinute
+          );
+          const mergedEvent = eventMarker ?? sameMinuteExisting?.event;
+
+          // Keep all milestone/event points + 0', 15', 30', 45' anchors + recent ticks so chart stays clean & detailed
+          const compactedPrior = priorPoints.filter((pt, idx, arr) => {
+            if (pt.minute === 0 || pt.minute === 45 || pt.event) return true;
+            if (pt.minute % 15 === 0) return true;
+            return idx >= arr.length - 12;
+          });
+
+          const nextHistory = normalizePriceHistory(
+            [
+              ...compactedPrior,
+              {
+                minute: currentMinute,
+                timeLabel,
+                price: nextPrice,
+                changePercentFromOpen,
+                ...(mergedEvent ? { event: mergedEvent } : {}),
+              },
+            ],
+            openPrice,
+            basePrice
+          );
 
           nextPlayerPrices[player.id] = {
+            openPrice,
+            closePrice: player.closePrice,
             currentPrice: nextPrice,
             previousPrice: safeCurrentPrice,
             priceHistory: nextHistory,
@@ -1183,6 +1455,7 @@ export const useTradeStore = create<TradeStoreState>()(
           return {
             ...player,
             basePrice,
+            openPrice,
             initialPrice: basePrice,
             previousPrice: safeCurrentPrice,
             currentPrice: nextPrice,
@@ -1421,6 +1694,10 @@ export const useTradeStore = create<TradeStoreState>()(
       },
 
       triggerForceGoalEvent: (targetPlayerId) => {
+        return get().triggerMatchEvent(targetPlayerId, "GOAL");
+      },
+
+      triggerMatchEvent: (targetPlayerId, eventType = "GOAL") => {
         const { players, playerPrices, holdings, matches } = get();
         if (players.length === 0) return null;
 
@@ -1448,21 +1725,83 @@ export const useTradeStore = create<TradeStoreState>()(
         const basePrice = roundToTen(
           target.basePrice ?? target.initialPrice ?? 10000
         );
-        const tierCfg = getTierConfig(basePrice);
-        const capPrice = roundToTen(basePrice * 1.3);
-        const prevPrice = clampToPriceLimit(target.currentPrice, basePrice);
-
-        // Apply Wonderkid volatilityMultiplier (S: 1.2x ~ C: 2.2x) to forced goal event
-        const baseGoalRate = 0.065 + Math.random() * 0.02;
-        const spikeMultiplier = 1 + baseGoalRate * tierCfg.volatilityMultiplier;
-        let nextPrice = clampToPriceLimit(
-          Math.round(prevPrice * spikeMultiplier),
+        const openPrice = clampToPriceLimit(
+          target.openPrice ?? target.priceHistory[0]?.price ?? basePrice,
           basePrice
         );
-        if (nextPrice <= prevPrice && prevPrice < capPrice) {
-          nextPrice = clampToPriceLimit(prevPrice + 300, basePrice);
+        const tierCfg = getTierConfig(basePrice);
+        const capPrice = roundToTen(basePrice * 1.3);
+        const floorPrice = roundToTen(basePrice * 0.7);
+        const prevPrice = clampToPriceLimit(target.currentPrice, basePrice);
+
+        const eventMetaMap: Record<
+          ChartEventType,
+          {
+            baseRate: number;
+            title: string;
+            feedText: string;
+            sentiment: "positive" | "negative" | "neutral";
+          }
+        > = {
+          GOAL: {
+            baseRate: 0.068 + Math.random() * 0.018,
+            title: "⚽ 득점",
+            feedText: "⚽ [GOAL] 환상적인 원더골 작렬!! (시세 급등)",
+            sentiment: "positive",
+          },
+          ASSIST: {
+            baseRate: 0.038 + Math.random() * 0.015,
+            title: "🅰️ 도움",
+            feedText: "🅰️ [ASSIST] 수비 라인을 허무는 결정적 어시스트 기록!",
+            sentiment: "positive",
+          },
+          SAVE: {
+            baseRate: 0.032 + Math.random() * 0.014,
+            title: "🧤 슈퍼 세이브",
+            feedText: "🧤 [SAVE] 1대1 결정적 실점 위기를 막아내는 슈퍼 세이브!",
+            sentiment: "positive",
+          },
+          YELLOW_CARD: {
+            baseRate: -(0.025 + Math.random() * 0.012),
+            title: "🟨 경고",
+            feedText: "🟨 거친 태클로 인한 옐로카드 경고 누적 주의",
+            sentiment: "negative",
+          },
+          RED_CARD: {
+            baseRate: -(0.08 + Math.random() * 0.03),
+            title: "🟥 퇴장",
+            feedText: "🟥 위험한 파울로 인한 다이렉트 퇴장 선언! (시세 급락)",
+            sentiment: "negative",
+          },
+          SUB_OUT: {
+            baseRate: -0.008 + Math.random() * 0.016,
+            title: "🔄 교체 아웃",
+            feedText: "🔄 전술 변화 및 체력 안배를 위한 교체 아웃",
+            sentiment: "neutral",
+          },
+        };
+
+        const meta = eventMetaMap[eventType] ?? eventMetaMap.GOAL;
+        const scaledRate = meta.baseRate * tierCfg.volatilityMultiplier;
+        let nextPrice = clampToPriceLimit(
+          Math.round(prevPrice * (1 + scaledRate)),
+          basePrice
+        );
+
+        if (meta.baseRate > 0 && nextPrice <= prevPrice && prevPrice < capPrice) {
+          nextPrice = clampToPriceLimit(prevPrice + 250, basePrice);
+        } else if (
+          meta.baseRate < 0 &&
+          nextPrice >= prevPrice &&
+          prevPrice > floorPrice
+        ) {
+          nextPrice = clampToPriceLimit(prevPrice - 200, basePrice);
         }
-        const capped = nextPrice >= capPrice && prevPrice >= capPrice;
+
+        const capped =
+          meta.baseRate > 0
+            ? nextPrice >= capPrice && prevPrice >= capPrice
+            : nextPrice <= floorPrice && prevPrice <= floorPrice;
 
         const match =
           matches.find(
@@ -1470,34 +1809,103 @@ export const useTradeStore = create<TradeStoreState>()(
               (m.status === "LIVE" || m.rawStatus === "IN_PLAY") &&
               doesPlayerBelongToMatch(target!, m)
           ) ?? matches.find((m) => doesPlayerBelongToMatch(target!, m));
-        const currentMinute = match?.minute ?? 77;
-        const timeLabel = `${currentMinute}'`;
 
-        const nextHistory = [
-          ...target.priceHistory.slice(-9),
-          { timeLabel, price: nextPrice },
-        ];
+        const lastHistoryMin =
+          target.priceHistory[target.priceHistory.length - 1]?.minute ?? 60;
+        const currentMinute = Math.min(
+          92,
+          Math.max(1, match?.minute ?? Math.min(90, lastHistoryMin + 2))
+        );
+        const timeLabel = formatMinuteLabel(currentMinute);
+
+        const ratePct = Number(
+          (
+            prevPrice > 0 ? ((nextPrice - prevPrice) / prevPrice) * 100 : 0
+          ).toFixed(1)
+        );
+        const eventMarker: ChartEventMarker = {
+          type: eventType,
+          label: `${meta.title} (${ratePct >= 0 ? "+" : ""}${ratePct.toFixed(
+            1
+          )}%)`,
+          impactPercent: ratePct,
+        };
+
+        const priorPoints = target.priceHistory.filter(
+          (pt) => pt.minute < currentMinute
+        );
+        const nextHistory = normalizePriceHistory(
+          [
+            ...priorPoints,
+            {
+              minute: currentMinute,
+              timeLabel,
+              price: nextPrice,
+              changePercentFromOpen: Number(
+                (
+                  ((nextPrice - openPrice) / Math.max(1, openPrice)) *
+                  100
+                ).toFixed(2)
+              ),
+              event: eventMarker,
+            },
+          ],
+          openPrice,
+          basePrice
+        );
+
+        const nextStats = {
+          ...target.stats,
+          goals:
+            eventType === "GOAL"
+              ? (target.stats?.goals ?? 0) + 1
+              : target.stats?.goals ?? 0,
+          assists:
+            eventType === "ASSIST"
+              ? (target.stats?.assists ?? 0) + 1
+              : target.stats?.assists ?? 0,
+          shotsOnTarget:
+            eventType === "GOAL"
+              ? (target.stats?.shotsOnTarget ?? 0) + 1
+              : target.stats?.shotsOnTarget ?? 0,
+          keyPasses:
+            eventType === "ASSIST"
+              ? (target.stats?.keyPasses ?? 0) + 1
+              : target.stats?.keyPasses ?? 0,
+          rating: Number(
+            Math.min(
+              9.9,
+              Math.max(
+                5.0,
+                (target.stats?.rating ?? 7.5) +
+                  (eventType === "GOAL"
+                    ? 0.4
+                    : eventType === "ASSIST" || eventType === "SAVE"
+                    ? 0.3
+                    : eventType === "RED_CARD"
+                    ? -0.8
+                    : eventType === "YELLOW_CARD"
+                    ? -0.2
+                    : 0)
+              )
+            ).toFixed(1)
+          ),
+        };
 
         const updatedPlayer: Player = {
           ...target,
           basePrice,
+          openPrice,
           initialPrice: basePrice,
           previousPrice: prevPrice,
           currentPrice: nextPrice,
           priceHistory: nextHistory,
           lastEvent: {
-            text: "⚽ [GOAL] 환상적인 원더골 작렬!! (시세 급등)",
-            sentiment: "positive",
+            text: meta.feedText,
+            sentiment: meta.sentiment,
             minute: currentMinute,
           },
-          stats: {
-            ...target.stats,
-            goals: (target.stats?.goals ?? 0) + 1,
-            shotsOnTarget: (target.stats?.shotsOnTarget ?? 0) + 1,
-            rating: Number(
-              Math.min(9.9, (target.stats?.rating ?? 7.5) + 0.4).toFixed(1)
-            ),
-          },
+          stats: nextStats,
         };
 
         const nextPlayers = players.map((p) =>
@@ -1507,6 +1915,8 @@ export const useTradeStore = create<TradeStoreState>()(
         const nextPlayerPrices: Record<string, PersistedPlayerPrice> = {
           ...playerPrices,
           [updatedPlayer.id]: {
+            openPrice,
+            closePrice: updatedPlayer.closePrice,
             currentPrice: nextPrice,
             previousPrice: prevPrice,
             priceHistory: nextHistory,
@@ -1521,13 +1931,18 @@ export const useTradeStore = create<TradeStoreState>()(
 
           return {
             ...m,
-            homeTeam: isHome
-              ? { ...m.homeTeam, score: (m.homeTeam.score ?? 0) + 1 }
-              : m.homeTeam,
-            awayTeam: isAway
-              ? { ...m.awayTeam, score: (m.awayTeam.score ?? 0) + 1 }
-              : m.awayTeam,
-            highlightText: `⚽ ${updatedPlayer.name} 추가골 작렬! (통산 ${updatedPlayer.stats.goals}골) · 실시간 시세 급등`,
+            homeTeam:
+              eventType === "GOAL" && isHome
+                ? { ...m.homeTeam, score: (m.homeTeam.score ?? 0) + 1 }
+                : m.homeTeam,
+            awayTeam:
+              eventType === "GOAL" && isAway
+                ? { ...m.awayTeam, score: (m.awayTeam.score ?? 0) + 1 }
+                : m.awayTeam,
+            highlightText:
+              eventType === "GOAL"
+                ? `⚽ ${updatedPlayer.name} 추가골 작렬! (통산 ${updatedPlayer.stats.goals}골) · 실시간 시세 급등`
+                : `${meta.title} · ${updatedPlayer.name} (${currentMinute}') 실시간 시세 반영`,
           };
         });
 
@@ -1536,9 +1951,6 @@ export const useTradeStore = create<TradeStoreState>()(
           playerPrices: nextPlayerPrices,
           matches: nextMatches,
         });
-
-        const ratePct =
-          prevPrice > 0 ? ((nextPrice - prevPrice) / prevPrice) * 100 : 0;
 
         return {
           player: updatedPlayer,

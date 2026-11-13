@@ -4,6 +4,9 @@ import {
   DateKey,
   Position,
   EventSentiment,
+  ChartEventType,
+  ChartEventMarker,
+  PricePoint,
 } from "@/types";
 import { getTierConfig } from "@/utils/tier";
 
@@ -433,9 +436,42 @@ interface SquadPlayerSeed {
 
 function createSquadPlayer(seed: SquadPlayerSeed): Player {
   const cfg = getTierConfig(seed.basePrice);
-  const currentPrice = seed.currentPrice ?? Math.round((seed.basePrice * 1.03) / 10) * 10;
-  const previousPrice = seed.previousPrice ?? Math.round((seed.basePrice * 1.015) / 10) * 10;
-  const midPrice = Math.round(((seed.basePrice + previousPrice) / 2) / 10) * 10;
+  const openPrice = seed.basePrice;
+  const currentPrice =
+    seed.currentPrice ?? Math.round((seed.basePrice * 1.03) / 10) * 10;
+  const previousPrice =
+    seed.previousPrice ?? Math.round((seed.basePrice * 1.015) / 10) * 10;
+  const midPrice15 =
+    Math.round(((openPrice * 2 + previousPrice) / 3) / 10) * 10;
+  const midPrice30 = Math.round(((openPrice + previousPrice) / 2) / 10) * 10;
+  const eventMinute = seed.minute ?? 58;
+  const impactPct = Number(
+    (((currentPrice - previousPrice) / Math.max(1, previousPrice)) * 100).toFixed(
+      1
+    )
+  );
+
+  let autoEvent: ChartEventMarker | undefined;
+  if ((seed.goals ?? 0) > 0) {
+    autoEvent = {
+      type: "GOAL",
+      label: `⚽ 득점 (${impactPct >= 0 ? "+" : ""}${Math.max(4.5, impactPct).toFixed(1)}%)`,
+      impactPercent: Math.max(4.5, impactPct),
+    };
+  } else if ((seed.assists ?? 0) > 0) {
+    autoEvent = {
+      type: "ASSIST",
+      label: `🅰️ 도움 (${impactPct >= 0 ? "+" : ""}${Math.max(3.2, impactPct).toFixed(1)}%)`,
+      impactPercent: Math.max(3.2, impactPct),
+    };
+  } else if (seed.position === "GK") {
+    autoEvent = {
+      type: "SAVE",
+      label: `🧤 슈퍼세이브 (+${Math.max(2.4, Math.abs(impactPct)).toFixed(1)}%)`,
+      impactPercent: Math.max(2.4, Math.abs(impactPct)),
+    };
+  }
+
   return {
     id: seed.id,
     name: seed.name,
@@ -451,21 +487,51 @@ function createSquadPlayer(seed: SquadPlayerSeed): Player {
     tier: cfg.tier,
     totalShares: cfg.totalShares,
     marketSupply: cfg.marketSupply,
-    basePrice: seed.basePrice,
-    initialPrice: seed.basePrice,
+    basePrice: openPrice,
+    openPrice,
+    initialPrice: openPrice,
     currentPrice,
     previousPrice,
     priceHistory: [
-      { timeLabel: "15'", price: seed.basePrice },
-      { timeLabel: "30'", price: midPrice },
-      { timeLabel: "45'", price: previousPrice },
-      { timeLabel: "60'", price: previousPrice },
-      { timeLabel: "현재", price: currentPrice },
+      { minute: 0, timeLabel: "0'", price: openPrice, changePercentFromOpen: 0 },
+      {
+        minute: 15,
+        timeLabel: "15'",
+        price: midPrice15,
+        changePercentFromOpen: Number(
+          (((midPrice15 - openPrice) / openPrice) * 100).toFixed(2)
+        ),
+      },
+      {
+        minute: 30,
+        timeLabel: "30'",
+        price: midPrice30,
+        changePercentFromOpen: Number(
+          (((midPrice30 - openPrice) / openPrice) * 100).toFixed(2)
+        ),
+      },
+      {
+        minute: 45,
+        timeLabel: "45'",
+        price: previousPrice,
+        changePercentFromOpen: Number(
+          (((previousPrice - openPrice) / openPrice) * 100).toFixed(2)
+        ),
+      },
+      {
+        minute: eventMinute,
+        timeLabel: `${eventMinute}'`,
+        price: currentPrice,
+        changePercentFromOpen: Number(
+          (((currentPrice - openPrice) / openPrice) * 100).toFixed(2)
+        ),
+        ...(autoEvent ? { event: autoEvent } : {}),
+      },
     ],
     lastEvent: {
       text: seed.eventText,
       sentiment: seed.sentiment ?? "positive",
-      minute: seed.minute ?? 55,
+      minute: eventMinute,
     },
     stats: {
       rating: seed.rating ?? 7.5,
@@ -499,15 +565,35 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: 68,
       };
     })(),
+    openPrice: 18000,
     initialPrice: 18000,
     currentPrice: 19400,
     previousPrice: 18900,
     priceHistory: [
-      { timeLabel: "15'", price: 18000 },
-      { timeLabel: "30'", price: 18350 },
-      { timeLabel: "45'", price: 18800 },
-      { timeLabel: "55'", price: 18900 },
-      { timeLabel: "67'", price: 19400 },
+      { minute: 0, timeLabel: "0'", price: 18000 },
+      { minute: 14, timeLabel: "14'", price: 18150 },
+      {
+        minute: 27,
+        timeLabel: "27'",
+        price: 18650,
+        event: {
+          type: "ASSIST",
+          label: "🅰️ 컷백 도움 (+3.6%)",
+          impactPercent: 3.6,
+        },
+      },
+      { minute: 45, timeLabel: "45'", price: 18800 },
+      { minute: 55, timeLabel: "55'", price: 18900 },
+      {
+        minute: 67,
+        timeLabel: "67'",
+        price: 19400,
+        event: {
+          type: "GOAL",
+          label: "⚽ 감아차기 골 (+7.8%)",
+          impactPercent: 7.8,
+        },
+      },
     ],
     lastEvent: {
       text: "⚽ 페널티 박스 좌측 감아차기 골!!",
@@ -542,15 +628,26 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 11500,
     initialPrice: 11500,
     currentPrice: 12100,
     previousPrice: 11900,
     priceHistory: [
-      { timeLabel: "15'", price: 11500 },
-      { timeLabel: "30'", price: 11650 },
-      { timeLabel: "45'", price: 11800 },
-      { timeLabel: "55'", price: 11900 },
-      { timeLabel: "67'", price: 12100 },
+      { minute: 0, timeLabel: "0'", price: 11500 },
+      { minute: 15, timeLabel: "15'", price: 11580 },
+      { minute: 30, timeLabel: "30'", price: 11650 },
+      { minute: 45, timeLabel: "45'", price: 11800 },
+      {
+        minute: 54,
+        timeLabel: "54'",
+        price: 12050,
+        event: {
+          type: "ASSIST",
+          label: "🅰️ 침투 스루패스 도움 (+4.3%)",
+          impactPercent: 4.3,
+        },
+      },
+      { minute: 67, timeLabel: "67'", price: 12100 },
     ],
     lastEvent: {
       text: "🎯 공간 침투 스루패스 성공",
@@ -585,15 +682,26 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 9500,
     initialPrice: 9500,
     currentPrice: 9750,
     previousPrice: 9600,
     priceHistory: [
-      { timeLabel: "15'", price: 9500 },
-      { timeLabel: "30'", price: 9400 },
-      { timeLabel: "45'", price: 9550 },
-      { timeLabel: "55'", price: 9600 },
-      { timeLabel: "67'", price: 9750 },
+      { minute: 0, timeLabel: "0'", price: 9500 },
+      { minute: 15, timeLabel: "15'", price: 9550 },
+      {
+        minute: 29,
+        timeLabel: "29'",
+        price: 9320,
+        event: {
+          type: "YELLOW_CARD",
+          label: "🟨 거친 태클 경고 (-2.4%)",
+          impactPercent: -2.4,
+        },
+      },
+      { minute: 45, timeLabel: "45'", price: 9550 },
+      { minute: 55, timeLabel: "55'", price: 9600 },
+      { minute: 67, timeLabel: "67'", price: 9750 },
     ],
     lastEvent: {
       text: "🛡️ 박스 안 결정적 인터셉트 성공",
@@ -628,15 +736,26 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 14500,
     initialPrice: 14500,
     currentPrice: 14950,
     previousPrice: 15100,
     priceHistory: [
-      { timeLabel: "15'", price: 14500 },
-      { timeLabel: "30'", price: 14900 },
-      { timeLabel: "45'", price: 15200 },
-      { timeLabel: "55'", price: 15100 },
-      { timeLabel: "67'", price: 14950 },
+      { minute: 0, timeLabel: "0'", price: 14500 },
+      { minute: 15, timeLabel: "15'", price: 14620 },
+      {
+        minute: 32,
+        timeLabel: "32'",
+        price: 15200,
+        event: {
+          type: "GOAL",
+          label: "⚽ 우측 컷인 선제골 (+5.8%)",
+          impactPercent: 5.8,
+        },
+      },
+      { minute: 45, timeLabel: "45'", price: 15150 },
+      { minute: 55, timeLabel: "55'", price: 15100 },
+      { minute: 67, timeLabel: "67'", price: 14950 },
     ],
     lastEvent: {
       text: "⚡ 우측면 돌파 후 날카로운 크로스",
@@ -671,15 +790,35 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 13200,
     initialPrice: 13200,
     currentPrice: 12900,
     previousPrice: 13050,
     priceHistory: [
-      { timeLabel: "15'", price: 13200 },
-      { timeLabel: "30'", price: 13300 },
-      { timeLabel: "45'", price: 13150 },
-      { timeLabel: "55'", price: 13050 },
-      { timeLabel: "67'", price: 12900 },
+      { minute: 0, timeLabel: "0'", price: 13200 },
+      { minute: 15, timeLabel: "15'", price: 13300 },
+      {
+        minute: 32,
+        timeLabel: "32'",
+        price: 13580,
+        event: {
+          type: "ASSIST",
+          label: "🅰️ 사카 골 도움 (+3.2%)",
+          impactPercent: 3.2,
+        },
+      },
+      { minute: 45, timeLabel: "45'", price: 13150 },
+      {
+        minute: 58,
+        timeLabel: "58'",
+        price: 12920,
+        event: {
+          type: "YELLOW_CARD",
+          label: "🟨 중원 지연 반칙 경고 (-1.9%)",
+          impactPercent: -1.9,
+        },
+      },
+      { minute: 67, timeLabel: "67'", price: 12900 },
     ],
     lastEvent: {
       text: "⚠️ 중원 압박에 막혀 패스 미스",
@@ -716,15 +855,25 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: 42, // 품절 임박 연출 (S티어 총 500주 중 초기 시장 잔여 42주)
       };
     })(),
+    openPrice: 18000,
     initialPrice: 18000,
     currentPrice: 19200,
     previousPrice: 18750,
     priceHistory: [
-      { timeLabel: "10'", price: 18000 },
-      { timeLabel: "20'", price: 18450 },
-      { timeLabel: "28'", price: 18900 },
-      { timeLabel: "34'", price: 18750 },
-      { timeLabel: "38'", price: 19200 },
+      { minute: 0, timeLabel: "0'", price: 18000 },
+      { minute: 10, timeLabel: "10'", price: 18150 },
+      {
+        minute: 22,
+        timeLabel: "22'",
+        price: 18950,
+        event: {
+          type: "GOAL",
+          label: "⚽ 왼발 발리 선제골 (+6.7%)",
+          impactPercent: 6.7,
+        },
+      },
+      { minute: 30, timeLabel: "30'", price: 18750 },
+      { minute: 38, timeLabel: "38'", price: 19200 },
     ],
     lastEvent: {
       text: "🔥 강력한 왼발 발리 유효슈팅!",
@@ -759,15 +908,25 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: 215, // A티어 총 1,000주 중 초기 시장 잔여 215주
       };
     })(),
+    openPrice: 15200,
     initialPrice: 15200,
     currentPrice: 15850,
     previousPrice: 15500,
     priceHistory: [
-      { timeLabel: "10'", price: 15200 },
-      { timeLabel: "20'", price: 15400 },
-      { timeLabel: "28'", price: 15650 },
-      { timeLabel: "34'", price: 15500 },
-      { timeLabel: "38'", price: 15850 },
+      { minute: 0, timeLabel: "0'", price: 15200 },
+      { minute: 12, timeLabel: "12'", price: 15320 },
+      {
+        minute: 22,
+        timeLabel: "22'",
+        price: 15720,
+        event: {
+          type: "ASSIST",
+          label: "🅰️ 홀란드 골 도움 (+3.9%)",
+          impactPercent: 3.9,
+        },
+      },
+      { minute: 32, timeLabel: "32'", price: 15500 },
+      { minute: 38, timeLabel: "38'", price: 15850 },
     ],
     lastEvent: {
       text: "⚡ 하프스페이스 정교한 턴 동작 후 왼발 슈팅",
@@ -802,15 +961,25 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 15500,
     initialPrice: 15500,
     currentPrice: 16150,
     previousPrice: 15900,
     priceHistory: [
-      { timeLabel: "10'", price: 15500 },
-      { timeLabel: "20'", price: 15700 },
-      { timeLabel: "28'", price: 16000 },
-      { timeLabel: "34'", price: 15900 },
-      { timeLabel: "38'", price: 16150 },
+      { minute: 0, timeLabel: "0'", price: 15500 },
+      { minute: 14, timeLabel: "14'", price: 15680 },
+      { minute: 26, timeLabel: "26'", price: 15900 },
+      {
+        minute: 35,
+        timeLabel: "35'",
+        price: 16150,
+        event: {
+          type: "ASSIST",
+          label: "🅰️ 택배 크로스 도움 (+4.2%)",
+          impactPercent: 4.2,
+        },
+      },
+      { minute: 38, timeLabel: "38'", price: 16150 },
     ],
     lastEvent: {
       text: "🅰️ 수비 사이를 가르는 택배 크로스!",
@@ -845,15 +1014,25 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 18200,
     initialPrice: 18200,
     currentPrice: 19100,
     previousPrice: 18600,
     priceHistory: [
-      { timeLabel: "10'", price: 18200 },
-      { timeLabel: "20'", price: 18050 },
-      { timeLabel: "28'", price: 18400 },
-      { timeLabel: "34'", price: 18600 },
-      { timeLabel: "38'", price: 19100 },
+      { minute: 0, timeLabel: "0'", price: 18200 },
+      { minute: 12, timeLabel: "12'", price: 18050 },
+      { minute: 25, timeLabel: "25'", price: 18400 },
+      {
+        minute: 36,
+        timeLabel: "36'",
+        price: 19100,
+        event: {
+          type: "GOAL",
+          label: "⚽ 역습 동점골 작렬 (+6.4%)",
+          impactPercent: 6.4,
+        },
+      },
+      { minute: 38, timeLabel: "38'", price: 19100 },
     ],
     lastEvent: {
       text: "⚽ 역습 찬스 침착한 마무리 동점골!",
@@ -888,15 +1067,25 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 10800,
     initialPrice: 10800,
     currentPrice: 10650,
     previousPrice: 10750,
     priceHistory: [
-      { timeLabel: "10'", price: 10800 },
-      { timeLabel: "20'", price: 10900 },
-      { timeLabel: "28'", price: 10700 },
-      { timeLabel: "34'", price: 10750 },
-      { timeLabel: "38'", price: 10650 },
+      { minute: 0, timeLabel: "0'", price: 10800 },
+      { minute: 12, timeLabel: "12'", price: 10900 },
+      {
+        minute: 24,
+        timeLabel: "24'",
+        price: 10620,
+        event: {
+          type: "YELLOW_CARD",
+          label: "🟨 역습 저지 파울 경고 (-2.5%)",
+          impactPercent: -2.5,
+        },
+      },
+      { minute: 32, timeLabel: "32'", price: 10750 },
+      { minute: 38, timeLabel: "38'", price: 10650 },
     ],
     lastEvent: {
       text: "🦅 공중볼 경합 승리 및 롱패스 연결",
@@ -933,15 +1122,25 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 18500,
     initialPrice: 18500,
     currentPrice: 19300,
     previousPrice: 19000,
     priceHistory: [
-      { timeLabel: "15'", price: 18500 },
-      { timeLabel: "30'", price: 18750 },
-      { timeLabel: "45'", price: 18900 },
-      { timeLabel: "50'", price: 19000 },
-      { timeLabel: "54'", price: 19300 },
+      { minute: 0, timeLabel: "0'", price: 18500 },
+      { minute: 15, timeLabel: "15'", price: 18650 },
+      {
+        minute: 31,
+        timeLabel: "31'",
+        price: 19150,
+        event: {
+          type: "GOAL",
+          label: "⚽ 중거리 원더골 (+5.4%)",
+          impactPercent: 5.4,
+        },
+      },
+      { minute: 45, timeLabel: "45'", price: 19000 },
+      { minute: 54, timeLabel: "54'", price: 19300 },
     ],
     lastEvent: {
       text: "✨ 중원 탈압박 후 환상적인 아웃프런트 패스",
@@ -976,15 +1175,26 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 12000,
     initialPrice: 12000,
     currentPrice: 12750,
     previousPrice: 12450,
     priceHistory: [
-      { timeLabel: "15'", price: 12000 },
-      { timeLabel: "30'", price: 12150 },
-      { timeLabel: "45'", price: 12300 },
-      { timeLabel: "50'", price: 12450 },
-      { timeLabel: "54'", price: 12750 },
+      { minute: 0, timeLabel: "0'", price: 12000 },
+      { minute: 15, timeLabel: "15'", price: 12150 },
+      { minute: 30, timeLabel: "30'", price: 12300 },
+      { minute: 45, timeLabel: "45'", price: 12450 },
+      {
+        minute: 52,
+        timeLabel: "52'",
+        price: 12750,
+        event: {
+          type: "SAVE",
+          label: "🧱 결정적 골라인 수비 (+4.2%)",
+          impactPercent: 4.2,
+        },
+      },
+      { minute: 54, timeLabel: "54'", price: 12750 },
     ],
     lastEvent: {
       text: "🧱 상대 단독 드리블 돌파 완벽 차단!",
@@ -1019,15 +1229,25 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 18000,
     initialPrice: 18000,
     currentPrice: 18400,
     previousPrice: 18250,
     priceHistory: [
-      { timeLabel: "15'", price: 18000 },
-      { timeLabel: "30'", price: 18300 },
-      { timeLabel: "45'", price: 18150 },
-      { timeLabel: "50'", price: 18250 },
-      { timeLabel: "54'", price: 18400 },
+      { minute: 0, timeLabel: "0'", price: 18000 },
+      { minute: 15, timeLabel: "15'", price: 18100 },
+      {
+        minute: 28,
+        timeLabel: "28'",
+        price: 18550,
+        event: {
+          type: "GOAL",
+          label: "⚽ 페널티박스 터닝골 (+5.1%)",
+          impactPercent: 5.1,
+        },
+      },
+      { minute: 45, timeLabel: "45'", price: 18250 },
+      { minute: 54, timeLabel: "54'", price: 18400 },
     ],
     lastEvent: {
       text: "🎯 2선으로 내려와 날카로운 연계 패스",
@@ -1064,15 +1284,12 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 14000,
     initialPrice: 14000,
     currentPrice: 14350,
     previousPrice: 14200,
     priceHistory: [
-      { timeLabel: "-60'", price: 14000 },
-      { timeLabel: "-45'", price: 14100 },
-      { timeLabel: "-30'", price: 14150 },
-      { timeLabel: "-15'", price: 14200 },
-      { timeLabel: "선발", price: 14350 },
+      { minute: 0, timeLabel: "0'", price: 14000 },
     ],
     lastEvent: {
       text: "📋 선발 명단 확정 · 팬 매수세 유입 중",
@@ -1107,15 +1324,12 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 12800,
     initialPrice: 12800,
     currentPrice: 12950,
     previousPrice: 12850,
     priceHistory: [
-      { timeLabel: "-60'", price: 12800 },
-      { timeLabel: "-45'", price: 12750 },
-      { timeLabel: "-30'", price: 12800 },
-      { timeLabel: "-15'", price: 12850 },
-      { timeLabel: "선발", price: 12950 },
+      { minute: 0, timeLabel: "0'", price: 12800 },
     ],
     lastEvent: {
       text: "📋 주장 완장 착용 선발 출전 대기",
@@ -1150,15 +1364,12 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 4800,
     initialPrice: 4800,
     currentPrice: 4950,
     previousPrice: 4850,
     priceHistory: [
-      { timeLabel: "-60'", price: 4800 },
-      { timeLabel: "-45'", price: 4820 },
-      { timeLabel: "-30'", price: 4850 },
-      { timeLabel: "-15'", price: 4900 },
-      { timeLabel: "선발", price: 4950 },
+      { minute: 0, timeLabel: "0'", price: 4800 },
     ],
     lastEvent: {
       text: "🌟 신예 중원 엔진 선발 출격 · 풍부한 유통 물량",
@@ -1195,15 +1406,28 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 12000,
+    closePrice: 13450,
     initialPrice: 12000,
     currentPrice: 13450,
     previousPrice: 13200,
     priceHistory: [
-      { timeLabel: "15'", price: 12000 },
-      { timeLabel: "35'", price: 12400 },
-      { timeLabel: "60'", price: 12900 },
-      { timeLabel: "75'", price: 13200 },
-      { timeLabel: "FT", price: 13450 },
+      { minute: 0, timeLabel: "0'", price: 12000 },
+      { minute: 15, timeLabel: "15'", price: 12180 },
+      { minute: 35, timeLabel: "35'", price: 12400 },
+      { minute: 45, timeLabel: "45'", price: 12550 },
+      { minute: 60, timeLabel: "60'", price: 12780 },
+      {
+        minute: 78,
+        timeLabel: "78'",
+        price: 13450,
+        event: {
+          type: "ASSIST",
+          label: "🅰️ 결승 택배 크로스 도움 (+6.2%)",
+          impactPercent: 6.2,
+        },
+      },
+      { minute: 90, timeLabel: "90'", price: 13450 },
     ],
     lastEvent: {
       text: "🅰️ 후반 78분 택배 크로스 어시스트! (MOM 선정)",
@@ -1239,15 +1463,37 @@ export const INITIAL_PLAYERS: Player[] = [
       };
     })(),
     basePrice: 4900,
+    openPrice: 4900,
+    closePrice: 5250,
     initialPrice: 4900,
     currentPrice: 5250,
     previousPrice: 5100,
     priceHistory: [
-      { timeLabel: "15'", price: 4900 },
-      { timeLabel: "35'", price: 5000 },
-      { timeLabel: "60'", price: 5080 },
-      { timeLabel: "75'", price: 5100 },
-      { timeLabel: "FT", price: 5250 },
+      { minute: 0, timeLabel: "0'", price: 4900 },
+      { minute: 15, timeLabel: "15'", price: 4960 },
+      {
+        minute: 34,
+        timeLabel: "34'",
+        price: 5220,
+        event: {
+          type: "GOAL",
+          label: "⚽ 원더키드 감아차기 골 (+6.5%)",
+          impactPercent: 6.5,
+        },
+      },
+      { minute: 45, timeLabel: "45'", price: 5150 },
+      { minute: 65, timeLabel: "65'", price: 5100 },
+      {
+        minute: 84,
+        timeLabel: "84'",
+        price: 5250,
+        event: {
+          type: "SUB_OUT",
+          label: "🔄 기립박수 교체 아웃 (+1.2%)",
+          impactPercent: 1.2,
+        },
+      },
+      { minute: 90, timeLabel: "90'", price: 5250 },
     ],
     lastEvent: {
       text: "⚡ 원더키드 측면 단독 드리블 돌파 후 유효슈팅",
@@ -1308,15 +1554,26 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 11200,
     initialPrice: 11200,
     currentPrice: 11850,
     previousPrice: 11500,
     priceHistory: [
-      { timeLabel: "15'", price: 11200 },
-      { timeLabel: "30'", price: 11350 },
-      { timeLabel: "45'", price: 11500 },
-      { timeLabel: "55'", price: 11650 },
-      { timeLabel: "62'", price: 11850 },
+      { minute: 0, timeLabel: "0'", price: 11200 },
+      { minute: 15, timeLabel: "15'", price: 11300 },
+      { minute: 30, timeLabel: "30'", price: 11350 },
+      { minute: 45, timeLabel: "45'", price: 11500 },
+      {
+        minute: 60,
+        timeLabel: "60'",
+        price: 11850,
+        event: {
+          type: "GOAL",
+          label: "⚽ 황소 돌파 추가골 (+5.8%)",
+          impactPercent: 5.8,
+        },
+      },
+      { minute: 62, timeLabel: "62'", price: 11850 },
     ],
     lastEvent: {
       text: "🐂 황소 같은 저돌적 돌파 후 추가골 작렬!",
@@ -1351,15 +1608,26 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 11000,
     initialPrice: 11000,
     currentPrice: 11300,
     previousPrice: 11150,
     priceHistory: [
-      { timeLabel: "15'", price: 11000 },
-      { timeLabel: "30'", price: 11100 },
-      { timeLabel: "45'", price: 11250 },
-      { timeLabel: "55'", price: 11150 },
-      { timeLabel: "62'", price: 11300 },
+      { minute: 0, timeLabel: "0'", price: 11000 },
+      { minute: 15, timeLabel: "15'", price: 11080 },
+      { minute: 30, timeLabel: "30'", price: 11100 },
+      { minute: 45, timeLabel: "45'", price: 11150 },
+      {
+        minute: 54,
+        timeLabel: "54'",
+        price: 11320,
+        event: {
+          type: "ASSIST",
+          label: "🅰️ 미토마 만회골 도움 (+3.6%)",
+          impactPercent: 3.6,
+        },
+      },
+      { minute: 62, timeLabel: "62'", price: 11300 },
     ],
     lastEvent: {
       text: "⚡ 우측면 컷인 후 위협적인 왼발 감아차기",
@@ -1394,15 +1662,26 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 10800,
     initialPrice: 10800,
     currentPrice: 11150,
     previousPrice: 10950,
     priceHistory: [
-      { timeLabel: "15'", price: 10800 },
-      { timeLabel: "30'", price: 10900 },
-      { timeLabel: "45'", price: 11050 },
-      { timeLabel: "55'", price: 10950 },
-      { timeLabel: "62'", price: 11150 },
+      { minute: 0, timeLabel: "0'", price: 10800 },
+      { minute: 15, timeLabel: "15'", price: 10850 },
+      { minute: 30, timeLabel: "30'", price: 10900 },
+      { minute: 45, timeLabel: "45'", price: 10950 },
+      {
+        minute: 54,
+        timeLabel: "54'",
+        price: 11180,
+        event: {
+          type: "GOAL",
+          label: "⚽ 측면 돌파 만회골 (+5.2%)",
+          impactPercent: 5.2,
+        },
+      },
+      { minute: 62, timeLabel: "62'", price: 11150 },
     ],
     lastEvent: {
       text: "⚽ 좌측면 단독 돌파 후 만회골 기록",
@@ -1437,15 +1716,26 @@ export const INITIAL_PLAYERS: Player[] = [
         marketSupply: cfg.marketSupply,
       };
     })(),
+    openPrice: 16500,
     initialPrice: 16500,
     currentPrice: 17100,
     previousPrice: 16850,
     priceHistory: [
-      { timeLabel: "15'", price: 16500 },
-      { timeLabel: "30'", price: 16700 },
-      { timeLabel: "45'", price: 16800 },
-      { timeLabel: "60'", price: 16850 },
-      { timeLabel: "74'", price: 17100 },
+      { minute: 0, timeLabel: "0'", price: 16500 },
+      { minute: 15, timeLabel: "15'", price: 16620 },
+      { minute: 30, timeLabel: "30'", price: 16700 },
+      { minute: 45, timeLabel: "45'", price: 16800 },
+      {
+        minute: 61,
+        timeLabel: "61'",
+        price: 17100,
+        event: {
+          type: "ASSIST",
+          label: "🅰️ 전진 스루패스 도움 (+3.8%)",
+          impactPercent: 3.8,
+        },
+      },
+      { minute: 74, timeLabel: "74'", price: 17100 },
     ],
     lastEvent: {
       text: "🎯 중원 빌드업 지배 및 대포알 중거리 슛",
@@ -2436,36 +2726,38 @@ export interface EventTemplate {
   minRate: number;
   maxRate: number;
   statEffect?: "goal" | "assist" | "shot" | "keyPass";
+  chartEventType?: ChartEventType;
+  chartEventTitle?: string;
 }
 
 const FW_EVENT_TEMPLATES: EventTemplate[] = [
   { text: "🔥 날카로운 유효슈팅! 골키퍼 선방", sentiment: "positive", minRate: 0.015, maxRate: 0.045, statEffect: "shot" },
-  { text: "⚽ 침착한 마무리로 추가 득점 성공!", sentiment: "positive", minRate: 0.045, maxRate: 0.08, statEffect: "goal" },
+  { text: "⚽ 침착한 마무리로 추가 득점 성공!", sentiment: "positive", minRate: 0.045, maxRate: 0.08, statEffect: "goal", chartEventType: "GOAL", chartEventTitle: "⚽ 득점" },
   { text: "⚡ 수비수 제치는 측면 드리블 돌파", sentiment: "positive", minRate: 0.01, maxRate: 0.035 },
-  { text: "🎯 동료에게 연결한 결정적 컷백 패스", sentiment: "positive", minRate: 0.015, maxRate: 0.035, statEffect: "keyPass" },
-  { text: "💨 오프사이드 위치 선언", sentiment: "negative", minRate: -0.03, maxRate: -0.01 },
+  { text: "🎯 동료에게 연결한 결정적 컷백 패스", sentiment: "positive", minRate: 0.015, maxRate: 0.035, statEffect: "keyPass", chartEventType: "ASSIST", chartEventTitle: "🅰️ 도움" },
+  { text: "🟨 전방 압박 중 거친 태클로 경고", sentiment: "negative", minRate: -0.035, maxRate: -0.012, chartEventType: "YELLOW_CARD", chartEventTitle: "🟨 경고" },
   { text: "😥 박스 안 슈팅이 골대 위로 벗어남", sentiment: "negative", minRate: -0.04, maxRate: -0.015 },
 ];
 
 const MF_EVENT_TEMPLATES: EventTemplate[] = [
   { text: "🎯 수비 라인을 허무는 침투 킬패스!", sentiment: "positive", minRate: 0.02, maxRate: 0.045, statEffect: "keyPass" },
-  { text: "🅰️ 정확한 크로스로 어시스트 기록!", sentiment: "positive", minRate: 0.04, maxRate: 0.07, statEffect: "assist" },
+  { text: "🅰️ 정확한 크로스로 어시스트 기록!", sentiment: "positive", minRate: 0.04, maxRate: 0.07, statEffect: "assist", chartEventType: "ASSIST", chartEventTitle: "🅰️ 도움" },
   { text: "✨ 중원 탈압박 후 반대 전환 롱패스 성공", sentiment: "positive", minRate: 0.01, maxRate: 0.03 },
   { text: "🚀 아크 정면 날카로운 중거리 슈팅", sentiment: "positive", minRate: 0.015, maxRate: 0.04, statEffect: "shot" },
-  { text: "⚠️ 상대 압박에 볼 소유권 턴오버", sentiment: "negative", minRate: -0.035, maxRate: -0.01 },
+  { text: "🟨 역습 저지 전술적 파울로 옐로카드", sentiment: "negative", minRate: -0.035, maxRate: -0.01, chartEventType: "YELLOW_CARD", chartEventTitle: "🟨 경고" },
   { text: "🔄 안정적인 중원 볼 배급 (패스 성공률 93%)", sentiment: "neutral", minRate: -0.005, maxRate: 0.015 },
 ];
 
 const DF_EVENT_TEMPLATES: EventTemplate[] = [
-  { text: "🛡️ 박스 안 결정적 블로킹으로 위기 차단!", sentiment: "positive", minRate: 0.02, maxRate: 0.05 },
+  { text: "🛡️ 박스 안 결정적 블로킹으로 위기 차단!", sentiment: "positive", minRate: 0.02, maxRate: 0.05, chartEventType: "SAVE", chartEventTitle: "🛡️ 결정적 차단" },
   { text: "🦅 공중볼 경합 완벽 승리 및 클리어링", sentiment: "positive", minRate: 0.01, maxRate: 0.03 },
   { text: "🧱 상대 에이스 1대1 돌파 완벽 수비", sentiment: "positive", minRate: 0.02, maxRate: 0.04 },
-  { text: "⚠️ 후방 빌드업 패스 미스 발생", sentiment: "negative", minRate: -0.04, maxRate: -0.015 },
+  { text: "🟨 박스 근처 위험 지역 파울 경고", sentiment: "negative", minRate: -0.04, maxRate: -0.015, chartEventType: "YELLOW_CARD", chartEventTitle: "🟨 경고" },
   { text: "🔄 안정적인 후방 빌드업 전개", sentiment: "neutral", minRate: -0.005, maxRate: 0.015 },
 ];
 
 const GK_EVENT_TEMPLATES: EventTemplate[] = [
-  { text: "🧤 동물적인 반사신경 슈퍼 세이브!", sentiment: "positive", minRate: 0.025, maxRate: 0.05 },
+  { text: "🧤 동물적인 반사신경 슈퍼 세이브!", sentiment: "positive", minRate: 0.025, maxRate: 0.05, chartEventType: "SAVE", chartEventTitle: "🧤 슈퍼 세이브" },
   { text: "⚠️ 골킥 연결 부정확", sentiment: "negative", minRate: -0.025, maxRate: -0.01 },
 ];
 

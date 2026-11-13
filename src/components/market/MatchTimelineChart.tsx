@@ -1,0 +1,1214 @@
+"use client";
+
+import React, { useMemo, useState } from "react";
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  ReferenceLine,
+  Tooltip,
+} from "recharts";
+import { Zap, Sparkles } from "lucide-react";
+import {
+  useTradeStore,
+  roundToTen,
+  clampToPriceLimit,
+  doesPlayerBelongToMatch,
+} from "@/store/useTradeStore";
+import {
+  ChartEventMarker,
+  ChartEventType,
+  Match,
+  Player,
+  PricePoint,
+} from "@/types";
+
+export type ChartViewMode = "MATCH_TIMELINE" | "OVERALL_MARKET";
+export type OverallPeriod = "1M" | "1D" | "1W" | "1M_MONTH";
+
+interface MatchTimelineChartProps {
+  player: Player;
+  /** Optional footer action (e.g. "즉시 주문" button in MarketChartTabView) */
+  footerAction?: React.ReactNode;
+  /** Whether to show quick live event simulator buttons */
+  showEventSimulator?: boolean;
+}
+
+interface OverallPoint {
+  timeLabel: string;
+  price: number;
+  changePct: number;
+}
+
+const OVERALL_PERIOD_TABS: {
+  key: OverallPeriod;
+  label: string;
+  desc: string;
+}[] = [
+  { key: "1M", label: "1분", desc: "최근 20분 분봉 추이" },
+  { key: "1D", label: "일", desc: "최근 14일 일별 종가 추이" },
+  { key: "1W", label: "주", desc: "최근 12주 주간 시세 흐름" },
+  { key: "1M_MONTH", label: "월", desc: "최근 6개월 시즌 월간 추이" },
+];
+
+export const EVENT_PIN_CONFIG: Record<
+  ChartEventType,
+  {
+    icon: string;
+    shortTitle: string;
+    fill: string;
+    stroke: string;
+    ring: string;
+    chipBg: string;
+    chipText: string;
+    chipBorder: string;
+  }
+> = {
+  GOAL: {
+    icon: "⚽",
+    shortTitle: "득점",
+    fill: "#059669",
+    stroke: "#fbbf24",
+    ring: "rgba(16, 185, 129, 0.28)",
+    chipBg: "bg-emerald-50",
+    chipText: "text-emerald-700",
+    chipBorder: "border-emerald-300",
+  },
+  ASSIST: {
+    icon: "🅰️",
+    shortTitle: "도움",
+    fill: "#0284c7",
+    stroke: "#bae6fd",
+    ring: "rgba(2, 132, 199, 0.25)",
+    chipBg: "bg-sky-50",
+    chipText: "text-sky-700",
+    chipBorder: "border-sky-300",
+  },
+  YELLOW_CARD: {
+    icon: "🟨",
+    shortTitle: "경고",
+    fill: "#d97706",
+    stroke: "#fde68a",
+    ring: "rgba(245, 158, 11, 0.25)",
+    chipBg: "bg-amber-50",
+    chipText: "text-amber-800",
+    chipBorder: "border-amber-300",
+  },
+  RED_CARD: {
+    icon: "🟥",
+    shortTitle: "퇴장",
+    fill: "#e11d48",
+    stroke: "#fecdd3",
+    ring: "rgba(225, 29, 72, 0.28)",
+    chipBg: "bg-rose-50",
+    chipText: "text-rose-700",
+    chipBorder: "border-rose-300",
+  },
+  SAVE: {
+    icon: "🧤",
+    shortTitle: "선방",
+    fill: "#7c3aed",
+    stroke: "#ddd6fe",
+    ring: "rgba(124, 58, 237, 0.25)",
+    chipBg: "bg-violet-50",
+    chipText: "text-violet-700",
+    chipBorder: "border-violet-300",
+  },
+  SUB_OUT: {
+    icon: "🔄",
+    shortTitle: "교체",
+    fill: "#475569",
+    stroke: "#cbd5e1",
+    ring: "rgba(71, 85, 105, 0.22)",
+    chipBg: "bg-slate-100",
+    chipText: "text-slate-700",
+    chipBorder: "border-slate-300",
+  },
+};
+
+function seededNoise(seedStr: string, index: number): number {
+  let h = 2166136261;
+  const str = `${seedStr}-${index}`;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 1000) / 1000;
+}
+
+function buildOverallSeries(
+  player: Player,
+  period: OverallPeriod
+): OverallPoint[] {
+  const basePrice = roundToTen(
+    player.basePrice ?? player.initialPrice ?? player.currentPrice
+  );
+  const currentPrice = roundToTen(player.currentPrice);
+
+  if (period === "1M") {
+    const count = 16;
+    const points: OverallPoint[] = [];
+    let cursor = basePrice;
+    for (let i = 0; i < count; i++) {
+      const minuteMark = Math.max(1, 55 + i * 2);
+      if (i === count - 1) {
+        points.push({
+          timeLabel: `${minuteMark}'`,
+          price: currentPrice,
+          changePct: Number(
+            (((currentPrice - basePrice) / basePrice) * 100).toFixed(2)
+          ),
+        });
+      } else {
+        const n = seededNoise(`${player.id}-1M`, i);
+        const drift =
+          ((currentPrice - basePrice) / count) * (0.65 + n * 0.7);
+        const wave = (n - 0.48) * basePrice * 0.028;
+        cursor = clampToPriceLimit(cursor + drift + wave, basePrice);
+        points.push({
+          timeLabel: `${minuteMark}'`,
+          price: cursor,
+          changePct: Number(
+            (((cursor - basePrice) / basePrice) * 100).toFixed(2)
+          ),
+        });
+      }
+    }
+    return points;
+  }
+
+  if (period === "1D") {
+    const count = 14;
+    const points: OverallPoint[] = [];
+    const now = new Date();
+    let cursor = clampToPriceLimit(
+      basePrice * (0.94 + seededNoise(player.id, 101) * 0.08),
+      basePrice
+    );
+    for (let i = 0; i < count; i++) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - (count - 1 - i));
+      const label = `${d.getMonth() + 1}/${d.getDate()}`;
+      if (i === count - 1) {
+        points.push({
+          timeLabel: label,
+          price: currentPrice,
+          changePct: Number(
+            (((currentPrice - basePrice) / basePrice) * 100).toFixed(2)
+          ),
+        });
+      } else {
+        const n = seededNoise(`${player.id}-1D`, i);
+        const step = (n - 0.47) * basePrice * 0.045;
+        cursor = clampToPriceLimit(cursor + step, basePrice);
+        points.push({
+          timeLabel: label,
+          price: cursor,
+          changePct: Number(
+            (((cursor - basePrice) / basePrice) * 100).toFixed(2)
+          ),
+        });
+      }
+    }
+    return points;
+  }
+
+  if (period === "1W") {
+    const count = 12;
+    const points: OverallPoint[] = [];
+    let cursor = clampToPriceLimit(
+      basePrice * (0.9 + seededNoise(player.id, 202) * 0.12),
+      basePrice
+    );
+    for (let i = 0; i < count; i++) {
+      const label = `${count - 1 - i}주전`;
+      if (i === count - 1) {
+        points.push({
+          timeLabel: "이번주",
+          price: currentPrice,
+          changePct: Number(
+            (((currentPrice - basePrice) / basePrice) * 100).toFixed(2)
+          ),
+        });
+      } else {
+        const n = seededNoise(`${player.id}-1W`, i);
+        const step = (n - 0.46) * basePrice * 0.06;
+        cursor = clampToPriceLimit(cursor + step, basePrice);
+        points.push({
+          timeLabel: label,
+          price: cursor,
+          changePct: Number(
+            (((cursor - basePrice) / basePrice) * 100).toFixed(2)
+          ),
+        });
+      }
+    }
+    return points;
+  }
+
+  const months = ["11월", "12월", "1월", "2월", "3월", "4월"];
+  let cursor = clampToPriceLimit(
+    basePrice * (0.88 + seededNoise(player.id, 303) * 0.14),
+    basePrice
+  );
+  return months.map((mLabel, idx) => {
+    if (idx === months.length - 1) {
+      return {
+        timeLabel: mLabel,
+        price: currentPrice,
+        changePct: Number(
+          (((currentPrice - basePrice) / basePrice) * 100).toFixed(2)
+        ),
+      };
+    }
+    const n = seededNoise(`${player.id}-MONTH`, idx);
+    cursor = clampToPriceLimit(
+      cursor + (n - 0.45) * basePrice * 0.075,
+      basePrice
+    );
+    return {
+      timeLabel: mLabel,
+      price: cursor,
+      changePct: Number(
+        (((cursor - basePrice) / basePrice) * 100).toFixed(2)
+      ),
+    };
+  });
+}
+
+function formatXAxisTick(min: number): string {
+  if (min === 0) return "0'(킥오프)";
+  if (min === 45) return "45'(HT)";
+  if (min === 90) return "90'(FT)";
+  if (min > 90) return `90+${min - 90}'`;
+  return `${min}'`;
+}
+
+export default function MatchTimelineChart({
+  player,
+  footerAction,
+  showEventSimulator = true,
+}: MatchTimelineChartProps) {
+  const matches = useTradeStore((s) => s.matches);
+  const triggerMatchEvent = useTradeStore((s) => s.triggerMatchEvent);
+
+  const [viewMode, setViewMode] = useState<ChartViewMode>("MATCH_TIMELINE");
+  const [overallPeriod, setOverallPeriod] = useState<OverallPeriod>("1D");
+  const [selectedEventMinute, setSelectedEventMinute] = useState<number | null>(
+    null
+  );
+
+  // Resolve the player's active match (prioritizing LIVE, then direct matchId, then team match)
+  const playerMatch: Match | undefined = useMemo(() => {
+    const direct = matches.find((m) => m.id === player.matchId);
+    if (direct && (direct.status === "LIVE" || direct.rawStatus === "IN_PLAY")) {
+      return direct;
+    }
+    const liveMatch = matches.find(
+      (m) =>
+        (m.status === "LIVE" || m.rawStatus === "IN_PLAY") &&
+        doesPlayerBelongToMatch(player, m)
+    );
+    if (liveMatch) return liveMatch;
+    if (direct) return direct;
+    return matches.find((m) => doesPlayerBelongToMatch(player, m));
+  }, [matches, player]);
+
+  const matchStatus: "LIVE" | "FT" | "UPCOMING" = useMemo(() => {
+    if (!playerMatch) return "LIVE";
+    if (
+      playerMatch.status === "LIVE" ||
+      playerMatch.rawStatus === "IN_PLAY"
+    ) {
+      return "LIVE";
+    }
+    if (
+      playerMatch.status === "FT" ||
+      playerMatch.rawStatus === "FINISHED"
+    ) {
+      return "FT";
+    }
+    return "UPCOMING";
+  }, [playerMatch]);
+
+  const basePrice = roundToTen(
+    player.basePrice ?? player.initialPrice ?? player.currentPrice
+  );
+  const openPrice = roundToTen(
+    player.openPrice ?? player.priceHistory[0]?.price ?? basePrice
+  );
+  const currentPrice = roundToTen(player.currentPrice);
+  const closePrice =
+    matchStatus === "FT"
+      ? roundToTen(player.closePrice ?? currentPrice)
+      : currentPrice;
+
+  // Build normalized 0~90+ minute timeline series
+  const timelineData: PricePoint[] = useMemo(() => {
+    const raw = Array.isArray(player.priceHistory) ? player.priceHistory : [];
+    const byMin = new Map<number, PricePoint>();
+
+    // Always anchor minute 0 at openPrice
+    byMin.set(0, {
+      minute: 0,
+      timeLabel: "0'",
+      price: openPrice,
+      changePercentFromOpen: 0,
+    });
+
+    raw.forEach((pt, idx) => {
+      const m =
+        typeof pt.minute === "number" && Number.isFinite(pt.minute)
+          ? Math.max(0, Math.min(96, Math.round(pt.minute)))
+          : Math.min(90, idx * 15);
+      const p = m === 0 ? openPrice : roundToTen(pt.price);
+      const prev = byMin.get(m);
+      byMin.set(m, {
+        minute: m,
+        timeLabel: pt.timeLabel || (m > 90 ? `90+${m - 90}'` : `${m}'`),
+        price: p,
+        changePercentFromOpen: Number(
+          (((p - openPrice) / Math.max(1, openPrice)) * 100).toFixed(2)
+        ),
+        event: pt.event ?? prev?.event,
+      });
+    });
+
+    // If UPCOMING and only 0' exists, keep at 0'
+    if (matchStatus === "UPCOMING" && byMin.size <= 2) {
+      return [
+        {
+          minute: 0,
+          timeLabel: "0'",
+          price: openPrice,
+          changePercentFromOpen: 0,
+        },
+      ];
+    }
+
+    // Ensure the latest match minute reflects currentPrice/closePrice
+    const sorted = Array.from(byMin.values()).sort(
+      (a, b) => a.minute - b.minute
+    );
+    const lastPt = sorted[sorted.length - 1];
+    const targetEndMin =
+      matchStatus === "FT"
+        ? Math.max(90, lastPt?.minute ?? 90)
+        : Math.max(
+            lastPt?.minute ?? 45,
+            playerMatch?.minute ?? player.lastEvent?.minute ?? 60
+          );
+
+    if (!lastPt || lastPt.minute < targetEndMin) {
+      sorted.push({
+        minute: targetEndMin,
+        timeLabel:
+          targetEndMin > 90 ? `90+${targetEndMin - 90}'` : `${targetEndMin}'`,
+        price: closePrice,
+        changePercentFromOpen: Number(
+          (((closePrice - openPrice) / Math.max(1, openPrice)) * 100).toFixed(2)
+        ),
+      });
+    } else if (lastPt) {
+      sorted[sorted.length - 1] = {
+        ...lastPt,
+        price: closePrice,
+        changePercentFromOpen: Number(
+          (((closePrice - openPrice) / Math.max(1, openPrice)) * 100).toFixed(2)
+        ),
+      };
+    }
+
+    return sorted;
+  }, [
+    player.priceHistory,
+    player.lastEvent?.minute,
+    openPrice,
+    closePrice,
+    matchStatus,
+    playerMatch?.minute,
+  ]);
+
+  // Extract all points that carry an event marker
+  const eventPoints = useMemo(
+    () => timelineData.filter((pt): pt is PricePoint & { event: ChartEventMarker } => Boolean(pt.event)),
+    [timelineData]
+  );
+
+  // Selected event point (defaults to latest event if user hasn't clicked a specific chip)
+  const activeEventPoint = useMemo(() => {
+    if (eventPoints.length === 0) return null;
+    if (selectedEventMinute !== null) {
+      const found = eventPoints.find((p) => p.minute === selectedEventMinute);
+      if (found) return found;
+    }
+    return eventPoints[eventPoints.length - 1];
+  }, [eventPoints, selectedEventMinute]);
+
+  // 4 Core Trading Metrics: Open, Current/Close, High, Low
+  const { highPrice, lowPrice } = useMemo(() => {
+    const allP = timelineData.map((d) => d.price).concat([openPrice, closePrice]);
+    return {
+      highPrice: Math.max(...allP),
+      lowPrice: Math.min(...allP),
+    };
+  }, [timelineData, openPrice, closePrice]);
+
+  const diffFromOpen = closePrice - openPrice;
+  const pctFromOpen =
+    openPrice > 0 ? Number(((diffFromOpen / openPrice) * 100).toFixed(2)) : 0;
+  const isUpFromOpen = diffFromOpen >= 0;
+
+  // Y-Axis Domain with breathing room around High/Low/Open so event pins on top/bottom never clip
+  const yDomain: [number, number] = useMemo(() => {
+    const spread = Math.max(highPrice - lowPrice, roundToTen(openPrice * 0.06), 300);
+    const minVal = Math.max(
+      roundToTen(basePrice * 0.68),
+      roundToTen(lowPrice - spread * 0.32)
+    );
+    const maxVal = Math.min(
+      roundToTen(basePrice * 1.32),
+      roundToTen(highPrice + spread * 0.38)
+    );
+    return [minVal, Math.max(minVal + 200, maxVal)];
+  }, [highPrice, lowPrice, openPrice, basePrice]);
+
+  const maxTimelineMinute = useMemo(() => {
+    const lastMin = timelineData[timelineData.length - 1]?.minute ?? 90;
+    return Math.max(90, lastMin);
+  }, [timelineData]);
+
+  // Overall market series for Tab 2
+  const overallSeries = useMemo(
+    () => buildOverallSeries(player, overallPeriod),
+    [player, overallPeriod]
+  );
+
+  const liveMinuteLabel =
+    playerMatch?.minute ??
+    timelineData[timelineData.length - 1]?.minute ??
+    player.lastEvent?.minute ??
+    64;
+
+  // Dynamic Tab 1 Label based on match status
+  const matchTabLabel =
+    matchStatus === "LIVE"
+      ? `🔴 실시간 경기 (LIVE ${liveMinuteLabel}')`
+      : matchStatus === "FT"
+      ? "🏁 당일 경기 결과 (FT)"
+      : "🕒 경기 예정 (킥오프 대기)";
+
+  const strokeColor = isUpFromOpen ? "#00985f" : "#2563eb";
+  const gradientId = `matchAreaGrad-${player.id}`;
+  const overallGradientId = `overallAreaGrad-${player.id}`;
+
+  return (
+    <div className="rounded-2xl border border-gray-200/90 bg-[#f8f9fa] p-3 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+      {/* 1. Top View Mode Switcher: [⚡ 실시간 경기 (동적 상태)] vs [📈 전체 시세] */}
+      <div className="grid grid-cols-[1.35fr_1fr] gap-1.5 rounded-xl bg-gray-200/80 p-1">
+        <button
+          type="button"
+          onClick={() => setViewMode("MATCH_TIMELINE")}
+          className={`flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-extrabold transition ${
+            viewMode === "MATCH_TIMELINE"
+              ? "bg-gray-900 text-white shadow-sm"
+              : "text-gray-600 hover:text-gray-900"
+          }`}
+        >
+          {matchStatus === "LIVE" && (
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
+            </span>
+          )}
+          <span className="truncate">
+            {matchStatus === "LIVE"
+              ? `실시간 경기 (LIVE ${liveMinuteLabel}')`
+              : matchTabLabel}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setViewMode("OVERALL_MARKET")}
+          className={`flex items-center justify-center gap-1 rounded-lg px-2.5 py-2 text-xs font-extrabold transition ${
+            viewMode === "OVERALL_MARKET"
+              ? "bg-gray-900 text-white shadow-sm"
+              : "text-gray-600 hover:text-gray-900"
+          }`}
+        >
+          <span>📈 전체 시세</span>
+        </button>
+      </div>
+
+      {/* Match Context Banner + Status Badge */}
+      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-1.5 px-0.5">
+        <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-700">
+          {playerMatch ? (
+            <>
+              <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-extrabold text-gray-600 border border-gray-200">
+                {playerMatch.leagueName}
+              </span>
+              <span>
+                {playerMatch.homeTeam.name}{" "}
+                <strong className="font-mono text-gray-900">
+                  {playerMatch.homeTeam.score} : {playerMatch.awayTeam.score}
+                </strong>{" "}
+                {playerMatch.awayTeam.name}
+              </span>
+            </>
+          ) : (
+            <span className="text-gray-500">0~90분 매치 타임라인 시세 연동</span>
+          )}
+        </div>
+
+        {matchStatus === "FT" ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-slate-200/80 px-2.5 py-0.5 font-mono text-[10px] font-extrabold text-slate-800">
+            시가 {openPrice.toLocaleString()}P ➔ 확정 종가{" "}
+            {closePrice.toLocaleString()}P ({isUpFromOpen ? "+" : ""}
+            {pctFromOpen}%)
+          </span>
+        ) : matchStatus === "LIVE" ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 border border-rose-200 px-2 py-0.5 font-mono text-[10px] font-extrabold text-rose-600">
+            ⚡ 0~90분 이벤트 실시간 반영 중
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 font-mono text-[10px] font-extrabold text-amber-700">
+            킥오프 시점 시가 {openPrice.toLocaleString()}P 기준
+          </span>
+        )}
+      </div>
+
+      {/* 2. 4-Metric Trading Summary Bar: 시가 / 현재가(종가) / 고가 / 저가 */}
+      <div className="mt-2 grid grid-cols-4 gap-1.5 rounded-xl bg-white p-2 border border-gray-100 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+        <div className="px-1.5 py-0.5">
+          <div className="text-[10px] font-bold text-gray-400">
+            시가 (0&apos; 킥오프)
+          </div>
+          <div className="font-mono text-xs font-black text-gray-800">
+            {openPrice.toLocaleString()}P
+          </div>
+        </div>
+
+        <div className="border-l border-gray-100 px-1.5 py-0.5">
+          <div className="text-[10px] font-bold text-gray-400">
+            {matchStatus === "FT" ? "확정 종가 (90')" : "현재가 (실시간)"}
+          </div>
+          <div
+            className={`font-mono text-xs font-black ${
+              isUpFromOpen ? "text-[#00985f]" : "text-blue-600"
+            }`}
+          >
+            {closePrice.toLocaleString()}P{" "}
+            <span className="text-[10px]">
+              ({isUpFromOpen ? "+" : ""}
+              {pctFromOpen}%)
+            </span>
+          </div>
+        </div>
+
+        <div className="border-l border-gray-100 px-1.5 py-0.5">
+          <div className="text-[10px] font-bold text-gray-400">당일 고가</div>
+          <div className="font-mono text-xs font-black text-emerald-600">
+            {highPrice.toLocaleString()}P
+          </div>
+        </div>
+
+        <div className="border-l border-gray-100 px-1.5 py-0.5">
+          <div className="text-[10px] font-bold text-gray-400">당일 저가</div>
+          <div className="font-mono text-xs font-black text-blue-600">
+            {lowPrice.toLocaleString()}P
+          </div>
+        </div>
+      </div>
+
+      {/* 3. Main Chart Area */}
+      {viewMode === "MATCH_TIMELINE" ? (
+        <>
+          {/* Expanded h-72 0~90 Minute Recharts Timeline Container */}
+          <div className="relative mt-2.5 h-72 w-full rounded-2xl bg-white border border-gray-100 pt-3 pr-2 pb-1 pl-1 shadow-inner">
+            {/* Top-left subtle legend */}
+            <div className="flex items-center justify-between px-3 pb-1 text-[10px] font-semibold text-gray-400">
+              <div className="flex items-center gap-2.5">
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-0.5 w-3 border-t border-dashed border-slate-400" />
+                  시가 기준선 ({openPrice.toLocaleString()}P)
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-2.5 w-0.5 border-l border-dashed border-amber-500" />
+                  하프타임 (45&apos; HT)
+                </span>
+              </div>
+              <span className="font-mono text-[10px] font-bold text-gray-500">
+                X축: 0&apos; ~ 90&apos; 고정
+              </span>
+            </div>
+
+            {matchStatus === "UPCOMING" && timelineData.length <= 1 ? (
+              <div className="flex h-56 flex-col items-center justify-center text-center px-4">
+                <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-amber-50 text-lg">
+                  🕒
+                </div>
+                <p className="text-xs font-extrabold text-gray-800">
+                  경기 시작 전 (킥오프 대기 중)
+                </p>
+                <p className="mt-1 text-[11px] text-gray-500">
+                  킥오프(0&apos;) 시가{" "}
+                  <strong className="font-mono text-gray-800">
+                    {openPrice.toLocaleString()}P
+                  </strong>
+                  에서 출발하며, 경기 중 골·도움·선방·경고 이벤트가 0~90분 차트 위에 실시간 마커로 표시됩니다.
+                </p>
+              </div>
+            ) : (
+              <div className="h-60 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart
+                    data={timelineData}
+                    margin={{ top: 22, right: 16, left: 0, bottom: 6 }}
+                  >
+                    <defs>
+                      <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                        <stop
+                          offset="0%"
+                          stopColor={isUpFromOpen ? "#10b981" : "#3b82f6"}
+                          stopOpacity={0.34}
+                        />
+                        <stop
+                          offset="65%"
+                          stopColor={isUpFromOpen ? "#10b981" : "#3b82f6"}
+                          stopOpacity={0.1}
+                        />
+                        <stop
+                          offset="100%"
+                          stopColor={isUpFromOpen ? "#10b981" : "#3b82f6"}
+                          stopOpacity={0.0}
+                        />
+                      </linearGradient>
+                    </defs>
+
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="#f1f5f9"
+                      vertical={false}
+                    />
+
+                    <XAxis
+                      dataKey="minute"
+                      type="number"
+                      domain={[0, maxTimelineMinute]}
+                      ticks={[0, 15, 30, 45, 60, 75, 90]}
+                      tickFormatter={formatXAxisTick}
+                      tick={{ fontSize: 10, fill: "#64748b", fontWeight: 700 }}
+                      axisLine={{ stroke: "#e2e8f0" }}
+                      tickLine={false}
+                    />
+
+                    <YAxis
+                      domain={yDomain}
+                      orientation="right"
+                      width={52}
+                      tickFormatter={(v: number) => `${v.toLocaleString()}`}
+                      tick={{ fontSize: 10, fill: "#94a3b8", fontWeight: 600 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+
+                    {/* Half-Time 45' Vertical Dashed Reference Line */}
+                    <ReferenceLine
+                      x={45}
+                      stroke="#f59e0b"
+                      strokeDasharray="4 4"
+                      strokeWidth={1.2}
+                      label={{
+                        value: "HT 45'",
+                        position: "insideTop",
+                        fill: "#d97706",
+                        fontSize: 10,
+                        fontWeight: 800,
+                      }}
+                    />
+
+                    {/* Open Price (시가) Horizontal Dashed Reference Line */}
+                    <ReferenceLine
+                      y={openPrice}
+                      stroke="#64748b"
+                      strokeDasharray="5 4"
+                      strokeWidth={1.3}
+                      label={{
+                        value: `시가 ${openPrice.toLocaleString()}P`,
+                        position: "insideBottomLeft",
+                        fill: "#475569",
+                        fontSize: 10,
+                        fontWeight: 800,
+                      }}
+                    />
+
+                    {/* Selected Event Highlight Vertical Reference Line */}
+                    {activeEventPoint && (
+                      <ReferenceLine
+                        x={activeEventPoint.minute}
+                        stroke={
+                          EVENT_PIN_CONFIG[activeEventPoint.event.type]?.fill ??
+                          "#059669"
+                        }
+                        strokeDasharray="2 2"
+                        strokeWidth={1.5}
+                      />
+                    )}
+
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload || payload.length === 0) {
+                          return null;
+                        }
+                        const pt = payload[0].payload as PricePoint;
+                        const diff = pt.price - openPrice;
+                        const pct =
+                          openPrice > 0
+                            ? ((diff / openPrice) * 100).toFixed(2)
+                            : "0.00";
+                        const up = diff >= 0;
+                        const ev = pt.event;
+                        const pinCfg = ev ? EVENT_PIN_CONFIG[ev.type] : null;
+
+                        return (
+                          <div className="rounded-xl border border-slate-700 bg-slate-900/95 px-3 py-2 text-white shadow-xl backdrop-blur-xs">
+                            <div className="flex items-center justify-between gap-3 text-[11px] font-bold text-slate-300">
+                              <span>
+                                ⏱️{" "}
+                                {pt.minute === 0
+                                  ? "0' (킥오프 시가)"
+                                  : pt.minute === 45
+                                  ? "45' (하프타임)"
+                                  : pt.minute === 90
+                                  ? "90' (정규시간 종료)"
+                                  : `${pt.timeLabel ?? `${pt.minute}'`} 경과`}
+                              </span>
+                              <span
+                                className={`font-mono font-extrabold ${
+                                  up ? "text-emerald-400" : "text-sky-400"
+                                }`}
+                              >
+                                시가대비 {up ? "+" : ""}
+                                {pct}%
+                              </span>
+                            </div>
+                            <div className="mt-0.5 font-mono text-sm font-black text-white">
+                              {pt.price.toLocaleString()} P
+                            </div>
+                            {ev && pinCfg && (
+                              <div className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-white/10 px-2 py-1 text-[11px] font-extrabold text-amber-300">
+                                <span>{pinCfg.icon}</span>
+                                <span>{ev.label}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }}
+                    />
+
+                    <Area
+                      type="monotone"
+                      dataKey="price"
+                      stroke={strokeColor}
+                      strokeWidth={2.75}
+                      fill={`url(#${gradientId})`}
+                      isAnimationActive={false}
+                      dot={(dotProps: {
+                        cx?: number;
+                        cy?: number;
+                        index?: number;
+                        payload?: PricePoint;
+                      }) => {
+                        const { cx, cy, index, payload } = dotProps;
+                        if (
+                          typeof cx !== "number" ||
+                          typeof cy !== "number" ||
+                          !payload
+                        ) {
+                          return <g key={`empty-${index}`} />;
+                        }
+
+                        const isLast = index === timelineData.length - 1;
+                        const ev = payload.event;
+
+                        if (ev) {
+                          const cfg =
+                            EVENT_PIN_CONFIG[ev.type] ?? EVENT_PIN_CONFIG.GOAL;
+                          const isSelected =
+                            activeEventPoint?.minute === payload.minute;
+
+                          return (
+                            <g
+                              key={`ev-pin-${payload.minute}-${index}`}
+                              className="cursor-pointer"
+                              onClick={() =>
+                                setSelectedEventMinute(payload.minute)
+                              }
+                            >
+                              {/* Outer glow ring */}
+                              <circle
+                                cx={cx}
+                                cy={cy}
+                                r={isSelected ? 15 : 12}
+                                fill={cfg.ring}
+                              />
+                              {/* Pin badge body */}
+                              <circle
+                                cx={cx}
+                                cy={cy}
+                                r={isSelected ? 11 : 9.5}
+                                fill={cfg.fill}
+                                stroke={cfg.stroke}
+                                strokeWidth={isSelected ? 2.5 : 2}
+                              />
+                              {/* Emoji Icon centered inside pin */}
+                              <text
+                                x={cx}
+                                y={cy + 3.5}
+                                textAnchor="middle"
+                                fontSize={isSelected ? 11 : 10}
+                              >
+                                {cfg.icon}
+                              </text>
+                              {/* Minute tag above pin */}
+                              <rect
+                                x={cx - 14}
+                                y={Math.max(2, cy - 26)}
+                                width={28}
+                                height={13}
+                                rx={4}
+                                fill="#0f172a"
+                                opacity={0.9}
+                              />
+                              <text
+                                x={cx}
+                                y={Math.max(11, cy - 17)}
+                                textAnchor="middle"
+                                fill="#ffffff"
+                                fontSize={8.5}
+                                fontWeight={800}
+                                fontFamily="monospace"
+                              >
+                                {payload.minute > 90
+                                  ? `90+${payload.minute - 90}'`
+                                  : `${payload.minute}'`}
+                              </text>
+                            </g>
+                          );
+                        }
+
+                        if (isLast) {
+                          return (
+                            <g key={`last-dot-${index}`}>
+                              <circle
+                                cx={cx}
+                                cy={cy}
+                                r={7}
+                                fill={
+                                  isUpFromOpen
+                                    ? "rgba(16, 185, 129, 0.25)"
+                                    : "rgba(37, 99, 235, 0.25)"
+                                }
+                              />
+                              <circle
+                                cx={cx}
+                                cy={cy}
+                                r={4}
+                                fill={strokeColor}
+                                stroke="#ffffff"
+                                strokeWidth={2}
+                              />
+                            </g>
+                          );
+                        }
+
+                        if (payload.minute === 0 || payload.minute === 45) {
+                          return (
+                            <circle
+                              key={`anchor-dot-${index}`}
+                              cx={cx}
+                              cy={cy}
+                              r={3}
+                              fill="#ffffff"
+                              stroke={strokeColor}
+                              strokeWidth={1.75}
+                            />
+                          );
+                        }
+
+                        return <g key={`dot-${index}`} />;
+                      }}
+                      activeDot={{
+                        r: 5,
+                        fill: strokeColor,
+                        stroke: "#ffffff",
+                        strokeWidth: 2,
+                      }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          {/* 4. Horizontal Scrollable Match Event Timeline Chips Bar */}
+          <div className="mt-2.5 rounded-xl bg-white border border-gray-100 p-2.5">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <Zap className="h-3.5 w-3.5 text-[#00985f]" />
+                <span className="text-xs font-extrabold text-gray-800">
+                  경기 이벤트 타임라인 마커 (0&apos;~90&apos;)
+                </span>
+              </div>
+              <span className="text-[10px] font-medium text-gray-400">
+                칩 터치 시 해당 분 시세·변동폭 표시
+              </span>
+            </div>
+
+            {eventPoints.length > 0 ? (
+              <>
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                  {eventPoints.map((pt) => {
+                    const cfg =
+                      EVENT_PIN_CONFIG[pt.event.type] ?? EVENT_PIN_CONFIG.GOAL;
+                    const isSelected = activeEventPoint?.minute === pt.minute;
+                    const impact = pt.event.impactPercent;
+                    return (
+                      <button
+                        key={`chip-${pt.minute}-${pt.event.type}`}
+                        type="button"
+                        onClick={() => setSelectedEventMinute(pt.minute)}
+                        className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-extrabold transition ${
+                          isSelected
+                            ? "bg-gray-900 text-white border-gray-900 shadow-xs scale-[1.02]"
+                            : `${cfg.chipBg} ${cfg.chipText} ${cfg.chipBorder} hover:opacity-90`
+                        }`}
+                      >
+                        <span className="font-mono text-[10px] opacity-85">
+                          {pt.minute > 90
+                            ? `90+${pt.minute - 90}'`
+                            : `${pt.minute}'`}
+                        </span>
+                        <span>{cfg.icon}</span>
+                        <span>{cfg.shortTitle}</span>
+                        <span
+                          className={`font-mono text-[10px] ${
+                            isSelected
+                              ? impact >= 0
+                                ? "text-emerald-300"
+                                : "text-rose-300"
+                              : ""
+                          }`}
+                        >
+                          {impact >= 0 ? "+" : ""}
+                          {impact.toFixed(1)}%
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Selected Event Callout Detail Box */}
+                {activeEventPoint && (
+                  <div className="mt-2 flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2 border border-gray-200/70 text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="rounded-md bg-gray-900 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-white">
+                        {activeEventPoint.minute > 90
+                          ? `90+${activeEventPoint.minute - 90}'`
+                          : `${activeEventPoint.minute}'`}
+                      </span>
+                      <span className="truncate font-bold text-gray-800">
+                        {activeEventPoint.event.label}
+                      </span>
+                    </div>
+                    <div className="shrink-0 text-right font-mono">
+                      <span className="text-[11px] text-gray-500 mr-1.5">
+                        체결 시세
+                      </span>
+                      <strong className="text-xs font-black text-gray-900">
+                        {activeEventPoint.price.toLocaleString()}P
+                      </strong>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="py-1 text-[11px] text-gray-400">
+                아직 기록된 주요 이벤트 마커가 없습니다. 아래 버튼으로 실시간 경기 이벤트를 테스트해 보세요.
+              </p>
+            )}
+
+            {/* Quick Live Event Simulator Bar for testing 0~90m pins */}
+            {showEventSimulator && (
+              <div className="mt-2 flex items-center justify-between gap-1.5 border-t border-gray-100 pt-2">
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-gray-400 shrink-0">
+                  <Sparkles className="h-3 w-3 text-[#00985f]" />
+                  이벤트 시뮬레이션
+                </span>
+                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                  {(
+                    [
+                      { type: "GOAL", label: "+⚽ 득점" },
+                      { type: "ASSIST", label: "+🅰️ 도움" },
+                      { type: "SAVE", label: "+🧤 선방" },
+                      { type: "YELLOW_CARD", label: "+🟨 경고" },
+                    ] as { type: ChartEventType; label: string }[]
+                  ).map((btn) => (
+                    <button
+                      key={btn.type}
+                      type="button"
+                      onClick={() => {
+                        const res = triggerMatchEvent(player.id, btn.type);
+                        if (res) {
+                          const lastPt =
+                            res.player.priceHistory[
+                              res.player.priceHistory.length - 1
+                            ];
+                          if (lastPt) {
+                            setSelectedEventMinute(lastPt.minute);
+                          }
+                        }
+                      }}
+                      className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-[10px] font-extrabold text-gray-700 transition hover:bg-gray-100 active:scale-95"
+                    >
+                      {btn.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        /* Tab 2: [📈 전체 시세] (1분 / 일 / 주 / 월) */
+        <div className="mt-2.5">
+          <div className="flex items-center justify-between gap-1 rounded-xl bg-gray-200/75 p-1">
+            {OVERALL_PERIOD_TABS.map((tab) => {
+              const active = overallPeriod === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setOverallPeriod(tab.key)}
+                  className={`flex-1 rounded-lg py-1 text-[11px] font-extrabold transition ${
+                    active
+                      ? "bg-white text-gray-900 shadow-xs"
+                      : "text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-gray-500">
+            <span>
+              {
+                OVERALL_PERIOD_TABS.find((t) => t.key === overallPeriod)
+                  ?.desc
+              }
+            </span>
+            <span className="font-mono font-bold text-gray-700">
+              기준가 {basePrice.toLocaleString()}P
+            </span>
+          </div>
+
+          <div className="mt-1.5 h-60 w-full rounded-2xl bg-white border border-gray-100 pt-3 pr-2 pb-1 pl-1 shadow-inner">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={overallSeries}
+                margin={{ top: 12, right: 14, left: 0, bottom: 4 }}
+              >
+                <defs>
+                  <linearGradient
+                    id={overallGradientId}
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <stop
+                      offset="0%"
+                      stopColor={isUpFromOpen ? "#10b981" : "#3b82f6"}
+                      stopOpacity={0.3}
+                    />
+                    <stop
+                      offset="100%"
+                      stopColor={isUpFromOpen ? "#10b981" : "#3b82f6"}
+                      stopOpacity={0.0}
+                    />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="#f1f5f9"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="timeLabel"
+                  tick={{ fontSize: 10, fill: "#64748b", fontWeight: 600 }}
+                  axisLine={{ stroke: "#e2e8f0" }}
+                  tickLine={false}
+                />
+                <YAxis
+                  domain={["auto", "auto"]}
+                  orientation="right"
+                  width={52}
+                  tickFormatter={(v: number) => `${v.toLocaleString()}`}
+                  tick={{ fontSize: 10, fill: "#94a3b8", fontWeight: 600 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <ReferenceLine
+                  y={basePrice}
+                  stroke="#94a3b8"
+                  strokeDasharray="4 3"
+                />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (!active || !payload || payload.length === 0)
+                      return null;
+                    const pt = payload[0].payload as OverallPoint;
+                    return (
+                      <div className="rounded-xl bg-slate-900/95 px-3 py-1.5 text-xs text-white shadow-lg">
+                        <div className="font-bold text-slate-300">
+                          {pt.timeLabel}
+                        </div>
+                        <div className="font-mono font-black">
+                          {pt.price.toLocaleString()} P ({pt.changePct >= 0 ? "+" : ""}
+                          {pt.changePct}%)
+                        </div>
+                      </div>
+                    );
+                  }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="price"
+                  stroke={strokeColor}
+                  strokeWidth={2.5}
+                  fill={`url(#${overallGradientId})`}
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Optional Footer (Latest Event Feed + Quick Order Action) */}
+      <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-gray-200/70 pt-2.5 text-xs">
+        <span className="truncate text-gray-600 font-medium">
+          {player.lastEvent.text}
+        </span>
+        {footerAction}
+      </div>
+    </div>
+  );
+}

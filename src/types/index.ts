@@ -141,12 +141,31 @@ export interface StoredUserAccount {
   createdAt: string;
 }
 
+export type ChartEventType =
+  | "GOAL"
+  | "ASSIST"
+  | "YELLOW_CARD"
+  | "RED_CARD"
+  | "SAVE"
+  | "SUB_OUT";
+
+export interface ChartEventMarker {
+  type: ChartEventType;
+  label: string; // 예: "⚽ 득점 (+8.5%)"
+  impactPercent: number;
+}
+
 export interface PricePoint {
-  timeLabel: string;
+  minute: number; // X축 고정 좌표 (0 ~ 90, 후반 추가시간은 90+ 표시)
+  timeLabel?: string; // 예: "0'", "45'", "67'", "90+"
   price: number;
+  changePercentFromOpen?: number; // 시가(openPrice) 대비 등락률(%)
+  event?: ChartEventMarker; // 이벤트가 발생한 분에만 존재
 }
 
 export interface PersistedPlayerPrice {
+  openPrice?: number;
+  closePrice?: number;
   currentPrice: number;
   previousPrice: number;
   priceHistory: PricePoint[];
@@ -168,6 +187,8 @@ export interface Player {
   totalShares: number; // 총 발행 주식 수 (S티어 500, A티어 1000, B티어 2500, C티어 5000)
   marketSupply: number; // 초기 시장 잔여 한도 (정적 기준값)
   basePrice?: number; // Permanent initial reference price for ±30% cap/floor
+  openPrice?: number; // 경기 시작(minute: 0) 시점의 시가
+  closePrice?: number; // 경기 종료(FT, minute: 90) 시점의 확정 종가
   initialPrice: number;
   currentPrice: number;
   previousPrice: number;
