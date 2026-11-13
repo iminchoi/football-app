@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Clock,
   Eye,
+  Star,
 } from "lucide-react";
 import { Match, Player, Holding, TradeType } from "@/types";
 import {
@@ -38,6 +39,8 @@ export default function MatchAccordionCard({
   onOpenPitchView,
 }: MatchAccordionCardProps) {
   const storeHoldings = useTradeStore((s) => s.holdings);
+  const watchlist = useTradeStore((s) => s.watchlist);
+  const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
   const [selectedSide, setSelectedSide] = useState<"HOME" | "AWAY">("HOME");
   const [activeKeyPlayers, setActiveKeyPlayers] = useState<Player[]>([]);
   const [showUpcomingPreview, setShowUpcomingPreview] = useState<boolean>(false);
@@ -291,12 +294,13 @@ export default function MatchAccordionCard({
               {/* Compact Key Player Rows: [등번호] [선수명] [포지션] [잔여/보유] [현재 시세] [등락률(%)] [매수 버튼] */}
               <div className="space-y-1.5">
                 {activeKeyPlayers.slice(0, 3).map((player) => {
-                  const base = player.basePrice ?? player.initialPrice;
+                  const base = player.openPrice ?? player.basePrice ?? player.initialPrice;
                   const diff = player.currentPrice - base;
-                  const changePct = ((diff / base) * 100).toFixed(2);
+                  const changePct = ((diff / Math.max(1, base)) * 100).toFixed(2);
                   const isUp = diff > 0;
                   const isDown = diff < 0;
                   const holding = holdings[player.id];
+                  const isWatched = watchlist.includes(player.id);
                   const availableShares = getAvailableShares(
                     player,
                     storeHoldings
@@ -307,10 +311,28 @@ export default function MatchAccordionCard({
                     <div
                       key={`${player.id}-${player.position}`}
                       onClick={() => onSelectPlayerTrade(player, "BUY")}
-                      className="flex cursor-pointer items-center justify-between gap-2 rounded-xl border border-gray-200/80 bg-white px-3 py-2 transition hover:border-[#00985f]/50 active:scale-[0.99]"
+                      className="flex cursor-pointer items-center justify-between gap-2 rounded-xl border border-gray-200/80 bg-white px-3 py-2 transition hover:border-[#00A878]/50 active:scale-[0.99]"
                     >
-                      {/* Left: [등번호] [선수명] [포지션] [잔여/보유] */}
-                      <div className="flex items-center gap-2 min-w-0">
+                      {/* Left: [☆] [등번호] [선수명] [포지션] [잔여/보유] */}
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleWatchlist(player.id);
+                          }}
+                          title={isWatched ? "관심선수 해제" : "관심선수 등록"}
+                          className="shrink-0 rounded-full p-0.5 text-gray-300 transition hover:bg-gray-100 active:scale-90"
+                        >
+                          <Star
+                            className={`h-3.5 w-3.5 ${
+                              isWatched
+                                ? "fill-amber-400 text-amber-400"
+                                : "text-gray-300 hover:text-gray-400"
+                            }`}
+                          />
+                        </button>
+
                         <span
                           style={{ backgroundColor: player.teamColor }}
                           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-mono text-[11px] font-black text-white shadow-sm"
@@ -327,7 +349,7 @@ export default function MatchAccordionCard({
                         </span>
 
                         {isSoldOut ? (
-                          <span className="shrink-0 rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-black text-rose-600">
+                          <span className="shrink-0 rounded bg-[#F07868]/15 px-1.5 py-0.5 text-[9px] font-black text-[#F07868]">
                             품절
                           </span>
                         ) : availableShares <= 50 ? (
@@ -337,7 +359,7 @@ export default function MatchAccordionCard({
                         ) : null}
 
                         {holding && holding.quantity > 0 && (
-                          <span className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.2 text-[9px] font-extrabold text-[#00985f] border border-emerald-200">
+                          <span className="shrink-0 rounded-full bg-[#00A878]/10 px-1.5 py-0.2 text-[9px] font-extrabold text-[#00A878] border border-[#00A878]/25">
                             {holding.quantity}주
                           </span>
                         )}
@@ -352,10 +374,10 @@ export default function MatchAccordionCard({
                           <span
                             className={`text-[11px] font-bold ${
                               isUp
-                                ? "text-[#00985f]"
+                                ? "text-[#00A878]"
                                 : isDown
-                                ? "text-rose-600"
-                                : "text-gray-400"
+                                ? "text-[#F07868]"
+                                : "text-[#A8B2BC]"
                             }`}
                           >
                             {isUp ? "+" : ""}
@@ -372,7 +394,7 @@ export default function MatchAccordionCard({
                           className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold shadow-sm transition active:scale-95 ${
                             isSoldOut
                               ? "bg-gray-200 text-gray-500"
-                              : "bg-[#00985f] text-white hover:bg-[#007f4f]"
+                              : "bg-[#00A878] text-white hover:opacity-95"
                           }`}
                         >
                           {isSoldOut ? "품절" : "매수"}

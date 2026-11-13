@@ -11,6 +11,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { useTradeStore, roundToTen } from "@/store/useTradeStore";
+import { ChartEventType } from "@/types";
 
 export default function AdminPanel() {
   const user = useTradeStore((s) => s.user);
@@ -18,14 +19,15 @@ export default function AdminPanel() {
   const holdings = useTradeStore((s) => s.holdings);
   const addAdminCash = useTradeStore((s) => s.addAdminCash);
   const triggerForceGoalEvent = useTradeStore((s) => s.triggerForceGoalEvent);
+  const triggerMatchEvent = useTradeStore((s) => s.triggerMatchEvent);
   const resetAll = useTradeStore((s) => s.resetAll);
 
   const [isOpen, setIsOpen] = useState(false);
   const [targetPlayerId, setTargetPlayerId] = useState<string>("");
   const [statusLog, setStatusLog] = useState<string | null>(null);
 
-  // Only render when logged in as admin
-  if (user?.role !== "admin") {
+  // Strict security isolation: Only render when logged in as admin AND not in production
+  if (user?.role !== "admin" || process.env.NODE_ENV === "production") {
     return null;
   }
 
@@ -61,7 +63,22 @@ export default function AdminPanel() {
     );
   };
 
-  // 3. [로컬 데이터 전체 초기화]
+  // 3. [세부 경기 이벤트 강제 발생 (득점/도움/선방/경고/퇴장)]
+  const handleTriggerSpecificEvent = (eventType: ChartEventType, label: string) => {
+    const res = triggerMatchEvent(targetPlayerId || undefined, eventType);
+    if (!res) {
+      showTempLog("⚠️ 이벤트를 발생시킬 선수가 없습니다.");
+      return;
+    }
+    const sign = res.ratePct >= 0 ? "+" : "";
+    showTempLog(
+      `${label} · ${res.player.name}: ${res.prevPrice.toLocaleString()}P → ${res.nextPrice.toLocaleString()}P (${sign}${res.ratePct.toFixed(
+        1
+      )}%)`
+    );
+  };
+
+  // 4. [로컬 데이터 전체 초기화]
   const handleFullReset = () => {
     if (
       window.confirm(
@@ -77,14 +94,14 @@ export default function AdminPanel() {
     <div className="fixed bottom-20 left-1/2 z-40 w-full max-w-[480px] -translate-x-1/2 pointer-events-none px-4 flex flex-col items-end">
       {/* Expanded Admin Debug Menu */}
       {isOpen && (
-        <div className="pointer-events-auto mb-2.5 w-76 overflow-hidden rounded-2xl border border-rose-500/30 bg-gray-900/95 p-3.5 text-white shadow-2xl backdrop-blur-md">
+        <div className="pointer-events-auto mb-2.5 w-80 overflow-hidden rounded-2xl border border-rose-500/30 bg-gray-900/95 p-3.5 text-white shadow-2xl backdrop-blur-md">
           <div className="flex items-center justify-between border-b border-gray-800 pb-2.5">
             <div className="flex items-center gap-1.5">
               <span className="rounded bg-rose-600 px-1.5 py-0.5 text-[10px] font-black tracking-wider text-white">
-                ADMIN
+                ADMIN ONLY
               </span>
               <span className="text-xs font-extrabold text-gray-100">
-                디버그 컨트롤 툴바
+                디버그 & 이벤트 컨트롤러
               </span>
             </div>
             <button
@@ -96,10 +113,10 @@ export default function AdminPanel() {
             </button>
           </div>
 
-          {/* Target Player Selector for Force Goal */}
+          {/* Target Player Selector for Force Event */}
           <div className="mt-2.5">
             <label className="block text-[10px] font-bold text-gray-400 mb-1">
-              골 이벤트 대상 선수 선택 (선택사항)
+              이벤트 대상 선수 선택 (선택사항)
             </label>
             <select
               value={targetPlayerId}
@@ -122,12 +139,38 @@ export default function AdminPanel() {
             </select>
           </div>
 
-          {/* 3 Admin Action Buttons */}
+          {/* Exclusive Match Event Simulator (Admin Only) */}
+          <div className="mt-2.5">
+            <span className="block text-[10px] font-bold text-gray-400 mb-1">
+              실시간 경기 이벤트 강제 발생 (관리자 전용)
+            </span>
+            <div className="grid grid-cols-4 gap-1.5">
+              {(
+                [
+                  { type: "GOAL", label: "⚽ 득점" },
+                  { type: "ASSIST", label: "🅰️ 도움" },
+                  { type: "SAVE", label: "🧤 선방" },
+                  { type: "YELLOW_CARD", label: "🟨 경고" },
+                ] as { type: ChartEventType; label: string }[]
+              ).map((ev) => (
+                <button
+                  key={ev.type}
+                  type="button"
+                  onClick={() => handleTriggerSpecificEvent(ev.type, ev.label)}
+                  className="rounded-xl border border-gray-700 bg-gray-800 py-1.5 text-[11px] font-extrabold text-gray-100 transition hover:border-amber-400 hover:bg-gray-700 active:scale-95"
+                >
+                  {ev.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 3 Primary Admin Action Buttons */}
           <div className="mt-2.5 space-y-2">
             <button
               type="button"
               onClick={handleChargeOneMillion}
-              className="flex w-full items-center justify-between rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-emerald-500 active:scale-[0.98]"
+              className="flex w-full items-center justify-between rounded-xl bg-[#00A878] px-3 py-2.5 text-xs font-extrabold text-white shadow-sm transition hover:opacity-90 active:scale-[0.98]"
             >
               <span className="flex items-center gap-1.5">
                 <Coins className="h-3.5 w-3.5" />
@@ -164,7 +207,7 @@ export default function AdminPanel() {
           {/* Status Feedback Log */}
           {statusLog && (
             <div className="mt-2.5 flex items-start gap-1.5 rounded-xl bg-gray-800/90 px-2.5 py-2 text-[11px] font-semibold text-emerald-300 border border-gray-700">
-              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5 text-emerald-400" />
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5 text-[#00A878]" />
               <span className="leading-snug">{statusLog}</span>
             </div>
           )}

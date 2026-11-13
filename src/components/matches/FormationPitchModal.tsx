@@ -1481,10 +1481,10 @@ export default function FormationPitchModal({
                               <span
                                 className={
                                   isUp
-                                    ? "text-[#00985f]"
+                                    ? "text-[#00A878]"
                                     : isDown
-                                    ? "text-blue-600"
-                                    : "text-gray-500"
+                                    ? "text-[#F07868]"
+                                    : "text-[#A8B2BC]"
                                 }
                               >
                                 {isUp ? "▲" : isDown ? "▼" : ""}
@@ -1571,10 +1571,10 @@ export default function FormationPitchModal({
                               <span
                                 className={`ml-1.5 text-[11px] font-bold ${
                                   isUp
-                                    ? "text-[#00985f]"
+                                    ? "text-[#00A878]"
                                     : isDown
-                                    ? "text-blue-600"
-                                    : "text-gray-400"
+                                    ? "text-[#F07868]"
+                                    : "text-[#A8B2BC]"
                                 }`}
                               >
                                 {isUp ? "+" : ""}
@@ -1587,7 +1587,7 @@ export default function FormationPitchModal({
                                 e.stopPropagation();
                                 onSelectPlayerTrade(sub, "BUY");
                               }}
-                              className="rounded-lg bg-[#00985f] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#007f4f]"
+                              className="rounded-lg bg-[#00A878] px-2.5 py-1 text-[11px] font-bold text-white hover:opacity-95"
                             >
                               매수
                             </button>

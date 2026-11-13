@@ -142,10 +142,10 @@ export default function PortfolioTabView({
           <div
             className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-extrabold border ${
               isRealizedUp
-                ? "bg-emerald-50 text-[#00985f] border-emerald-200"
+                ? "bg-[#00A878]/10 text-[#00A878] border-[#00A878]/25"
                 : isRealizedDown
-                ? "bg-rose-50 text-rose-600 border-rose-200"
-                : "bg-gray-100 text-gray-600 border-gray-200"
+                ? "bg-[#F07868]/10 text-[#F07868] border-[#F07868]/25"
+                : "bg-[#A8B2BC]/15 text-[#A8B2BC] border-[#A8B2BC]/30"
             }`}
           >
             <Award className="h-3 w-3 shrink-0" />
@@ -179,10 +179,10 @@ export default function PortfolioTabView({
             <div
               className={`mt-1 inline-flex items-center gap-1 rounded-xl px-2.5 py-1 font-mono text-xs font-extrabold ${
                 isTotalUp
-                  ? "bg-emerald-50 text-[#00985f]"
+                  ? "bg-[#00A878]/10 text-[#00A878]"
                   : isTotalDown
-                  ? "bg-rose-50 text-rose-600"
-                  : "bg-gray-100 text-gray-600"
+                  ? "bg-[#F07868]/10 text-[#F07868]"
+                  : "bg-[#A8B2BC]/15 text-[#A8B2BC]"
               }`}
             >
               {isTotalUp ? (
@@ -384,24 +384,24 @@ export default function PortfolioTabView({
                           <span
                             className={`text-sm font-black ${
                               isUp
-                                ? "text-[#00985f]"
+                                ? "text-[#00A878]"
                                 : isDown
-                                ? "text-rose-600"
-                                : "text-gray-700"
+                                ? "text-[#F07868]"
+                                : "text-[#A8B2BC]"
                             }`}
                           >
                             {isUp ? "+" : ""}
                             {profit.toLocaleString()} P
                           </span>
-                          <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-[#00985f] transition" />
+                          <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-[#00A878] transition" />
                         </div>
                         <span
                           className={`inline-block rounded-md px-1.5 py-0.5 text-[11px] font-extrabold ${
                             isUp
-                              ? "bg-emerald-50 text-[#00985f]"
+                              ? "bg-[#00A878]/10 text-[#00A878]"
                               : isDown
-                              ? "bg-rose-50 text-rose-600"
-                              : "bg-gray-100 text-gray-500"
+                              ? "bg-[#F07868]/10 text-[#F07868]"
+                              : "bg-[#A8B2BC]/15 text-[#A8B2BC]"
                           }`}
                         >
                           {isUp ? "+" : ""}
@@ -429,9 +429,9 @@ export default function PortfolioTabView({
                         <strong
                           className={`font-mono ${
                             curPrice > avgPrice
-                              ? "text-[#00985f]"
+                              ? "text-[#00A878]"
                               : curPrice < avgPrice
-                              ? "text-rose-600"
+                              ? "text-[#F07868]"
                               : "text-gray-900"
                           }`}
                         >
@@ -454,7 +454,7 @@ export default function PortfolioTabView({
                           e.stopPropagation();
                           onSelectPlayerTrade(player, "BUY");
                         }}
-                        className="flex items-center justify-center gap-1 rounded-xl bg-emerald-50 border border-emerald-200 py-2 text-xs font-bold text-[#00985f] transition hover:bg-[#00985f] hover:text-white"
+                        className="flex items-center justify-center gap-1 rounded-xl bg-[#00A878]/10 border border-[#00A878]/25 py-2 text-xs font-bold text-[#00A878] transition hover:bg-[#00A878] hover:text-white"
                       >
                         <TrendingUp className="h-3.5 w-3.5" />
                         <span>추가 매수</span>
@@ -465,7 +465,7 @@ export default function PortfolioTabView({
                           e.stopPropagation();
                           onSelectPlayerTrade(player, "SELL");
                         }}
-                        className="flex items-center justify-center gap-1 rounded-xl bg-rose-50 border border-rose-200 py-2 text-xs font-bold text-rose-600 transition hover:bg-rose-600 hover:text-white"
+                        className="flex items-center justify-center gap-1 rounded-xl bg-[#F07868]/10 border border-[#F07868]/25 py-2 text-xs font-bold text-[#F07868] transition hover:bg-[#F07868] hover:text-white"
                       >
                         <TrendingDown className="h-3.5 w-3.5" />
                         <span>매도하기</span>
@@ -497,8 +497,8 @@ export default function PortfolioTabView({
                       <span
                         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl font-extrabold text-[11px] ${
                           isBuy
-                            ? "bg-emerald-50 text-[#00985f] border border-emerald-200"
-                            : "bg-rose-50 text-rose-600 border border-rose-200"
+                            ? "bg-[#00A878]/10 text-[#00A878] border border-[#00A878]/25"
+                            : "bg-[#F07868]/10 text-[#F07868] border border-[#F07868]/25"
                         }`}
                       >
                         {isBuy ? "매수" : "매도"}
@@ -515,10 +515,10 @@ export default function PortfolioTabView({
                             <span
                               className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
                                 tx.realizedPnL > 0
-                                  ? "bg-emerald-50 text-[#00985f]"
+                                  ? "bg-[#00A878]/10 text-[#00A878]"
                                   : tx.realizedPnL < 0
-                                  ? "bg-rose-50 text-rose-600"
-                                  : "bg-gray-100 text-gray-500"
+                                  ? "bg-[#F07868]/10 text-[#F07868]"
+                                  : "bg-[#A8B2BC]/15 text-[#A8B2BC]"
                               }`}
                             >
                               실현 {tx.realizedPnL > 0 ? "+" : ""}
@@ -535,7 +535,7 @@ export default function PortfolioTabView({
                     <div className="text-right font-mono">
                       <p
                         className={`font-bold ${
-                          isBuy ? "text-gray-900" : "text-[#00985f]"
+                          isBuy ? "text-gray-900" : "text-[#00A878]"
                         }`}
                       >
                         {isBuy ? "-" : "+"}

@@ -174,10 +174,10 @@ export default function TopAssetHeader({
               <div
                 className={`mt-0.5 inline-flex items-center gap-1 rounded-lg px-2 py-0.5 font-mono text-xs font-bold ${
                   isUp
-                    ? "bg-emerald-50 text-[#00985f]"
+                    ? "bg-[#00A878]/10 text-[#00A878]"
                     : isDown
-                    ? "bg-rose-50 text-rose-600"
-                    : "bg-gray-200/70 text-gray-600"
+                    ? "bg-[#F07868]/10 text-[#F07868]"
+                    : "bg-[#A8B2BC]/15 text-[#A8B2BC]"
                 }`}
               >
                 {isUp ? (

@@ -59,6 +59,7 @@ interface TradeStoreState {
   playerPrices: Record<string, PersistedPlayerPrice>;
   holdings: Record<string, Holding>;
   transactions: PointTransaction[];
+  watchlist: string[];
   selectedDate: DateKey;
   activeTab: BottomTab;
   expandedMatchIds: string[];
@@ -72,6 +73,7 @@ interface TradeStoreState {
   setSelectedDate: (date: DateKey) => void;
   setActiveTab: (tab: BottomTab) => void;
   toggleExpandMatch: (matchId: string) => void;
+  toggleWatchlist: (playerId: string) => void;
   ensurePlayerInStore: (player: Player) => void;
   syncPlayersFromMatches: (matches: Match[]) => void;
   tickMarket: () => void;
@@ -551,6 +553,7 @@ export const useTradeStore = create<TradeStoreState>()(
       playerPrices: {},
       holdings: {},
       transactions: [],
+      watchlist: [],
       selectedDate: "TODAY",
       activeTab: "MATCHES",
       expandedMatchIds: ["m-tot-ars", "m-mci-liv", "m-kor-jpn"],
@@ -775,6 +778,15 @@ export const useTradeStore = create<TradeStoreState>()(
           });
         } else {
           set({ expandedMatchIds: [...expandedMatchIds, matchId] });
+        }
+      },
+
+      toggleWatchlist: (playerId) => {
+        const { watchlist } = get();
+        if (watchlist.includes(playerId)) {
+          set({ watchlist: watchlist.filter((id) => id !== playerId) });
+        } else {
+          set({ watchlist: [...watchlist, playerId] });
         }
       },
 
@@ -1679,6 +1691,12 @@ export const useTradeStore = create<TradeStoreState>()(
       addAdminCash: (amount = 1000000) => {
         const state = get();
         const { user, cash } = state;
+        if (
+          user?.role !== "admin" ||
+          process.env.NODE_ENV === "production"
+        ) {
+          return { added: 0, nextCash: cash };
+        }
         const added = roundToTen(amount);
         const nextCash = roundToTen(cash + added);
         const nextAccounts = syncActiveUserToAccounts({
@@ -1694,11 +1712,24 @@ export const useTradeStore = create<TradeStoreState>()(
       },
 
       triggerForceGoalEvent: (targetPlayerId) => {
+        const { user } = get();
+        if (
+          user?.role !== "admin" ||
+          process.env.NODE_ENV === "production"
+        ) {
+          return null;
+        }
         return get().triggerMatchEvent(targetPlayerId, "GOAL");
       },
 
       triggerMatchEvent: (targetPlayerId, eventType = "GOAL") => {
-        const { players, playerPrices, holdings, matches } = get();
+        const { user, players, playerPrices, holdings, matches } = get();
+        if (
+          user?.role !== "admin" ||
+          process.env.NODE_ENV === "production"
+        ) {
+          return null;
+        }
         if (players.length === 0) return null;
 
         let target: Player | undefined;
@@ -1993,7 +2024,7 @@ export const useTradeStore = create<TradeStoreState>()(
     {
       name: "fotmob-pitchtrade-storage-v3",
       storage: createJSONStorage(() => localStorage),
-      // Persist only user session, account registry, asset data, and lightweight playerPrices map (never master matches/players)
+      // Persist only user session, account registry, asset data, watchlist, and lightweight playerPrices map (never master matches/players)
       partialize: (state) => ({
         cash: state.cash,
         holdings: state.holdings,
@@ -2001,6 +2032,7 @@ export const useTradeStore = create<TradeStoreState>()(
         realizedPnL: state.realizedPnL,
         user: state.user,
         accounts: state.accounts,
+        watchlist: state.watchlist,
         playerPrices: state.playerPrices,
       }),
       merge: (persistedState, currentState) => {
@@ -2015,11 +2047,15 @@ export const useTradeStore = create<TradeStoreState>()(
           playerPrices
         );
         const accounts = { ...(persisted.accounts ?? {}) };
+        const watchlist = Array.isArray(persisted.watchlist)
+          ? persisted.watchlist
+          : currentState.watchlist;
 
         return {
           ...currentState,
           ...persisted,
           accounts,
+          watchlist,
           cash,
           realizedPnL,
           playerPrices,

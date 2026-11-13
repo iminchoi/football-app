@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Zap,
   BarChart3,
+  Star,
 } from "lucide-react";
 import {
   useTradeStore,
@@ -23,6 +24,7 @@ import { getTierConfig, getAvailableShares } from "@/utils/tier";
 import { Player, TradeType, getPositionLine } from "@/types";
 import PlayerDetailModal from "@/components/PlayerDetailModal";
 import MatchTimelineChart from "@/components/market/MatchTimelineChart";
+import FullScreenCandleChartModal from "@/components/market/FullScreenCandleChartModal";
 
 interface TradeBottomSheetProps {
   playerId: string | null;
@@ -562,6 +564,8 @@ export default function TradeBottomSheet({
   const players = useTradeStore((state) => state.players);
   const cash = useTradeStore((state) => state.cash);
   const holdings = useTradeStore((state) => state.holdings);
+  const watchlist = useTradeStore((state) => state.watchlist);
+  const toggleWatchlist = useTradeStore((state) => state.toggleWatchlist);
   const buyPlayer = useTradeStore((state) => state.buyPlayer);
   const sellPlayer = useTradeStore((state) => state.sellPlayer);
 
@@ -570,6 +574,7 @@ export default function TradeBottomSheet({
   const [period, setPeriod] = useState<ChartPeriod>("TICK");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState<boolean>(false);
+  const [isCandleModalOpen, setIsCandleModalOpen] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<{
     type: "success" | "error";
     text: string;
@@ -853,8 +858,8 @@ export default function TradeBottomSheet({
               toast.tradeType === "AUTH"
                 ? "bg-rose-600 border-rose-400/40"
                 : toast.tradeType === "BUY"
-                ? "bg-[#00985f] border-emerald-400/40"
-                : "bg-blue-600 border-blue-400/40"
+                ? "bg-[#00A878] border-emerald-400/40"
+                : "bg-[#F07868] border-rose-300/40"
             }`}
           >
             {toast.tradeType === "AUTH" ? (
@@ -877,7 +882,7 @@ export default function TradeBottomSheet({
           <div className="h-1.5 w-11 rounded-full bg-gray-300" />
         </div>
 
-        {/* Sticky Top Header: Player Profile + Live Price + Buy/Sell Mode Switch */}
+        {/* Sticky Top Header: Player Profile + Watchlist Star + Live Price + Buy/Sell Mode Switch */}
         <div className="shrink-0 border-b border-gray-100 px-5 pb-2.5 pt-1">
           <div className="flex items-start justify-between gap-2">
             <div>
@@ -893,7 +898,7 @@ export default function TradeBottomSheet({
                     playerTier === "S"
                       ? "bg-amber-100 text-amber-800 border border-amber-300"
                       : playerTier === "A"
-                      ? "bg-emerald-50 text-[#00985f] border border-emerald-200"
+                      ? "bg-[#00A878]/10 text-[#00A878] border border-[#00A878]/25"
                       : "bg-gray-100 text-gray-600"
                   }`}
                 >
@@ -902,7 +907,7 @@ export default function TradeBottomSheet({
                 <span className="text-xs font-semibold text-gray-500">
                   {player.teamName}
                 </span>
-                <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-[#00985f]">
+                <span className="rounded-md bg-[#00A878]/10 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-[#00A878]">
                   ★ {(player.stats?.rating ?? 7.0).toFixed(1)}
                 </span>
               </div>
@@ -911,14 +916,38 @@ export default function TradeBottomSheet({
               </h3>
             </div>
 
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full bg-gray-100 p-2 text-gray-500 transition hover:bg-gray-200 hover:text-gray-800"
-              aria-label="닫기"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-1.5">
+              {/* One-Touch Watchlist Star Toggle */}
+              <button
+                type="button"
+                onClick={() => toggleWatchlist(player.id)}
+                title={
+                  watchlist.includes(player.id)
+                    ? "관심선수 해제"
+                    : "관심선수 등록"
+                }
+                className={`rounded-full p-2 border transition active:scale-90 ${
+                  watchlist.includes(player.id)
+                    ? "border-amber-300 bg-amber-50 text-amber-500"
+                    : "border-gray-200 bg-gray-50 text-gray-400 hover:text-gray-700"
+                }`}
+              >
+                <Star
+                  className={`h-4 w-4 ${
+                    watchlist.includes(player.id) ? "fill-amber-400" : ""
+                  }`}
+                />
+              </button>
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full bg-gray-100 p-2 text-gray-500 transition hover:bg-gray-200 hover:text-gray-800"
+                aria-label="닫기"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           {/* Current Price & Buy/Sell Mode Selector Row */}
@@ -930,18 +959,20 @@ export default function TradeBottomSheet({
                 </span>
                 <span
                   className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 font-mono text-xs font-extrabold ${
-                    isUp
-                      ? "bg-emerald-50 text-[#00985f]"
-                      : "bg-blue-50 text-blue-600"
+                    diffFromBase > 0
+                      ? "bg-[#00A878]/10 text-[#00A878]"
+                      : diffFromBase < 0
+                      ? "bg-[#F07868]/10 text-[#F07868]"
+                      : "bg-[#A8B2BC]/15 text-[#A8B2BC]"
                   }`}
                 >
-                  {isUp ? (
+                  {diffFromBase > 0 ? (
                     <TrendingUp className="h-3 w-3" />
-                  ) : (
+                  ) : diffFromBase < 0 ? (
                     <TrendingDown className="h-3 w-3" />
-                  )}
-                  {isUp ? "+" : ""}
-                  {(period === "TICK" ? pctFromBase : periodPct).toFixed(2)}%
+                  ) : null}
+                  {diffFromBase > 0 ? "+" : ""}
+                  {pctFromBase.toFixed(2)}%
                 </span>
               </div>
               <p className="mt-0.5 font-mono text-[11px] text-gray-400">
@@ -961,7 +992,7 @@ export default function TradeBottomSheet({
                 }}
                 className={`rounded-lg py-1.5 text-xs font-extrabold transition ${
                   tradeType === "BUY"
-                    ? "bg-[#00985f] text-white shadow-sm"
+                    ? "bg-[#00A878] text-white shadow-sm"
                     : "text-gray-600 hover:text-gray-900"
                 }`}
               >
@@ -975,7 +1006,7 @@ export default function TradeBottomSheet({
                 }}
                 className={`rounded-lg py-1.5 text-xs font-extrabold transition ${
                   tradeType === "SELL"
-                    ? "bg-blue-600 text-white shadow-sm"
+                    ? "bg-[#F07868] text-white shadow-sm"
                     : "text-gray-600 hover:text-gray-900"
                 }`}
               >
@@ -988,7 +1019,10 @@ export default function TradeBottomSheet({
         {/* Scrollable Middle Area: 0~90m Match Timeline Chart + Event Timeline + 7-Row FotMob Gauge Stats */}
         <div className="flex-1 overflow-y-auto px-5 py-2.5 space-y-2.5">
           {/* A. 0~90 Minute Match Timeline Chart & Event Marker System */}
-          <MatchTimelineChart player={player} showEventSimulator={true} />
+          <MatchTimelineChart
+            player={player}
+            onOpenFullScreenCandle={() => setIsCandleModalOpen(true)}
+          />
 
           {/* B. Middle-Upper: Real-time Event Timeline (3-Line Feed) */}
           <div className="bg-gray-50 border border-gray-100 rounded-xl p-2.5">
@@ -1285,7 +1319,7 @@ export default function TradeBottomSheet({
               </span>
               <span
                 className={`font-mono text-base font-black ${
-                  tradeType === "BUY" ? "text-[#00985f]" : "text-blue-600"
+                  tradeType === "BUY" ? "text-[#00A878]" : "text-[#F07868]"
                 }`}
               >
                 {totalAmount.toLocaleString()} P
@@ -1309,8 +1343,8 @@ export default function TradeBottomSheet({
               !canExecute
                 ? "cursor-not-allowed bg-gray-300 text-gray-500 shadow-none"
                 : tradeType === "BUY"
-                ? "bg-[#00985f] hover:bg-[#007f4f]"
-                : "bg-blue-600 hover:bg-blue-700"
+                ? "bg-[#00A878] hover:opacity-95"
+                : "bg-[#F07868] hover:opacity-95"
             }`}
           >
             {isBuySoldOut
@@ -1327,6 +1361,17 @@ export default function TradeBottomSheet({
         player={player}
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
+      />
+
+      {/* Fullscreen Candlestick Chart Modal (Zoom & Pan Supported) */}
+      <FullScreenCandleChartModal
+        player={player}
+        isOpen={isCandleModalOpen}
+        onClose={() => setIsCandleModalOpen(false)}
+        onSelectTrade={(_p, nextType) => {
+          setTradeType(nextType);
+          setIsCandleModalOpen(false);
+        }}
       />
     </div>
   );

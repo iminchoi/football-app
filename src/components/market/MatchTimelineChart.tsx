@@ -11,7 +11,7 @@ import {
   ReferenceLine,
   Tooltip,
 } from "recharts";
-import { Zap, Sparkles } from "lucide-react";
+import { Zap, Maximize2 } from "lucide-react";
 import {
   useTradeStore,
   roundToTen,
@@ -31,10 +31,10 @@ export type OverallPeriod = "1M" | "1D" | "1W" | "1M_MONTH";
 
 interface MatchTimelineChartProps {
   player: Player;
-  /** Optional footer action (e.g. "즉시 주문" button in MarketChartTabView) */
+  /** Optional footer action (e.g. "즉시 주문" button) */
   footerAction?: React.ReactNode;
-  /** Whether to show quick live event simulator buttons */
-  showEventSimulator?: boolean;
+  /** Callback to open the dedicated FullScreenCandleChartModal */
+  onOpenFullScreenCandle?: () => void;
 }
 
 interface OverallPoint {
@@ -70,12 +70,12 @@ export const EVENT_PIN_CONFIG: Record<
   GOAL: {
     icon: "⚽",
     shortTitle: "득점",
-    fill: "#059669",
+    fill: "#00A878",
     stroke: "#fbbf24",
-    ring: "rgba(16, 185, 129, 0.28)",
-    chipBg: "bg-emerald-50",
-    chipText: "text-emerald-700",
-    chipBorder: "border-emerald-300",
+    ring: "rgba(0, 168, 120, 0.28)",
+    chipBg: "bg-[#00A878]/10",
+    chipText: "text-[#00A878]",
+    chipBorder: "border-[#00A878]/30",
   },
   ASSIST: {
     icon: "🅰️",
@@ -100,12 +100,12 @@ export const EVENT_PIN_CONFIG: Record<
   RED_CARD: {
     icon: "🟥",
     shortTitle: "퇴장",
-    fill: "#e11d48",
+    fill: "#F07868",
     stroke: "#fecdd3",
-    ring: "rgba(225, 29, 72, 0.28)",
-    chipBg: "bg-rose-50",
-    chipText: "text-rose-700",
-    chipBorder: "border-rose-300",
+    ring: "rgba(240, 120, 104, 0.28)",
+    chipBg: "bg-[#F07868]/10",
+    chipText: "text-[#F07868]",
+    chipBorder: "border-[#F07868]/30",
   },
   SAVE: {
     icon: "🧤",
@@ -120,9 +120,9 @@ export const EVENT_PIN_CONFIG: Record<
   SUB_OUT: {
     icon: "🔄",
     shortTitle: "교체",
-    fill: "#475569",
+    fill: "#A8B2BC",
     stroke: "#cbd5e1",
-    ring: "rgba(71, 85, 105, 0.22)",
+    ring: "rgba(168, 178, 188, 0.22)",
     chipBg: "bg-slate-100",
     chipText: "text-slate-700",
     chipBorder: "border-slate-300",
@@ -290,10 +290,9 @@ function formatXAxisTick(min: number): string {
 export default function MatchTimelineChart({
   player,
   footerAction,
-  showEventSimulator = true,
+  onOpenFullScreenCandle,
 }: MatchTimelineChartProps) {
   const matches = useTradeStore((s) => s.matches);
-  const triggerMatchEvent = useTradeStore((s) => s.triggerMatchEvent);
 
   const [viewMode, setViewMode] = useState<ChartViewMode>("MATCH_TIMELINE");
   const [overallPeriod, setOverallPeriod] = useState<OverallPeriod>("1D");
@@ -351,7 +350,6 @@ export default function MatchTimelineChart({
     const raw = Array.isArray(player.priceHistory) ? player.priceHistory : [];
     const byMin = new Map<number, PricePoint>();
 
-    // Always anchor minute 0 at openPrice
     byMin.set(0, {
       minute: 0,
       timeLabel: "0'",
@@ -377,7 +375,6 @@ export default function MatchTimelineChart({
       });
     });
 
-    // If UPCOMING and only 0' exists, keep at 0'
     if (matchStatus === "UPCOMING" && byMin.size <= 2) {
       return [
         {
@@ -389,7 +386,6 @@ export default function MatchTimelineChart({
       ];
     }
 
-    // Ensure the latest match minute reflects currentPrice/closePrice
     const sorted = Array.from(byMin.values()).sort(
       (a, b) => a.minute - b.minute
     );
@@ -432,13 +428,15 @@ export default function MatchTimelineChart({
     playerMatch?.minute,
   ]);
 
-  // Extract all points that carry an event marker
   const eventPoints = useMemo(
-    () => timelineData.filter((pt): pt is PricePoint & { event: ChartEventMarker } => Boolean(pt.event)),
+    () =>
+      timelineData.filter(
+        (pt): pt is PricePoint & { event: ChartEventMarker } =>
+          Boolean(pt.event)
+      ),
     [timelineData]
   );
 
-  // Selected event point (defaults to latest event if user hasn't clicked a specific chip)
   const activeEventPoint = useMemo(() => {
     if (eventPoints.length === 0) return null;
     if (selectedEventMinute !== null) {
@@ -448,7 +446,6 @@ export default function MatchTimelineChart({
     return eventPoints[eventPoints.length - 1];
   }, [eventPoints, selectedEventMinute]);
 
-  // 4 Core Trading Metrics: Open, Current/Close, High, Low
   const { highPrice, lowPrice } = useMemo(() => {
     const allP = timelineData.map((d) => d.price).concat([openPrice, closePrice]);
     return {
@@ -460,9 +457,9 @@ export default function MatchTimelineChart({
   const diffFromOpen = closePrice - openPrice;
   const pctFromOpen =
     openPrice > 0 ? Number(((diffFromOpen / openPrice) * 100).toFixed(2)) : 0;
-  const isUpFromOpen = diffFromOpen >= 0;
+  const isUpFromOpen = diffFromOpen > 0;
+  const isDownFromOpen = diffFromOpen < 0;
 
-  // Y-Axis Domain with breathing room around High/Low/Open so event pins on top/bottom never clip
   const yDomain: [number, number] = useMemo(() => {
     const spread = Math.max(highPrice - lowPrice, roundToTen(openPrice * 0.06), 300);
     const minVal = Math.max(
@@ -481,7 +478,6 @@ export default function MatchTimelineChart({
     return Math.max(90, lastMin);
   }, [timelineData]);
 
-  // Overall market series for Tab 2
   const overallSeries = useMemo(
     () => buildOverallSeries(player, overallPeriod),
     [player, overallPeriod]
@@ -493,7 +489,6 @@ export default function MatchTimelineChart({
     player.lastEvent?.minute ??
     64;
 
-  // Dynamic Tab 1 Label based on match status
   const matchTabLabel =
     matchStatus === "LIVE"
       ? `🔴 실시간 경기 (LIVE ${liveMinuteLabel}')`
@@ -501,12 +496,31 @@ export default function MatchTimelineChart({
       ? "🏁 당일 경기 결과 (FT)"
       : "🕒 경기 예정 (킥오프 대기)";
 
-  const strokeColor = isUpFromOpen ? "#00985f" : "#2563eb";
+  // Standardized PitchTrade Palette: Up = #00A878, Down = #F07868, Flat = #A8B2BC
+  const strokeColor = isUpFromOpen
+    ? "#00A878"
+    : isDownFromOpen
+    ? "#F07868"
+    : "#A8B2BC";
   const gradientId = `matchAreaGrad-${player.id}`;
   const overallGradientId = `overallAreaGrad-${player.id}`;
 
   return (
     <div className="rounded-2xl border border-gray-200/90 bg-[#f8f9fa] p-3 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+      {/* Top CTA to open Full-Screen Candlestick Chart */}
+      {onOpenFullScreenCandle && (
+        <button
+          type="button"
+          onClick={onOpenFullScreenCandle}
+          className="mb-2.5 flex w-full items-center justify-between rounded-xl border border-[#00A878]/30 bg-[#00A878]/10 px-3 py-2 text-xs font-extrabold text-[#00A878] transition hover:bg-[#00A878] hover:text-white active:scale-[0.99]"
+        >
+          <span className="flex items-center gap-1.5">
+            <span>📊 실시간 캔들 차트 크게 보기 (OHLC · 줌/팬 지원)</span>
+          </span>
+          <Maximize2 className="h-3.5 w-3.5 shrink-0" />
+        </button>
+      )}
+
       {/* 1. Top View Mode Switcher: [⚡ 실시간 경기 (동적 상태)] vs [📈 전체 시세] */}
       <div className="grid grid-cols-[1.35fr_1fr] gap-1.5 rounded-xl bg-gray-200/80 p-1">
         <button
@@ -520,8 +534,8 @@ export default function MatchTimelineChart({
         >
           {matchStatus === "LIVE" && (
             <span className="relative flex h-2 w-2 shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#F07868] opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-[#F07868]" />
             </span>
           )}
           <span className="truncate">
@@ -572,7 +586,7 @@ export default function MatchTimelineChart({
             {pctFromOpen}%)
           </span>
         ) : matchStatus === "LIVE" ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 border border-rose-200 px-2 py-0.5 font-mono text-[10px] font-extrabold text-rose-600">
+          <span className="inline-flex items-center gap-1 rounded-full bg-[#00A878]/10 border border-[#00A878]/30 px-2 py-0.5 font-mono text-[10px] font-extrabold text-[#00A878]">
             ⚡ 0~90분 이벤트 실시간 반영 중
           </span>
         ) : (
@@ -599,7 +613,11 @@ export default function MatchTimelineChart({
           </div>
           <div
             className={`font-mono text-xs font-black ${
-              isUpFromOpen ? "text-[#00985f]" : "text-blue-600"
+              isUpFromOpen
+                ? "text-[#00A878]"
+                : isDownFromOpen
+                ? "text-[#F07868]"
+                : "text-[#A8B2BC]"
             }`}
           >
             {closePrice.toLocaleString()}P{" "}
@@ -612,14 +630,14 @@ export default function MatchTimelineChart({
 
         <div className="border-l border-gray-100 px-1.5 py-0.5">
           <div className="text-[10px] font-bold text-gray-400">당일 고가</div>
-          <div className="font-mono text-xs font-black text-emerald-600">
+          <div className="font-mono text-xs font-black text-[#00A878]">
             {highPrice.toLocaleString()}P
           </div>
         </div>
 
         <div className="border-l border-gray-100 px-1.5 py-0.5">
           <div className="text-[10px] font-bold text-gray-400">당일 저가</div>
-          <div className="font-mono text-xs font-black text-blue-600">
+          <div className="font-mono text-xs font-black text-[#F07868]">
             {lowPrice.toLocaleString()}P
           </div>
         </div>
@@ -628,14 +646,12 @@ export default function MatchTimelineChart({
       {/* 3. Main Chart Area */}
       {viewMode === "MATCH_TIMELINE" ? (
         <>
-          {/* Expanded h-72 0~90 Minute Recharts Timeline Container */}
           <div className="relative mt-2.5 h-72 w-full rounded-2xl bg-white border border-gray-100 pt-3 pr-2 pb-1 pl-1 shadow-inner">
-            {/* Top-left subtle legend */}
             <div className="flex items-center justify-between px-3 pb-1 text-[10px] font-semibold text-gray-400">
               <div className="flex items-center gap-2.5">
                 <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-0.5 w-3 border-t border-dashed border-slate-400" />
-                  시가 기준선 ({openPrice.toLocaleString()}P)
+                  <span className="inline-block h-0.5 w-3 border-t border-dashed border-[#00A878]" />
+                  현재가 기준선 ({closePrice.toLocaleString()}P)
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <span className="inline-block h-2.5 w-0.5 border-l border-dashed border-amber-500" />
@@ -674,17 +690,17 @@ export default function MatchTimelineChart({
                       <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                         <stop
                           offset="0%"
-                          stopColor={isUpFromOpen ? "#10b981" : "#3b82f6"}
+                          stopColor={strokeColor}
                           stopOpacity={0.34}
                         />
                         <stop
                           offset="65%"
-                          stopColor={isUpFromOpen ? "#10b981" : "#3b82f6"}
+                          stopColor={strokeColor}
                           stopOpacity={0.1}
                         />
                         <stop
                           offset="100%"
-                          stopColor={isUpFromOpen ? "#10b981" : "#3b82f6"}
+                          stopColor={strokeColor}
                           stopOpacity={0.0}
                         />
                       </linearGradient>
@@ -717,7 +733,6 @@ export default function MatchTimelineChart({
                       tickLine={false}
                     />
 
-                    {/* Half-Time 45' Vertical Dashed Reference Line */}
                     <ReferenceLine
                       x={45}
                       stroke="#f59e0b"
@@ -732,28 +747,34 @@ export default function MatchTimelineChart({
                       }}
                     />
 
-                    {/* Open Price (시가) Horizontal Dashed Reference Line */}
                     <ReferenceLine
                       y={openPrice}
-                      stroke="#64748b"
-                      strokeDasharray="5 4"
-                      strokeWidth={1.3}
+                      stroke="#94a3b8"
+                      strokeDasharray="4 3"
+                      strokeWidth={1.1}
                       label={{
                         value: `시가 ${openPrice.toLocaleString()}P`,
                         position: "insideBottomLeft",
-                        fill: "#475569",
+                        fill: "#64748b",
                         fontSize: 10,
                         fontWeight: 800,
                       }}
                     />
 
-                    {/* Selected Event Highlight Vertical Reference Line */}
+                    {/* Current Price Brand Green Dashed Reference Line */}
+                    <ReferenceLine
+                      y={closePrice}
+                      stroke="#00A878"
+                      strokeDasharray="5 3"
+                      strokeWidth={1.3}
+                    />
+
                     {activeEventPoint && (
                       <ReferenceLine
                         x={activeEventPoint.minute}
                         stroke={
                           EVENT_PIN_CONFIG[activeEventPoint.event.type]?.fill ??
-                          "#059669"
+                          "#00A878"
                         }
                         strokeDasharray="2 2"
                         strokeWidth={1.5}
@@ -771,7 +792,8 @@ export default function MatchTimelineChart({
                           openPrice > 0
                             ? ((diff / openPrice) * 100).toFixed(2)
                             : "0.00";
-                        const up = diff >= 0;
+                        const up = diff > 0;
+                        const down = diff < 0;
                         const ev = pt.event;
                         const pinCfg = ev ? EVENT_PIN_CONFIG[ev.type] : null;
 
@@ -790,7 +812,11 @@ export default function MatchTimelineChart({
                               </span>
                               <span
                                 className={`font-mono font-extrabold ${
-                                  up ? "text-emerald-400" : "text-sky-400"
+                                  up
+                                    ? "text-[#00A878]"
+                                    : down
+                                    ? "text-[#F07868]"
+                                    : "text-[#A8B2BC]"
                                 }`}
                               >
                                 시가대비 {up ? "+" : ""}
@@ -850,14 +876,12 @@ export default function MatchTimelineChart({
                                 setSelectedEventMinute(payload.minute)
                               }
                             >
-                              {/* Outer glow ring */}
                               <circle
                                 cx={cx}
                                 cy={cy}
                                 r={isSelected ? 15 : 12}
                                 fill={cfg.ring}
                               />
-                              {/* Pin badge body */}
                               <circle
                                 cx={cx}
                                 cy={cy}
@@ -866,7 +890,6 @@ export default function MatchTimelineChart({
                                 stroke={cfg.stroke}
                                 strokeWidth={isSelected ? 2.5 : 2}
                               />
-                              {/* Emoji Icon centered inside pin */}
                               <text
                                 x={cx}
                                 y={cy + 3.5}
@@ -875,7 +898,6 @@ export default function MatchTimelineChart({
                               >
                                 {cfg.icon}
                               </text>
-                              {/* Minute tag above pin */}
                               <rect
                                 x={cx - 14}
                                 y={Math.max(2, cy - 26)}
@@ -911,8 +933,10 @@ export default function MatchTimelineChart({
                                 r={7}
                                 fill={
                                   isUpFromOpen
-                                    ? "rgba(16, 185, 129, 0.25)"
-                                    : "rgba(37, 99, 235, 0.25)"
+                                    ? "rgba(0, 168, 120, 0.25)"
+                                    : isDownFromOpen
+                                    ? "rgba(240, 120, 104, 0.25)"
+                                    : "rgba(168, 178, 188, 0.25)"
                                 }
                               />
                               <circle
@@ -956,11 +980,11 @@ export default function MatchTimelineChart({
             )}
           </div>
 
-          {/* 4. Horizontal Scrollable Match Event Timeline Chips Bar */}
+          {/* 4. Horizontal Scrollable Match Event Timeline Chips Bar (Read-Only for Regular Users) */}
           <div className="mt-2.5 rounded-xl bg-white border border-gray-100 p-2.5">
             <div className="mb-1.5 flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
-                <Zap className="h-3.5 w-3.5 text-[#00985f]" />
+                <Zap className="h-3.5 w-3.5 text-[#00A878]" />
                 <span className="text-xs font-extrabold text-gray-800">
                   경기 이벤트 타임라인 마커 (0&apos;~90&apos;)
                 </span>
@@ -999,13 +1023,15 @@ export default function MatchTimelineChart({
                         <span
                           className={`font-mono text-[10px] ${
                             isSelected
-                              ? impact >= 0
-                                ? "text-emerald-300"
-                                : "text-rose-300"
+                              ? impact > 0
+                                ? "text-[#00A878]"
+                                : impact < 0
+                                ? "text-[#F07868]"
+                                : "text-[#A8B2BC]"
                               : ""
                           }`}
                         >
-                          {impact >= 0 ? "+" : ""}
+                          {impact > 0 ? "+" : ""}
                           {impact.toFixed(1)}%
                         </span>
                       </button>
@@ -1013,7 +1039,6 @@ export default function MatchTimelineChart({
                   })}
                 </div>
 
-                {/* Selected Event Callout Detail Box */}
                 {activeEventPoint && (
                   <div className="mt-2 flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2 border border-gray-200/70 text-xs">
                     <div className="flex items-center gap-2 min-w-0">
@@ -1039,48 +1064,8 @@ export default function MatchTimelineChart({
               </>
             ) : (
               <p className="py-1 text-[11px] text-gray-400">
-                아직 기록된 주요 이벤트 마커가 없습니다. 아래 버튼으로 실시간 경기 이벤트를 테스트해 보세요.
+                현재까지 기록된 주요 경기 이벤트 마커가 없습니다.
               </p>
-            )}
-
-            {/* Quick Live Event Simulator Bar for testing 0~90m pins */}
-            {showEventSimulator && (
-              <div className="mt-2 flex items-center justify-between gap-1.5 border-t border-gray-100 pt-2">
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-gray-400 shrink-0">
-                  <Sparkles className="h-3 w-3 text-[#00985f]" />
-                  이벤트 시뮬레이션
-                </span>
-                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
-                  {(
-                    [
-                      { type: "GOAL", label: "+⚽ 득점" },
-                      { type: "ASSIST", label: "+🅰️ 도움" },
-                      { type: "SAVE", label: "+🧤 선방" },
-                      { type: "YELLOW_CARD", label: "+🟨 경고" },
-                    ] as { type: ChartEventType; label: string }[]
-                  ).map((btn) => (
-                    <button
-                      key={btn.type}
-                      type="button"
-                      onClick={() => {
-                        const res = triggerMatchEvent(player.id, btn.type);
-                        if (res) {
-                          const lastPt =
-                            res.player.priceHistory[
-                              res.player.priceHistory.length - 1
-                            ];
-                          if (lastPt) {
-                            setSelectedEventMinute(lastPt.minute);
-                          }
-                        }
-                      }}
-                      className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-[10px] font-extrabold text-gray-700 transition hover:bg-gray-100 active:scale-95"
-                    >
-                      {btn.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
             )}
           </div>
         </>
@@ -1135,12 +1120,12 @@ export default function MatchTimelineChart({
                   >
                     <stop
                       offset="0%"
-                      stopColor={isUpFromOpen ? "#10b981" : "#3b82f6"}
+                      stopColor={strokeColor}
                       stopOpacity={0.3}
                     />
                     <stop
                       offset="100%"
-                      stopColor={isUpFromOpen ? "#10b981" : "#3b82f6"}
+                      stopColor={strokeColor}
                       stopOpacity={0.0}
                     />
                   </linearGradient>
@@ -1166,8 +1151,8 @@ export default function MatchTimelineChart({
                   tickLine={false}
                 />
                 <ReferenceLine
-                  y={basePrice}
-                  stroke="#94a3b8"
+                  y={closePrice}
+                  stroke="#00A878"
                   strokeDasharray="4 3"
                 />
                 <Tooltip

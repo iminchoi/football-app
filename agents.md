@@ -1,56 +1,69 @@
-﻿# AI Agent Development Guidelines (Pitch Trade)
+# AGENTS.md
 
-본 문서는 Pitch Trade(가상 축구 선수 실시간 트레이딩 웹앱) 개발 시 AI 에이전트가 준수해야 할 핵심 아키텍처 규칙, 도메인 제약 및 코딩 컨벤션입니다.
-
----
-
-## 1. 프로젝트 개요 & 기술 스택
-- **목적**: 실시간 축구 경기 이벤트(FotMob 감성)와 연동되어 선수의 주가가 변동하는 가상 트레이딩 MVP
-- **Framework**: Next.js 15 (App Router), React 19, TypeScript
-- **Styling**: Tailwind CSS, Lucide-react (모바일 웹 뷰 중심, 라이트 테마)
-- **State Management**: Zustand with `persist`
-- **Charts**: Recharts (시세 틱 차트, 선수 특성 Radar 차트)
+Think and work in English. Reply in Korean.
 
 ---
 
-## 2. 상태 관리(Zustand) & 영속성(Persistence) 필수 규칙
-1. **스토리지 오염 방지 (`partialize`)**:
-   - `players`, `matches` 같은 경기 마스터 데이터는 절대 `localStorage`에 저장하지 않는다.
-   - 오직 유저 세션 및 자산 데이터만 저장한다:
-     ```ts
-     partialize: (state) => ({
-       cash: state.cash,
-       holdings: state.holdings,
-       transactions: state.transactions,
-       realizedPnL: state.realizedPnL,
-       user: state.user,
-     })
-     ```
-2. **리렌더링 최적화 (Selector Pattern)**:
-   - 컴포넌트에서 `const { ... } = useTradeStore()` 형태로 스토어 전체를 구독하지 않는다.
-   - 반드시 `const cash = useTradeStore(s => s.cash)`와 같이 필요한 값만 셀렉터로 분리 구독한다.
+## 1. Repo Text & Documentation (Absolute)
+Covers code, identifiers, log/error messages, comments, docs, examples, and commit messages.
+- Write for a reader who has only the repo: what it is, its contract, how to run and maintain it, and the reason behind each value, exclusion, or exception.
+- Say what that reader needs once and briefly; link instead of repeating.
+- Never address the requester or session: no requests, no accounts of changes, nothing that needs the conversation or an earlier version to make sense. History belongs in VCS; change explanations in the reply.
+- Use English, imperative or neutral third person for all repo text.
 
 ---
 
-## 3. 핵심 트레이딩 & 시세 경제 모델 규칙
-1. **경기 상태 가드 (`isLive`)**:
-   - `tickMarket()` 실행 시 경기가 진행 중(`match.status === 'IN_PLAY'`)인 선수만 시세를 변동시킨다. 종료(FT)나 예정 경기 선수의 시세는 고정한다.
-2. **시세 우상향 쏠림(인플레이션) 방지**:
-   - 일반 자연 변동률의 평균값은 반드시 0%여야 한다 (`Math.random() * 0.05 - 0.025`).
-   - 상한가(+30%) 및 하한가(-30%) 제한 캡을 엄격히 유지한다.
-3. **이벤트 주도(Event-Driven) 시세 산정**:
-   - 가격을 먼저 뽑지 않는다. 반드시 `경기 이벤트 추첨 ➔ 해당 이벤트의 min/max 가중치 기반 변동률 산정 ➔ 시세 반영` 순서를 지킨다.
-4. **체결 정확성 및 실현 손익 추적**:
-   - `sellPlayer` 실행 시 `(매도가 - 평단가) * 수량`을 계산하여 `realizedPnL`에 누적 합산한다.
-   - `buyPlayer`, `sellPlayer`는 실행 시점의 최종 체결가(`executedPrice`)를 리턴하여 UI 토스트 메시지에 정확히 일치시킨다.
+## 2. Design, Scope & Code Discipline
+- **Plan-First Execution:** Before modifying multiple files or core architecture, outline the cases, weigh likelihood against cost, and present a concise implementation plan (files affected, state/data flow changes). Wait for confirmation on major architectural changes; for small, isolated tasks, state a 1-2 line plan and proceed.
+- **Ask Before Guessing:** Ask when ambiguity or conflicts change the design; decide minor details autonomously and state them clearly.
+- **Minimal & Focused (No Over-Engineering):** Do only what the task needs. No unrequested refactors, renames, reformatting, speculative abstractions, or "future-proofing" boilerplate. Suggest improvements in the reply instead.
+- **Objective Judgment:** Judge each question fresh; drop an earlier recommendation once it proves wrong. On factual corrections, agree only if reasoning holds; otherwise explain. On user decisions (naming, structure, scope), raise concerns once, then follow.
+- **Production-Ready:** Leave touched code clean in repo conventions, without debug leftovers (`console.log`, unused imports, commented-out code).
+- **Commits:** Follow Conventional Commits with an imperative subject (e.g., `feat: add portfolio chart filter`). Body only if needed: `-` bullets, ≤72 chars each, no prose, no restating the subject.
 
 ---
 
-## 4. UI/UX 디자인 가이드라인
-1. **FotMob 라이트 모드 테마**:
-   - 화이트 배경(`bg-white`), 서브 배경(`bg-gray-50`), 정갈한 테두리(`border-gray-100` ~ `border-gray-200`)를 일관되게 사용한다.
-   - 성과 뱃지: 우수/상승 초록색(`bg-emerald-500` / `text-emerald-600`), 하락 파란색(`text-blue-600`), 경고/실책 빨간색(`text-rose-500`).
-2. **모바일 사용성 (Safe Area)**:
-   - 바텀시트나 모달의 최하단 확정 버튼에는 반드시 `pb-6` 이상의 Safe Area 패딩(`pb-[calc(1.5rem+env(safe-area-inset-bottom))]`)을 부여하여 기기 홈 바와의 간섭을 방지한다.
-3. **스크롤 최소화**:
-   - 모바일 바텀시트 내부에서 불필요한 세로 스크롤이 생기지 않도록 여백(`gap`, `space-y`)은 컴팩트하게(`space-y-2` 내외) 유지한다.
+## 3. Tech Stack Conventions (Next.js / TypeScript / Tailwind / Zustand)
+- **TypeScript Strictness:** Never use `any` or suppress errors (`@ts-ignore`, `eslint-disable`). Define explicit interfaces/types for props, API payloads, and store states.
+- **Next.js & React:** Default to Server Components; add `'use client'` only when hooks, browser APIs, or interactive event listeners are required. Keep components focused; extract helpers or hooks only when logic is duplicated or exceeds ~100 lines of distinct responsibility.
+- **Zustand State:** Keep store actions atomic and clean. Select only necessary state slices to avoid unnecessary re-renders.
+- **Tailwind CSS:** Use standard utility classes and existing project design tokens/color palettes rather than arbitrary hex values unless specified.
+
+---
+
+## 4. Existing Solutions First
+- Before writing a function, check in order:
+  1. Standard library / Web APIs
+  2. Already declared dependencies in `package.json`
+  3. An established library not yet declared (propose it per Security rules below)
+  4. Custom code
+- Do not add a dependency for what a few clear lines of stdlib code handle; use an established library for tricky domains (dates, URLs, parsing, networking, concurrency, crypto).
+- Write custom code only when no option meets a stated requirement, checked against docs. Keep it minimal and comment the requirement and options checked.
+- Count speed only when measured on that path; fewer lines alone count for nothing.
+
+---
+
+## 5. Evidence & External Code Compliance
+- **No Hallucinations:** External facts (APIs, versions, licenses, security) require a checked primary source; repo facts require reading the code itself. Mark anything else unverified or inferred.
+- Never invent URLs, domains, package names, CLI flags, or schemas—even as placeholders. Check signatures and config keys against docs for the exact version in use.
+- **License & IP Compliance (Absolute):** License compliance comes first. Do not copy, translate, or paraphrase external repositories' code or structure without explicit user approval and license compatibility verification. Comply with all applicable laws, regulations, and third-party API Terms of Service.
+
+---
+
+## 6. Security & Dependency Management
+- **Zero Secrets:** Never hardcode API keys, tokens, or sensitive values anywhere (including tests and examples). Always use environment variables (`.env.local`) or secret stores.
+- **Dependency Vetting:** Before installing any new package (`npm install`, etc.), propose it and wait for user approval with:
+  - Package name & exact registry publisher (to prevent typosquatting)
+  - Maintainer, release history, and active maintenance status
+  - Why it is needed & alternatives considered
+  - Any known security vulnerabilities or supply-chain incidents
+- Pin versions cleanly and commit lockfiles (`package-lock.json` / `pnpm-lock.yaml`).
+
+---
+
+## 7. Verification & Compatibility
+- **Define & Verify:** Define expected behavior before implementing. Run relevant checks (`npx tsc --noEmit`, linter, tests) after changes.
+- **Browser UI Verification:** For UI, layout, or interactive changes, use the built-in browser agent to verify rendering, responsiveness, and zero console errors.
+- **Integrity:** Never weaken tests, remove assertions, or fake results to make checks pass. Never claim a command or test passed unless it actually ran and succeeded.
+- **Reporting:** Clearly separate what changed, what was verified, and what remains untested or failing, followed by optional suggestions.
+- **Compatibility:** Preserve public interfaces, API contracts, and existing user data unless the task explicitly requires a breaking change (flag it before implementing).
