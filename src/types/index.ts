@@ -138,6 +138,7 @@ export interface StoredUserAccount {
   realizedPnL: number;
   holdings: Record<string, Holding>;
   transactions: PointTransaction[];
+  watchlist?: string[];
   createdAt: string;
 }
 

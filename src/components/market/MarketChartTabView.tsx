@@ -176,7 +176,12 @@ export default function MarketChartTabView({
       );
     }
     if (league === "EPL") {
-      return lid === "epl" || lid === "pl" || EplTeams.has(club);
+      return (
+        lid === "epl" ||
+        lid === "pl" ||
+        lid === "pl-2021" ||
+        EplTeams.has(club)
+      );
     }
     if (league === "LALIGA") {
       return lid === "laliga" || lid === "pd" || LaLigaTeams.has(club);

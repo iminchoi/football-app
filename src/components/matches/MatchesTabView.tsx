@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Trophy,
   Sparkles,
@@ -101,6 +101,7 @@ export default function MatchesTabView({
     parseDateStr(todayStr)
   );
   const calendarRef = useRef<HTMLDivElement | null>(null);
+  const fetchControllerRef = useRef<AbortController | null>(null);
 
   const [apiMatches, setApiMatches] = useState<Match[]>([]);
   const [dataSource, setDataSource] = useState<string>("LOADING");
@@ -123,73 +124,87 @@ export default function MatchesTabView({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isCalendarOpen]);
 
-  const fetchMatchesByDate = async (dateStr: string) => {
-    setIsLoading(true);
-    setStatusMessage(null);
+  const fetchMatchesByDate = useCallback(
+    async (dateStr: string) => {
+      // Cancel the previous request so a stale response cannot overwrite newer state.
+      fetchControllerRef.current?.abort();
+      const controller = new AbortController();
+      fetchControllerRef.current = controller;
 
-    try {
-      const res = await fetch(
-        `/api/matches?date=${encodeURIComponent(dateStr)}`
-      );
-      const data = await res.json();
+      setIsLoading(true);
+      setStatusMessage(null);
+      const fallbackMatches = useTradeStore.getState().matches;
 
-      setDataSource(data.source || "UNKNOWN");
-
-      if (data.source === "FOOTBALL_DATA_API") {
-        const fetchedList: Match[] = Array.isArray(data.matches)
-          ? data.matches
-          : [];
-        setApiMatches(fetchedList);
-        syncPlayersFromMatches(fetchedList);
-        setStatusMessage(null);
-      } else if (data.source === "AMATCH_FALLBACK") {
-        const fallbackList: Match[] = Array.isArray(data.matches)
-          ? data.matches
-          : storeMockMatches;
-        setApiMatches(fallbackList);
-        syncPlayersFromMatches(fallbackList);
-        setStatusMessage(data.message || null);
-      } else {
-        // Fallback when API key is empty or error occurs
-        const diffDays = Math.round(
-          (parseDateStr(dateStr).getTime() - parseDateStr(todayStr).getTime()) /
-            (1000 * 60 * 60 * 24)
+      try {
+        const res = await fetch(
+          `/api/matches?date=${encodeURIComponent(dateStr)}`,
+          { signal: controller.signal }
         );
-        const targetKey =
-          diffDays === -1
-            ? "YESTERDAY"
-            : diffDays === 0
-            ? "TODAY"
-            : diffDays === 1
-            ? "TOMORROW"
-            : "WEEKEND";
+        const data = await res.json();
 
-        const filteredMock = storeMockMatches.filter(
-          (m) => m.dateKey === targetKey
+        setDataSource(data.source || "UNKNOWN");
+
+        if (data.source === "FOOTBALL_DATA_API") {
+          const fetchedList: Match[] = Array.isArray(data.matches)
+            ? data.matches
+            : [];
+          setApiMatches(fetchedList);
+          syncPlayersFromMatches(fetchedList);
+          setStatusMessage(null);
+        } else if (data.source === "AMATCH_FALLBACK") {
+          const fallbackList: Match[] = Array.isArray(data.matches)
+            ? data.matches
+            : fallbackMatches;
+          setApiMatches(fallbackList);
+          syncPlayersFromMatches(fallbackList);
+          setStatusMessage(data.message || null);
+        } else {
+          // Fallback when API key is empty or error occurs
+          const diffDays = Math.round(
+            (parseDateStr(dateStr).getTime() -
+              parseDateStr(todayStr).getTime()) /
+              (1000 * 60 * 60 * 24)
+          );
+          const targetKey =
+            diffDays === -1
+              ? "YESTERDAY"
+              : diffDays === 0
+              ? "TODAY"
+              : diffDays === 1
+              ? "TOMORROW"
+              : "WEEKEND";
+
+          const filteredMock = fallbackMatches.filter(
+            (m) => m.dateKey === targetKey
+          );
+          const resolvedFallback =
+            filteredMock.length > 0 ? filteredMock : fallbackMatches;
+          setApiMatches(resolvedFallback);
+          syncPlayersFromMatches(resolvedFallback);
+          setStatusMessage(data.message || null);
+        }
+      } catch {
+        // An aborted request is superseded by a newer one that owns the state.
+        if (controller.signal.aborted) return;
+        setDataSource("CLIENT_FALLBACK");
+        setApiMatches(fallbackMatches);
+        setStatusMessage(
+          "네트워크 연결 상태를 확인해주세요. 데모 경기를 표시합니다."
         );
-        const resolvedFallback =
-          filteredMock.length > 0 ? filteredMock : storeMockMatches;
-        setApiMatches(resolvedFallback);
-        syncPlayersFromMatches(resolvedFallback);
-        setStatusMessage(data.message || null);
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
       }
-    } catch {
-      setDataSource("CLIENT_FALLBACK");
-      setApiMatches(storeMockMatches);
-      setStatusMessage(
-        "네트워크 연결 상태를 확인해주세요. 데모 경기를 표시합니다."
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    },
+    [syncPlayersFromMatches, todayStr]
+  );
 
   useEffect(() => {
     fetchMatchesByDate(selectedDateStr);
     // Sync calendar view month with selected date
     setCalendarViewMonth(parseDateStr(selectedDateStr));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDateStr]);
+  }, [fetchMatchesByDate, selectedDateStr]);
+
+  useEffect(() => () => fetchControllerRef.current?.abort(), []);
 
   // Overlay live store match state (scores/minutes) onto fetched matches
   const resolvedMatches = apiMatches.map(

@@ -13,6 +13,9 @@ import {
 
 const FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4/matches";
 
+// Upper bound for each upstream call so a stalled provider cannot hang the route.
+const UPSTREAM_TIMEOUT_MS = 8000;
+
 const INTERNATIONAL_COMPETITION_CODES = new Set([
   "WC",
   "EC",
@@ -185,8 +188,53 @@ function calculatePlayerAge(dateOfBirth?: string, rawAge?: number): number | und
   return age > 0 ? age : undefined;
 }
 
+interface FootballDataLineupPlayerRaw {
+  id?: number | string;
+  externalId?: string;
+  name?: string;
+  position?: string;
+  shirtNumber?: number;
+  team?: string;
+  currentTeam?: { name?: string };
+  nationalTeam?: string;
+  nationality?: string;
+  dateOfBirth?: string;
+  age?: number;
+}
+
+interface FootballDataTeamRaw {
+  id?: number | string;
+  name?: string;
+  shortName?: string;
+  tla?: string;
+  crest?: string;
+  formation?: string;
+  lineup?: FootballDataLineupPlayerRaw[];
+  bench?: FootballDataLineupPlayerRaw[];
+}
+
+interface FootballDataMatchRaw {
+  id?: number | string;
+  utcDate?: string;
+  status?: string;
+  minute?: number;
+  area?: { name?: string };
+  competition?: {
+    id?: number | string;
+    code?: string;
+    name?: string;
+    emblem?: string;
+  };
+  score?: {
+    fullTime?: { home?: number | null; away?: number | null };
+    halfTime?: { home?: number | null; away?: number | null };
+  };
+  homeTeam?: FootballDataTeamRaw;
+  awayTeam?: FootballDataTeamRaw;
+}
+
 function normalizeLineupPlayers(
-  rawList: any,
+  rawList: FootballDataLineupPlayerRaw[] | undefined,
   teamName: string,
   isInternational: boolean
 ): ApiLineupPlayer[] | undefined {
@@ -196,7 +244,7 @@ function normalizeLineupPlayers(
   let mfCount = 0;
   let fwCount = 0;
 
-  return rawList.map((raw: Record<string, any>, idx: number) => {
+  return rawList.map((raw: FootballDataLineupPlayerRaw, idx: number) => {
     const rawId = raw.id ?? raw.externalId;
     const rawName = String(raw.name || `선수 ${idx + 1}`).trim();
     const slug = rawName
@@ -372,6 +420,7 @@ export async function GET(request: NextRequest) {
         "X-Auth-Token": apiKey,
       },
       next: { revalidate: 60 },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
 
     const data = await res.json().catch(() => ({}));
@@ -389,8 +438,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    let rawMatches: Array<Record<string, any>> = Array.isArray(data.matches)
-      ? data.matches
+    const rawMatches: FootballDataMatchRaw[] = Array.isArray(data.matches)
+      ? (data.matches as FootballDataMatchRaw[])
       : [];
 
     // Check if Premier League (PL / 2021) is present in rawMatches; if not, also check /v4/competitions/PL/matches
@@ -405,6 +454,7 @@ export async function GET(request: NextRequest) {
         method: "GET",
         headers: { "X-Auth-Token": apiKey },
         next: { revalidate: 60 },
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       }).catch(() => null);
 
       if (plRes && plRes.ok) {
@@ -464,7 +514,7 @@ export async function GET(request: NextRequest) {
       const compIdStr = String(m.competition?.id || "");
       const koLeague =
         LEAGUE_KO_MAP[compCode] || LEAGUE_KO_MAP[compIdStr];
-      const status = mapApiStatus(m.status);
+      const status = mapApiStatus(String(m.status || ""));
 
       const isInternational =
         INTERNATIONAL_COMPETITION_CODES.has(compCode) ||
@@ -576,13 +626,13 @@ export async function GET(request: NextRequest) {
       count: normalizedMatches.length,
       matches: normalizedMatches,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({
       source: "NETWORK_FALLBACK",
       date: targetDate,
-      message: `API 연동 중 네트워크 예외가 발생해 데모 경기를 표시합니다. (${
-        error?.message || "Unknown error"
-      })`,
+      message: `API 연동 중 네트워크 예외가 발생해 데모 경기를 표시합니다. (${errorMessage})`,
       matches: INITIAL_MATCHES.map((m) => enrichMatchMetadata(m, false)),
     });
   }

@@ -19,6 +19,7 @@ import {
   useTradeStore,
   roundToTen,
   clampToPriceLimit,
+  normalizeAccountKey,
 } from "@/store/useTradeStore";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
 import { Player, TradeType, getPositionLine } from "@/types";
@@ -99,7 +100,7 @@ function buildPeriodSeries(
     const raw = (player.priceHistory ?? []).slice(-18);
     if (raw.length >= 2) {
       return raw.map((p) => ({
-        timeLabel: p.timeLabel,
+        timeLabel: p.timeLabel ?? `${p.minute}'`,
         price: roundToTen(p.price),
       }));
     }
@@ -564,6 +565,7 @@ export default function TradeBottomSheet({
   const players = useTradeStore((state) => state.players);
   const cash = useTradeStore((state) => state.cash);
   const holdings = useTradeStore((state) => state.holdings);
+  const accounts = useTradeStore((state) => state.accounts);
   const watchlist = useTradeStore((state) => state.watchlist);
   const toggleWatchlist = useTradeStore((state) => state.toggleWatchlist);
   const buyPlayer = useTradeStore((state) => state.buyPlayer);
@@ -649,7 +651,9 @@ export default function TradeBottomSheet({
   const marketSupply = player.marketSupply ?? tierCfg.marketSupply;
   const availableShares = getAvailableShares(
     { id: player.id, marketSupply },
-    holdings
+    holdings,
+    accounts,
+    user ? normalizeAccountKey(user.id) : undefined
   );
   const playerTier = player.tier ?? tierCfg.tier;
   const isSoldOut = availableShares === 0;
@@ -1151,7 +1155,7 @@ export default function TradeBottomSheet({
               <div className="flex items-center gap-1.5">
                 {isSoldOut ? (
                   <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-black text-rose-600">
-                    품절
+                    물량 소진 (Sold Out)
                   </span>
                 ) : isLowStock ? (
                   <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-700">
@@ -1348,7 +1352,7 @@ export default function TradeBottomSheet({
             }`}
           >
             {isBuySoldOut
-              ? "[매도 물량 대기 중 (품절)]"
+              ? "물량 소진 (Sold Out)"
               : tradeType === "BUY"
               ? `${player.name} ${quantity}주 매수 확정`
               : `${player.name} ${quantity}주 매도 확정`}

@@ -1,4 +1,4 @@
-import { Holding, Player, PlayerTier } from "@/types";
+import { Holding, Player, PlayerTier, StoredUserAccount } from "@/types";
 
 export interface TierConfig {
   tier: PlayerTier;
@@ -41,15 +41,21 @@ export function getTierConfig(basePrice: number): TierConfig {
 }
 
 /**
- * 단일 사용자 환경에서 선수의 시장 잔여 수량을 정적 marketSupply와 현재 보유 수량(holdings)으로부터 동적 계산합니다.
+ * Remaining market supply: `marketSupply` minus shares held across all accounts.
+ * The active account is read from live `holdings` and skipped in `accounts`,
+ * whose persisted snapshot may be stale, so its shares are never counted twice.
  */
 export function getAvailableShares(
   player: Pick<Player, "id" | "marketSupply">,
-  holdings: Record<string, Holding>
+  holdings: Record<string, Holding>,
+  accounts: Record<string, StoredUserAccount> = {},
+  activeAccountKey?: string
 ): number {
-  return Math.max(
-    0,
-    player.marketSupply - (holdings[player.id]?.quantity ?? 0)
-  );
+  let held = holdings[player.id]?.quantity ?? 0;
+  for (const [key, account] of Object.entries(accounts)) {
+    if (key === activeAccountKey) continue;
+    held += account.holdings?.[player.id]?.quantity ?? 0;
+  }
+  return Math.max(0, player.marketSupply - held);
 }
 

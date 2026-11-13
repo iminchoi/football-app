@@ -117,7 +117,13 @@ const ADMIN_DEFAULT_HASH = hashPassword("admin", "Admin1234");
 function syncActiveUserToAccounts(
   state: Pick<
     TradeStoreState,
-    "user" | "accounts" | "cash" | "realizedPnL" | "holdings" | "transactions"
+    | "user"
+    | "accounts"
+    | "cash"
+    | "realizedPnL"
+    | "holdings"
+    | "transactions"
+    | "watchlist"
   >
 ): Record<string, StoredUserAccount> {
   const nextAccounts = { ...(state.accounts ?? {}) };
@@ -139,6 +145,7 @@ function syncActiveUserToAccounts(
     realizedPnL: safeRealizedPnL,
     holdings: state.holdings ?? {},
     transactions: state.transactions ?? [],
+    watchlist: state.watchlist ?? existing?.watchlist ?? [],
     createdAt: existing?.createdAt ?? new Date().toISOString(),
   };
 
@@ -581,6 +588,7 @@ export const useTradeStore = create<TradeStoreState>()(
             );
             const adminHoldings = existingAdmin?.holdings ?? {};
             const adminTransactions = existingAdmin?.transactions ?? [];
+            const adminWatchlist = existingAdmin?.watchlist ?? [];
 
             const adminAccount: StoredUserAccount = {
               id: "Admin",
@@ -591,6 +599,7 @@ export const useTradeStore = create<TradeStoreState>()(
               realizedPnL: adminRealizedPnL,
               holdings: adminHoldings,
               transactions: adminTransactions,
+              watchlist: adminWatchlist,
               createdAt:
                 existingAdmin?.createdAt ?? new Date().toISOString(),
             };
@@ -604,6 +613,7 @@ export const useTradeStore = create<TradeStoreState>()(
               realizedPnL: adminRealizedPnL,
               holdings: adminHoldings,
               transactions: adminTransactions,
+              watchlist: adminWatchlist,
               user: {
                 id: "Admin",
                 name: "총괄관리자",
@@ -646,6 +656,7 @@ export const useTradeStore = create<TradeStoreState>()(
         );
         const restoredHoldings = targetAccount.holdings ?? {};
         const restoredTransactions = targetAccount.transactions ?? [];
+        const restoredWatchlist = targetAccount.watchlist ?? [];
 
         set({
           accounts: nextAccounts,
@@ -653,6 +664,7 @@ export const useTradeStore = create<TradeStoreState>()(
           realizedPnL: restoredRealizedPnL,
           holdings: restoredHoldings,
           transactions: restoredTransactions,
+          watchlist: restoredWatchlist,
           user: {
             id: targetAccount.id,
             name: targetAccount.name,
@@ -726,6 +738,7 @@ export const useTradeStore = create<TradeStoreState>()(
           realizedPnL: 0,
           holdings: {},
           transactions: [],
+          watchlist: [],
           createdAt: new Date().toISOString(),
         };
 
@@ -737,6 +750,7 @@ export const useTradeStore = create<TradeStoreState>()(
           cash: INITIAL_CASH,
           holdings: {},
           transactions: [],
+          watchlist: [],
           realizedPnL: 0,
           user: {
             id: trimmedId,
@@ -763,6 +777,7 @@ export const useTradeStore = create<TradeStoreState>()(
           realizedPnL: 0,
           holdings: {},
           transactions: [],
+          watchlist: [],
         });
       },
 
@@ -782,12 +797,16 @@ export const useTradeStore = create<TradeStoreState>()(
       },
 
       toggleWatchlist: (playerId) => {
-        const { watchlist } = get();
-        if (watchlist.includes(playerId)) {
-          set({ watchlist: watchlist.filter((id) => id !== playerId) });
-        } else {
-          set({ watchlist: [...watchlist, playerId] });
-        }
+        const state = get();
+        const { watchlist } = state;
+        const nextWatchlist = watchlist.includes(playerId)
+          ? watchlist.filter((id) => id !== playerId)
+          : [...watchlist, playerId];
+        const nextAccounts = syncActiveUserToAccounts({
+          ...state,
+          watchlist: nextWatchlist,
+        });
+        set({ watchlist: nextWatchlist, accounts: nextAccounts });
       },
 
       ensurePlayerInStore: (newPlayer) => {
@@ -1502,7 +1521,7 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         }
 
-        const { user, cash, players, holdings, transactions } = get();
+        const { user, cash, players, holdings, accounts, transactions } = get();
         if (!user) {
           return {
             success: false,
@@ -1515,10 +1534,12 @@ export const useTradeStore = create<TradeStoreState>()(
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
         }
 
-        // Dynamic remaining supply calculation: marketSupply - current holdings
-        const availableShares = Math.max(
-          0,
-          player.marketSupply - (holdings[player.id]?.quantity ?? 0)
+        // Remaining supply counts shares held by every account, not only the active user
+        const availableShares = getAvailableShares(
+          player,
+          holdings,
+          accounts,
+          normalizeAccountKey(user.id)
         );
         if (availableShares <= 0 || quantity > availableShares) {
           return {
@@ -2005,6 +2026,7 @@ export const useTradeStore = create<TradeStoreState>()(
           realizedPnL: 0,
           holdings: {},
           transactions: [],
+          watchlist: [],
         });
         set({
           accounts: nextAccounts,
@@ -2016,6 +2038,7 @@ export const useTradeStore = create<TradeStoreState>()(
           playerPrices: {},
           holdings: {},
           transactions: [],
+          watchlist: [],
           selectedDate: "TODAY",
           expandedMatchIds: ["m-tot-ars", "m-mci-liv", "m-kor-jpn"],
         });
