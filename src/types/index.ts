@@ -21,6 +21,18 @@ export interface UserSession {
   cash: number;
 }
 
+export interface StoredUserAccount {
+  id: string;
+  name: string;
+  role: UserRole;
+  passwordHash: string;
+  cash: number;
+  realizedPnL: number;
+  holdings: Record<string, Holding>;
+  transactions: PointTransaction[];
+  createdAt: string;
+}
+
 export interface PricePoint {
   timeLabel: string;
   price: number;

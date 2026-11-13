@@ -9,6 +9,7 @@ import {
   BottomTab,
   UserSession,
   UserRole,
+  StoredUserAccount,
   PersistedPlayerPrice,
 } from "@/types";
 import {
@@ -43,6 +44,7 @@ interface TradeExecutionResult {
 
 interface TradeStoreState {
   user: UserSession | null;
+  accounts: Record<string, StoredUserAccount>;
   cash: number;
   realizedPnL: number;
   matches: Match[];
@@ -54,7 +56,7 @@ interface TradeStoreState {
   activeTab: BottomTab;
   expandedMatchIds: string[];
 
-  // Auth Actions (DB simulation with id & password)
+  // Auth Actions (Account registry, password hash verification & per-user portfolio isolation)
   login: (id: string, password: string) => AuthActionResult;
   signup: (id: string, password: string, name?: string) => AuthActionResult;
   logout: () => void;
@@ -74,6 +76,60 @@ interface TradeStoreState {
 
 // Round any price or point value to the nearest 10 integer unit
 export const roundToTen = (val: number): number => Math.round(val / 10) * 10;
+
+// Normalize account lookup key (case-insensitive ID matching)
+export const normalizeAccountKey = (id: string): string =>
+  id.trim().toLowerCase();
+
+// Salted multi-round password hashing (prevents plain-text password storage in localStorage)
+export function hashPassword(accountKey: string, rawPassword: string): string {
+  const payload = `pitch-trade-salt-v1:${accountKey.toLowerCase()}:${rawPassword}`;
+  let h1 = 0x811c9dc5;
+  let h2 = 0xdeadbeef;
+  for (let round = 0; round < 256; round++) {
+    for (let i = 0; i < payload.length; i++) {
+      const code = payload.charCodeAt(i) ^ (round & 0xff);
+      h1 = Math.imul(h1 ^ code, 0x01000193);
+      h2 = Math.imul(h2 ^ (code + i), 0x85ebca6b);
+    }
+  }
+  const hex1 = (h1 >>> 0).toString(16).padStart(8, "0");
+  const hex2 = (h2 >>> 0).toString(16).padStart(8, "0");
+  return `ptv1$${hex1}${hex2}`;
+}
+
+const ADMIN_DEFAULT_HASH = hashPassword("admin", "Admin1234");
+
+function syncActiveUserToAccounts(
+  state: Pick<
+    TradeStoreState,
+    "user" | "accounts" | "cash" | "realizedPnL" | "holdings" | "transactions"
+  >
+): Record<string, StoredUserAccount> {
+  const nextAccounts = { ...(state.accounts ?? {}) };
+  if (!state.user) return nextAccounts;
+
+  const key = normalizeAccountKey(state.user.id);
+  const existing = nextAccounts[key];
+  const safeCash = roundToTen(state.cash);
+  const safeRealizedPnL = roundToTen(state.realizedPnL ?? 0);
+
+  nextAccounts[key] = {
+    id: existing?.id ?? state.user.id,
+    name: existing?.name ?? state.user.name,
+    role: existing?.role ?? state.user.role,
+    passwordHash:
+      existing?.passwordHash ??
+      (key === "admin" ? ADMIN_DEFAULT_HASH : ""),
+    cash: safeCash,
+    realizedPnL: safeRealizedPnL,
+    holdings: state.holdings ?? {},
+    transactions: state.transactions ?? [],
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
+  };
+
+  return nextAccounts;
+}
 
 // Clamp price strictly within [basePrice * 0.7, basePrice * 1.3] and round to 10
 export const clampToPriceLimit = (price: number, basePrice: number): number => {
@@ -147,6 +203,7 @@ export const useTradeStore = create<TradeStoreState>()(
   persist(
     (set, get) => ({
       user: null,
+      accounts: {},
       cash: INITIAL_CASH,
       realizedPnL: 0,
       matches: INITIAL_MATCHES,
@@ -168,24 +225,47 @@ export const useTradeStore = create<TradeStoreState>()(
         }
 
         const state = get();
-        const hasPersistedSessionState =
-          state.cash !== INITIAL_CASH ||
-          Object.values(state.holdings).some((h) => h.quantity > 0) ||
-          state.transactions.length > 0;
-        const resolvedCash = hasPersistedSessionState
-          ? roundToTen(state.cash)
-          : INITIAL_CASH;
+        const nextAccounts = syncActiveUserToAccounts(state);
+        const accountKey = normalizeAccountKey(trimmedId);
 
-        // Hardcoded Admin account check: ID === 'Admin' && PW === 'Admin1234'
-        if (trimmedId === "Admin") {
-          if (password === "Admin1234") {
+        // Built-in Admin account verification (ID === 'Admin' && PW === 'Admin1234')
+        if (accountKey === "admin") {
+          if (trimmedId === "Admin" && password === "Admin1234") {
+            const existingAdmin = nextAccounts["admin"];
+            const adminCash = roundToTen(existingAdmin?.cash ?? INITIAL_CASH);
+            const adminRealizedPnL = roundToTen(
+              existingAdmin?.realizedPnL ?? 0
+            );
+            const adminHoldings = existingAdmin?.holdings ?? {};
+            const adminTransactions = existingAdmin?.transactions ?? [];
+
+            const adminAccount: StoredUserAccount = {
+              id: "Admin",
+              name: "총괄관리자",
+              role: "admin",
+              passwordHash: ADMIN_DEFAULT_HASH,
+              cash: adminCash,
+              realizedPnL: adminRealizedPnL,
+              holdings: adminHoldings,
+              transactions: adminTransactions,
+              createdAt:
+                existingAdmin?.createdAt ?? new Date().toISOString(),
+            };
+
             set({
-              cash: resolvedCash,
+              accounts: {
+                ...nextAccounts,
+                admin: adminAccount,
+              },
+              cash: adminCash,
+              realizedPnL: adminRealizedPnL,
+              holdings: adminHoldings,
+              transactions: adminTransactions,
               user: {
                 id: "Admin",
                 name: "총괄관리자",
                 role: "admin",
-                cash: resolvedCash,
+                cash: adminCash,
               },
             });
             return {
@@ -196,24 +276,51 @@ export const useTradeStore = create<TradeStoreState>()(
           }
           return {
             success: false,
-            message: "관리자 계정 비밀번호가 일치하지 않습니다.",
+            message: "관리자 계정 아이디 또는 비밀번호가 일치하지 않습니다.",
           };
         }
 
-        // General user login
+        // Registered user verification against stored accounts
+        const targetAccount = nextAccounts[accountKey];
+        if (!targetAccount) {
+          return {
+            success: false,
+            message: "등록되지 않은 아이디입니다. 회원가입을 먼저 진행해주세요.",
+          };
+        }
+
+        const inputHash = hashPassword(accountKey, password);
+        if (targetAccount.passwordHash !== inputHash) {
+          return {
+            success: false,
+            message: "비밀번호가 일치하지 않습니다.",
+          };
+        }
+
+        const restoredCash = roundToTen(targetAccount.cash ?? INITIAL_CASH);
+        const restoredRealizedPnL = roundToTen(
+          targetAccount.realizedPnL ?? 0
+        );
+        const restoredHoldings = targetAccount.holdings ?? {};
+        const restoredTransactions = targetAccount.transactions ?? [];
+
         set({
-          cash: resolvedCash,
+          accounts: nextAccounts,
+          cash: restoredCash,
+          realizedPnL: restoredRealizedPnL,
+          holdings: restoredHoldings,
+          transactions: restoredTransactions,
           user: {
-            id: trimmedId,
-            name: trimmedId,
-            role: "user",
-            cash: resolvedCash,
+            id: targetAccount.id,
+            name: targetAccount.name,
+            role: targetAccount.role,
+            cash: restoredCash,
           },
         });
         return {
           success: true,
-          message: `${trimmedId}님 환영합니다!`,
-          role: "user",
+          message: `${targetAccount.name}님 환영합니다!`,
+          role: targetAccount.role,
         };
       },
 
@@ -226,29 +333,72 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         }
 
-        if (trimmedId === "Admin" && password !== "Admin1234") {
+        if (/\s/.test(trimmedId)) {
           return {
             success: false,
-            message: "'Admin'은 예약된 총괄관리자 아이디입니다.",
+            message: "아이디에는 공백을 포함할 수 없습니다.",
           };
         }
 
-        const isAdmin = trimmedId === "Admin" && password === "Admin1234";
-        const displayName = isAdmin
-          ? "총괄관리자"
-          : name?.trim() || trimmedId;
+        if (trimmedId.length < 3 || trimmedId.length > 20) {
+          return {
+            success: false,
+            message: "아이디는 3자 이상 20자 이하로 입력해주세요.",
+          };
+        }
+
+        if (password.length < 4) {
+          return {
+            success: false,
+            message: "비밀번호는 최소 4자 이상으로 입력해주세요.",
+          };
+        }
+
+        const accountKey = normalizeAccountKey(trimmedId);
+        if (accountKey === "admin") {
+          return {
+            success: false,
+            message:
+              "'Admin'은 예약된 총괄관리자 아이디입니다. 로그인 탭을 이용해주세요.",
+          };
+        }
+
+        const state = get();
+        const nextAccounts = syncActiveUserToAccounts(state);
+
+        if (nextAccounts[accountKey]) {
+          return {
+            success: false,
+            message: "이미 사용 중인 아이디입니다. 다른 아이디를 입력해주세요.",
+          };
+        }
+
+        const displayName = name?.trim() || trimmedId;
+        const newAccount: StoredUserAccount = {
+          id: trimmedId,
+          name: displayName,
+          role: "user",
+          passwordHash: hashPassword(accountKey, password),
+          cash: INITIAL_CASH,
+          realizedPnL: 0,
+          holdings: {},
+          transactions: [],
+          createdAt: new Date().toISOString(),
+        };
 
         set({
+          accounts: {
+            ...nextAccounts,
+            [accountKey]: newAccount,
+          },
           cash: INITIAL_CASH,
           holdings: {},
           transactions: [],
           realizedPnL: 0,
-          playerPrices: {},
-          players: NORMALIZED_INITIAL_PLAYERS,
           user: {
-            id: isAdmin ? "Admin" : trimmedId,
+            id: trimmedId,
             name: displayName,
-            role: isAdmin ? "admin" : "user",
+            role: "user",
             cash: INITIAL_CASH,
           },
         });
@@ -256,12 +406,21 @@ export const useTradeStore = create<TradeStoreState>()(
         return {
           success: true,
           message: `${displayName}님 회원가입 완료! 초기 자금 ${INITIAL_CASH.toLocaleString()} P가 지급되었습니다.`,
-          role: isAdmin ? "admin" : "user",
+          role: "user",
         };
       },
 
       logout: () => {
-        set({ user: null });
+        const state = get();
+        const nextAccounts = syncActiveUserToAccounts(state);
+        set({
+          accounts: nextAccounts,
+          user: null,
+          cash: INITIAL_CASH,
+          realizedPnL: 0,
+          holdings: {},
+          transactions: [],
+        });
       },
 
       setSelectedDate: (date) => set({ selectedDate: date }),
@@ -555,18 +714,29 @@ export const useTradeStore = create<TradeStoreState>()(
           }),
         };
 
+        const nextHoldings = {
+          ...holdings,
+          [playerId]: {
+            playerId,
+            quantity: newQty,
+            avgBuyPrice: newAvg,
+          },
+        };
+        const nextTransactions = [newTx, ...transactions].slice(0, 40);
+        const stateSnapshot = get();
+        const nextAccounts = syncActiveUserToAccounts({
+          ...stateSnapshot,
+          cash: nextCash,
+          holdings: nextHoldings,
+          transactions: nextTransactions,
+        });
+
         set({
+          accounts: nextAccounts,
           cash: nextCash,
           user: user ? { ...user, cash: nextCash } : null,
-          holdings: {
-            ...holdings,
-            [playerId]: {
-              playerId,
-              quantity: newQty,
-              avgBuyPrice: newAvg,
-            },
-          },
-          transactions: [newTx, ...transactions].slice(0, 40),
+          holdings: nextHoldings,
+          transactions: nextTransactions,
         });
 
         return {
@@ -645,12 +815,23 @@ export const useTradeStore = create<TradeStoreState>()(
           }),
         };
 
+        const nextTransactions = [newTx, ...transactions].slice(0, 40);
+        const stateSnapshot = get();
+        const nextAccounts = syncActiveUserToAccounts({
+          ...stateSnapshot,
+          cash: nextCash,
+          realizedPnL: nextRealizedPnL,
+          holdings: nextHoldings,
+          transactions: nextTransactions,
+        });
+
         set({
+          accounts: nextAccounts,
           cash: nextCash,
           realizedPnL: nextRealizedPnL,
           user: user ? { ...user, cash: nextCash } : null,
           holdings: nextHoldings,
-          transactions: [newTx, ...transactions].slice(0, 40),
+          transactions: nextTransactions,
         });
 
         return {
@@ -661,10 +842,16 @@ export const useTradeStore = create<TradeStoreState>()(
       },
 
       addAdminCash: (amount = 1000000) => {
-        const { user, cash } = get();
+        const state = get();
+        const { user, cash } = state;
         const added = roundToTen(amount);
         const nextCash = roundToTen(cash + added);
+        const nextAccounts = syncActiveUserToAccounts({
+          ...state,
+          cash: nextCash,
+        });
         set({
+          accounts: nextAccounts,
           cash: nextCash,
           user: user ? { ...user, cash: nextCash } : null,
         });
@@ -799,13 +986,21 @@ export const useTradeStore = create<TradeStoreState>()(
       },
 
       resetAll: () => {
-        const { user } = get();
+        const state = get();
+        const { user } = state;
         if (typeof window !== "undefined") {
           window.localStorage.removeItem("pitch-trade-storage-v1");
           window.localStorage.removeItem("fotmob-pitchtrade-storage-v2");
-          window.localStorage.removeItem("fotmob-pitchtrade-storage-v3");
         }
+        const nextAccounts = syncActiveUserToAccounts({
+          ...state,
+          cash: INITIAL_CASH,
+          realizedPnL: 0,
+          holdings: {},
+          transactions: [],
+        });
         set({
+          accounts: nextAccounts,
           cash: INITIAL_CASH,
           realizedPnL: 0,
           user: user ? { ...user, cash: INITIAL_CASH } : null,
@@ -822,13 +1017,14 @@ export const useTradeStore = create<TradeStoreState>()(
     {
       name: "fotmob-pitchtrade-storage-v3",
       storage: createJSONStorage(() => localStorage),
-      // Persist only user session, asset data, and lightweight playerPrices map (never master matches/players)
+      // Persist only user session, account registry, asset data, and lightweight playerPrices map (never master matches/players)
       partialize: (state) => ({
         cash: state.cash,
         holdings: state.holdings,
         transactions: state.transactions,
         realizedPnL: state.realizedPnL,
         user: state.user,
+        accounts: state.accounts,
         playerPrices: state.playerPrices,
       }),
       merge: (persistedState, currentState) => {
@@ -842,10 +1038,12 @@ export const useTradeStore = create<TradeStoreState>()(
           currentState.players,
           playerPrices
         );
+        const accounts = { ...(persisted.accounts ?? {}) };
 
         return {
           ...currentState,
           ...persisted,
+          accounts,
           cash,
           realizedPnL,
           playerPrices,
