@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Match, MatchStatus } from "@/types";
-import { INITIAL_MATCHES } from "@/data/dummyData";
+import {
+  INITIAL_MATCHES,
+  NATIONAL_TEAM_DUMMY_MATCHES,
+} from "@/data/dummyData";
 
 const FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4/matches";
 
-// Supported major European competitions by code (e.g. "PL") and numeric ID (e.g. "2021")
+// Supported major club leagues + international (A-Match) competitions by code and numeric ID
 const TARGET_COMPETITION_CODES = new Set([
+  "WC",  // FIFA World Cup / Qualifiers (2000)
+  "EC",  // UEFA European Championship (2018)
+  "UNL", // UEFA Nations League (2154)
+  "NL",  // Nations League alias
+  "CLI", // Copa Libertadores / International
+  "CA",  // Copa America (2080)
   "PL",  // Premier League (2021)
   "PD",  // La Liga (2014)
   "BL1", // Bundesliga (2002)
@@ -18,6 +27,10 @@ const TARGET_COMPETITION_CODES = new Set([
 ]);
 
 const TARGET_COMPETITION_IDS = new Set([
+  "2000", // FIFA World Cup
+  "2018", // UEFA European Championship
+  "2154", // UEFA Nations League
+  "2080", // Copa America
   "2021", // Premier League
   "2014", // La Liga
   "2002", // Bundesliga
@@ -30,6 +43,15 @@ const TARGET_COMPETITION_IDS = new Set([
 ]);
 
 const LEAGUE_KO_MAP: Record<string, { name: string; country: string; order: number }> = {
+  WC: { name: "FIFA 월드컵 / 예선", country: "국제 (A매치)", order: 0 },
+  "2000": { name: "FIFA 월드컵 / 예선", country: "국제 (A매치)", order: 0 },
+  EC: { name: "UEFA 유로 챔피언십", country: "유럽 (A매치)", order: 0 },
+  "2018": { name: "UEFA 유로 챔피언십", country: "유럽 (A매치)", order: 0 },
+  UNL: { name: "UEFA 네이션스리그", country: "유럽 (A매치)", order: 0 },
+  NL: { name: "UEFA 네이션스리그", country: "유럽 (A매치)", order: 0 },
+  "2154": { name: "UEFA 네이션스리그", country: "유럽 (A매치)", order: 0 },
+  CA: { name: "코파 아메리카", country: "남미 (A매치)", order: 0 },
+  "2080": { name: "코파 아메리카", country: "남미 (A매치)", order: 0 },
   PL: { name: "프리미어리그", country: "잉글랜드", order: 1 },
   "2021": { name: "프리미어리그", country: "잉글랜드", order: 1 },
   CL: { name: "UEFA 챔피언스리그", country: "유럽", order: 2 },
@@ -327,6 +349,18 @@ export async function GET(request: NextRequest) {
             : `킥오프 ${formatKstTime(m.utcDate || "")} (KST)`,
       };
     });
+
+    // Fallback to prepared National Team (A-Match) dummy matches during international breaks when API returns 0 matches
+    if (normalizedMatches.length === 0) {
+      return NextResponse.json({
+        source: "AMATCH_FALLBACK",
+        date: targetDate,
+        count: NATIONAL_TEAM_DUMMY_MATCHES.length,
+        message:
+          "클럽 리그 휴식기(A매치 주간)로 주요 국가대표 매치업 및 클럽-대표팀 통합 시세를 표시합니다.",
+        matches: NATIONAL_TEAM_DUMMY_MATCHES,
+      });
+    }
 
     return NextResponse.json({
       source: "FOOTBALL_DATA_API",

@@ -10,7 +10,10 @@ import {
   ChevronRight,
   Calendar as CalendarIcon,
 } from "lucide-react";
-import { useTradeStore } from "@/store/useTradeStore";
+import {
+  useTradeStore,
+  filterPlayersForMatch,
+} from "@/store/useTradeStore";
 import { Holding, Match, Player, TradeType } from "@/types";
 import MatchAccordionCard from "./MatchAccordionCard";
 import FormationPitchModal from "./FormationPitchModal";
@@ -134,6 +137,12 @@ export default function MatchesTabView({
       if (data.source === "FOOTBALL_DATA_API") {
         setApiMatches(Array.isArray(data.matches) ? data.matches : []);
         setStatusMessage(null);
+      } else if (data.source === "AMATCH_FALLBACK") {
+        const fallbackList = Array.isArray(data.matches)
+          ? data.matches
+          : storeMockMatches;
+        setApiMatches(fallbackList);
+        setStatusMessage(data.message || null);
       } else {
         // Fallback when API key is empty or error occurs
         const diffDays = Math.round(
@@ -175,8 +184,13 @@ export default function MatchesTabView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDateStr]);
 
+  // Overlay live store match state (scores/minutes) onto fetched matches
+  const resolvedMatches = apiMatches.map(
+    (m) => storeMockMatches.find((sm) => sm.id === m.id) ?? m
+  );
+
   // Group fetched matches by leagueId
-  const leagueGroups = apiMatches.reduce<
+  const leagueGroups = resolvedMatches.reduce<
     Record<
       string,
       {
@@ -392,7 +406,11 @@ export default function MatchesTabView({
             </span>
           </div>
           <span className="shrink-0 rounded-md bg-white/80 px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#00985f] border border-emerald-200">
-            {dataSource === "FOOTBALL_DATA_API" ? "LIVE API" : "DEMO MODE"}
+            {dataSource === "FOOTBALL_DATA_API"
+              ? "LIVE API"
+              : dataSource === "AMATCH_FALLBACK"
+              ? "A-MATCH MODE"
+              : "DEMO MODE"}
           </span>
         </div>
 
@@ -432,7 +450,7 @@ export default function MatchesTabView({
             다른 날짜나 주말을 선택해주세요.
           </p>
           <p className="mt-1.5 text-xs text-gray-400">
-            조회 기준일: <span className="font-mono">{selectedDateStr}</span> (PL, PD, BL1, SA, FL1, CL)
+            조회 기준일: <span className="font-mono">{selectedDateStr}</span> (PL, PD, BL1, SA, FL1, CL, WC, EC)
           </p>
 
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
@@ -497,18 +515,21 @@ export default function MatchesTabView({
 
               {/* Match Cards in League */}
               <div className="space-y-2.5">
-                {group.items.map((match) => (
-                  <MatchAccordionCard
-                    key={match.id}
-                    match={match}
-                    players={players}
-                    holdings={visibleHoldings}
-                    isExpanded={expandedMatchIds.includes(match.id)}
-                    onToggleExpand={() => toggleExpandMatch(match.id)}
-                    onSelectPlayerTrade={onSelectPlayerTrade}
-                    onOpenPitchView={(m) => setPitchViewMatch(m)}
-                  />
-                ))}
+                {group.items.map((match) => {
+                  const matchedPlayers = filterPlayersForMatch(players, match);
+                  return (
+                    <MatchAccordionCard
+                      key={match.id}
+                      match={match}
+                      players={matchedPlayers}
+                      holdings={visibleHoldings}
+                      isExpanded={expandedMatchIds.includes(match.id)}
+                      onToggleExpand={() => toggleExpandMatch(match.id)}
+                      onSelectPlayerTrade={onSelectPlayerTrade}
+                      onOpenPitchView={(m) => setPitchViewMatch(m)}
+                    />
+                  );
+                })}
               </div>
             </section>
           ))}
@@ -518,7 +539,9 @@ export default function MatchesTabView({
       {/* Stage 2: Full Formation Pitch View Modal */}
       <FormationPitchModal
         match={pitchViewMatch}
-        players={players}
+        players={
+          pitchViewMatch ? filterPlayersForMatch(players, pitchViewMatch) : players
+        }
         holdings={visibleHoldings}
         onClose={() => setPitchViewMatch(null)}
         onSelectPlayerTrade={onSelectPlayerTrade}

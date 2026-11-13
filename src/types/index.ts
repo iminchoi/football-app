@@ -48,6 +48,7 @@ export interface Player {
   id: string;
   name: string;
   englishName: string;
+  nationalTeam: string; // 소속 국가대표팀 (예: '대한민국', '잉글랜드', '스페인', '노르웨이')
   matchId: string;
   teamId: string;
   teamName: string;

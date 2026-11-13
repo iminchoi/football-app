@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import {
   Match,
   Player,
+  TeamInfo,
   Holding,
   PointTransaction,
   DateKey,
@@ -139,6 +140,200 @@ export const clampToPriceLimit = (price: number, basePrice: number): number => {
   return Math.max(floorPrice, Math.min(capPrice, rounded));
 };
 
+// Alias map to normalize international API team names/TLA codes to Korean nationalTeam names
+const NATIONAL_TEAM_ALIAS_MAP: Record<string, string> = {
+  KOR: "대한민국",
+  "SOUTH KOREA": "대한민국",
+  "REPUBLIC OF KOREA": "대한민국",
+  "KOREA REPUBLIC": "대한민국",
+  대한민국: "대한민국",
+  한국: "대한민국",
+  JPN: "일본",
+  JAPAN: "일본",
+  일본: "일본",
+  ENG: "잉글랜드",
+  ENGLAND: "잉글랜드",
+  잉글랜드: "잉글랜드",
+  ESP: "스페인",
+  SPAIN: "스페인",
+  스페인: "스페인",
+  NOR: "노르웨이",
+  NORWAY: "노르웨이",
+  노르웨이: "노르웨이",
+  POR: "포르투갈",
+  PRT: "포르투갈",
+  PORTUGAL: "포르투갈",
+  포르투갈: "포르투갈",
+  ARG: "아르헨티나",
+  ARGENTINA: "아르헨티나",
+  아르헨티나: "아르헨티나",
+  BEL: "벨기에",
+  BELGIUM: "벨기에",
+  벨기에: "벨기에",
+  NED: "네덜란드",
+  NLD: "네덜란드",
+  NETHERLANDS: "네덜란드",
+  네덜란드: "네덜란드",
+  EGY: "이집트",
+  EGYPT: "이집트",
+  이집트: "이집트",
+  URU: "우루과이",
+  URY: "우루과이",
+  URUGUAY: "우루과이",
+  우루과이: "우루과이",
+  FRA: "프랑스",
+  FRANCE: "프랑스",
+  프랑스: "프랑스",
+  GER: "독일",
+  DEU: "독일",
+  GERMANY: "독일",
+  독일: "독일",
+  BRA: "브라질",
+  BRAZIL: "브라질",
+  브라질: "브라질",
+  ITA: "이탈리아",
+  ITALY: "이탈리아",
+  이탈리아: "이탈리아",
+};
+
+const KNOWN_NATIONAL_TEAMS = new Set<string>(
+  Object.values(NATIONAL_TEAM_ALIAS_MAP)
+);
+
+const NATIONAL_LEAGUE_IDS = new Set<string>([
+  "amatch",
+  "wc",
+  "ec",
+  "nl",
+  "afcon",
+  "asian_cup",
+  "copa",
+]);
+
+function resolveNationalTeamName(raw?: string): string {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+  return (
+    NATIONAL_TEAM_ALIAS_MAP[trimmed.toUpperCase()] ??
+    NATIONAL_TEAM_ALIAS_MAP[trimmed] ??
+    ""
+  );
+}
+
+/**
+ * 해당 팀 정보가 국가대표팀인지 판별합니다.
+ */
+export function isNationalTeamInfo(team?: TeamInfo | null): boolean {
+  if (!team) return false;
+  const byName = resolveNationalTeamName(team.name);
+  const byShort = resolveNationalTeamName(team.shortName);
+  const byId = resolveNationalTeamName(team.id);
+  return Boolean(
+    (byName && KNOWN_NATIONAL_TEAMS.has(byName)) ||
+      (byShort && KNOWN_NATIONAL_TEAMS.has(byShort)) ||
+      (byId && KNOWN_NATIONAL_TEAMS.has(byId))
+  );
+}
+
+/**
+ * 해당 경기가 A매치(국가대표 경기)인지 판별합니다.
+ */
+export function isNationalTeamMatch(match?: Match | null): boolean {
+  if (!match) return false;
+  const leagueIdLower = (match.leagueId || "").trim().toLowerCase();
+  if (NATIONAL_LEAGUE_IDS.has(leagueIdLower)) return true;
+  if (
+    match.leagueName?.includes("A매치") ||
+    match.leagueCountry?.includes("A매치") ||
+    match.leagueName?.includes("월드컵") ||
+    match.leagueName?.includes("네이션스리그")
+  ) {
+    return true;
+  }
+  return (
+    isNationalTeamInfo(match.homeTeam) || isNationalTeamInfo(match.awayTeam)
+  );
+}
+
+/**
+ * A매치 여부에 따라 국가대표 소속(nationalTeam)과 클럽 소속(team)을 엄격히 분리하여 검사합니다.
+ * - A매치(국가대표팀): 오직 player.nationalTeam === team 조건만 사용 (클럽 team 필드 배제)
+ * - 클럽 경기: 오직 클럽 teamId / teamShort / teamName 조건만 사용
+ */
+export function doesPlayerBelongToTeam(
+  player: Player,
+  team?: TeamInfo | null,
+  forceAMatch?: boolean
+): boolean {
+  if (!team) return false;
+
+  const isAMatchTeam =
+    forceAMatch !== undefined ? forceAMatch : isNationalTeamInfo(team);
+
+  const teamIdLower = (team.id || "").trim().toLowerCase();
+  const teamShortUpper = (team.shortName || "").trim().toUpperCase();
+  const teamNameTrimmed = (team.name || "").trim();
+
+  if (isAMatchTeam) {
+    const playerNational = (player.nationalTeam || "").trim();
+    if (!playerNational) return false;
+
+    const resolvedTeamByName = resolveNationalTeamName(teamNameTrimmed);
+    const resolvedTeamByShort = resolveNationalTeamName(teamShortUpper);
+    const resolvedTeamById = resolveNationalTeamName(teamIdLower);
+
+    return (
+      playerNational === teamNameTrimmed ||
+      (Boolean(resolvedTeamByName) && playerNational === resolvedTeamByName) ||
+      (Boolean(resolvedTeamByShort) && playerNational === resolvedTeamByShort) ||
+      (Boolean(resolvedTeamById) && playerNational === resolvedTeamById)
+    );
+  }
+
+  // 클럽 팀 매칭 (A매치가 아닐 때만 사용)
+  return (
+    (Boolean(teamIdLower) && player.teamId.toLowerCase() === teamIdLower) ||
+    (Boolean(teamShortUpper) &&
+      player.teamShort.toUpperCase() === teamShortUpper) ||
+    (Boolean(teamNameTrimmed) && player.teamName === teamNameTrimmed)
+  );
+}
+
+/**
+ * 특정 경기(클럽전 또는 A매치)의 홈팀/원정팀에 속하는 선수인지 검사합니다.
+ * - A매치인 경우: 반드시 player.nationalTeam === match.homeTeam || player.nationalTeam === match.awayTeam 조건만 사용
+ * - 클럽전인 경우: 클럽 팀 매칭 조건만 사용
+ */
+export function doesPlayerBelongToMatch(
+  player: Player,
+  match?: Match | null
+): boolean {
+  if (!match) return false;
+  if (player.id.startsWith("pitch-")) {
+    return player.matchId === match.id;
+  }
+
+  const isAMatch = isNationalTeamMatch(match);
+  if (isAMatch) {
+    return (
+      doesPlayerBelongToTeam(player, match.homeTeam, true) ||
+      doesPlayerBelongToTeam(player, match.awayTeam, true)
+    );
+  }
+
+  return (
+    doesPlayerBelongToTeam(player, match.homeTeam, false) ||
+    doesPlayerBelongToTeam(player, match.awayTeam, false)
+  );
+}
+
+export function filterPlayersForMatch(
+  players: Player[],
+  match: Match
+): Player[] {
+  return players.filter((player) => doesPlayerBelongToMatch(player, match));
+}
+
 // Normalize initial players using getTierConfig(basePrice) as Single Source of Truth
 const NORMALIZED_INITIAL_PLAYERS: Player[] = INITIAL_PLAYERS.map((p) => {
   const basePrice = roundToTen(p.basePrice ?? p.initialPrice);
@@ -213,7 +408,7 @@ export const useTradeStore = create<TradeStoreState>()(
       transactions: [],
       selectedDate: "TODAY",
       activeTab: "MATCHES",
-      expandedMatchIds: ["m-tot-ars", "m-mci-liv"],
+      expandedMatchIds: ["m-tot-ars", "m-mci-liv", "m-kor-jpn"],
 
       login: (id, password) => {
         const trimmedId = id.trim();
@@ -520,7 +715,17 @@ export const useTradeStore = create<TradeStoreState>()(
             basePrice
           );
 
-          const match = liveMatchMap.get(player.matchId);
+          const directMatch = liveMatchMap.get(player.matchId);
+          const isDirectLive =
+            directMatch?.status === "LIVE" ||
+            directMatch?.rawStatus === "IN_PLAY";
+          const match = isDirectLive
+            ? directMatch
+            : updatedMatches.find(
+                (m) =>
+                  (m.status === "LIVE" || m.rawStatus === "IN_PLAY") &&
+                  doesPlayerBelongToMatch(player, m)
+              ) ?? directMatch;
           const isLive =
             match?.status === "LIVE" || match?.rawStatus === "IN_PLAY";
 
@@ -902,7 +1107,12 @@ export const useTradeStore = create<TradeStoreState>()(
         }
         const capped = nextPrice >= capPrice && prevPrice >= capPrice;
 
-        const match = matches.find((m) => m.id === target!.matchId);
+        const match =
+          matches.find(
+            (m) =>
+              (m.status === "LIVE" || m.rawStatus === "IN_PLAY") &&
+              doesPlayerBelongToMatch(target!, m)
+          ) ?? matches.find((m) => doesPlayerBelongToMatch(target!, m));
         const currentMinute = match?.minute ?? 77;
         const timeLabel = `${currentMinute}'`;
 
@@ -947,13 +1157,10 @@ export const useTradeStore = create<TradeStoreState>()(
         };
 
         const nextMatches = matches.map((m) => {
-          if (m.id !== updatedPlayer.matchId) return m;
-          const isHome =
-            m.homeTeam.id === updatedPlayer.teamId ||
-            m.homeTeam.shortName === updatedPlayer.teamShort;
-          const isAway =
-            m.awayTeam.id === updatedPlayer.teamId ||
-            m.awayTeam.shortName === updatedPlayer.teamShort;
+          if (!doesPlayerBelongToMatch(updatedPlayer, m)) return m;
+          const isHome = doesPlayerBelongToTeam(updatedPlayer, m.homeTeam);
+          const isAway = doesPlayerBelongToTeam(updatedPlayer, m.awayTeam);
+          if (!isHome && !isAway) return m;
 
           return {
             ...m,
@@ -1010,7 +1217,7 @@ export const useTradeStore = create<TradeStoreState>()(
           holdings: {},
           transactions: [],
           selectedDate: "TODAY",
-          expandedMatchIds: ["m-tot-ars", "m-mci-liv"],
+          expandedMatchIds: ["m-tot-ars", "m-mci-liv", "m-kor-jpn"],
         });
       },
     }),

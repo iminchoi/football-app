@@ -10,7 +10,11 @@ import {
   Eye,
 } from "lucide-react";
 import { Match, Player, Holding, TradeType } from "@/types";
-import { useTradeStore } from "@/store/useTradeStore";
+import {
+  useTradeStore,
+  doesPlayerBelongToTeam,
+  isNationalTeamMatch,
+} from "@/store/useTradeStore";
 import { getAvailableShares } from "@/utils/tier";
 import { buildTeamLineupForMatch } from "./FormationPitchModal";
 
@@ -45,14 +49,13 @@ export default function MatchAccordionCard({
 
   // Build deduplicated 3 key players for Home and Away teams (prioritizing base players from store)
   const { homeKeyPlayers, awayKeyPlayers } = useMemo(() => {
+    const isAMatch = isNationalTeamMatch(match);
     const pickTop3 = (side: "HOME" | "AWAY"): Player[] => {
       const team = side === "HOME" ? match.homeTeam : match.awayTeam;
       const baseTeamPlayers = players.filter(
         (p) =>
           !p.id.startsWith("pitch-") &&
-          p.matchId === match.id &&
-          (p.teamId === team.id ||
-            p.teamShort.toUpperCase() === team.shortName.toUpperCase())
+          doesPlayerBelongToTeam(p, team, isAMatch)
       );
 
       if (baseTeamPlayers.length >= 3) {

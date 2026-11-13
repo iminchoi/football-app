@@ -19,7 +19,12 @@ import {
   Position,
   ApiLineupPlayer,
 } from "@/types";
-import { roundToTen, clampToPriceLimit } from "@/store/useTradeStore";
+import {
+  roundToTen,
+  clampToPriceLimit,
+  doesPlayerBelongToTeam,
+  isNationalTeamMatch,
+} from "@/store/useTradeStore";
 import { getTierConfig } from "@/utils/tier";
 
 interface FormationPitchModalProps {
@@ -574,13 +579,15 @@ export function buildTeamLineupForMatch(
     };
   }
 
-  // Only include non-synthetic base players (from dummyData) that strictly belong to this match & team
+  const isAMatch = isNationalTeamMatch(match);
+
+  // Include non-synthetic base players (from dummyData) that belong to this team
+  // - For A-Matches: strictly matches ONLY player.nationalTeam === activeTeam
+  // - For Club Matches: strictly matches ONLY club fields
   const baseTeamPlayersFromStore = storePlayers.filter(
     (p) =>
       !p.id.startsWith("pitch-") &&
-      p.matchId === match.id &&
-      (p.teamId === activeTeam.id ||
-        p.teamShort.toUpperCase() === activeTeam.shortName.toUpperCase())
+      doesPlayerBelongToTeam(p, activeTeam, isAMatch)
   );
 
   const apiLineup: ApiLineupPlayer[] = Array.isArray(activeTeam.lineup)
@@ -592,6 +599,94 @@ export function buildTeamLineupForMatch(
 
   const usedIds = new Set<string>();
   const usedNames = new Set<string>();
+
+  const formation =
+    activeTeam.formation || (side === "HOME" ? "4-3-3" : "4-2-3-1");
+
+  // If this is an A-Match (or a team with full store roster >= 11), build starting 11 and bench
+  // strictly from actual nationalTeam store players without mixing any foreign fallback names.
+  if (isAMatch && baseTeamPlayersFromStore.length > 0) {
+    const amatchStarters: Player[] = [];
+    const amatchBench: Player[] = [];
+
+    const markUsed = (p: Player) => {
+      usedIds.add(p.id);
+      usedNames.add(p.name);
+    };
+
+    // 1. Match explicit lineup order from activeTeam.lineup if present
+    for (const entry of apiLineup) {
+      if (amatchStarters.length >= 11) break;
+      const matched = baseTeamPlayersFromStore.find(
+        (p) =>
+          !usedIds.has(p.id) &&
+          ((entry.id !== undefined && String(entry.id) === p.id) ||
+            entry.name === p.name)
+      );
+      if (matched) {
+        markUsed(matched);
+        amatchStarters.push(matched);
+      }
+    }
+
+    // 2. If fewer than 11 starters were resolved (e.g. live API without lineup IDs),
+    // fill remaining starter slots from baseTeamPlayersFromStore ordered by formation roles
+    if (amatchStarters.length < 11) {
+      const roleOrder: Position[] =
+        formation === "4-4-2"
+          ? ["FW", "FW", "MF", "MF", "MF", "MF", "DF", "DF", "DF", "DF", "GK"]
+          : ["FW", "FW", "FW", "MF", "MF", "MF", "DF", "DF", "DF", "DF", "GK"];
+
+      for (const targetRole of roleOrder) {
+        if (amatchStarters.length >= 11) break;
+        const roleMatch = baseTeamPlayersFromStore.find(
+          (p) => !usedIds.has(p.id) && p.position === targetRole
+        );
+        if (roleMatch) {
+          markUsed(roleMatch);
+          amatchStarters.push(roleMatch);
+        }
+      }
+
+      for (const p of baseTeamPlayersFromStore) {
+        if (amatchStarters.length >= 11) break;
+        if (!usedIds.has(p.id)) {
+          markUsed(p);
+          amatchStarters.push(p);
+        }
+      }
+    }
+
+    // 3. Match explicit bench entries from activeTeam.bench, then remaining unused national team players
+    for (const entry of apiBench) {
+      if (amatchBench.length >= 5) break;
+      const matched = baseTeamPlayersFromStore.find(
+        (p) =>
+          !usedIds.has(p.id) &&
+          ((entry.id !== undefined && String(entry.id) === p.id) ||
+            entry.name === p.name)
+      );
+      if (matched) {
+        markUsed(matched);
+        amatchBench.push(matched);
+      }
+    }
+
+    for (const p of baseTeamPlayersFromStore) {
+      if (amatchBench.length >= 5) break;
+      if (!usedIds.has(p.id)) {
+        markUsed(p);
+        amatchBench.push(p);
+      }
+    }
+
+    return {
+      startingLineup: amatchStarters.slice(0, 11),
+      benchLineup: amatchBench.slice(0, 5),
+      formation,
+    };
+  }
+
   const teamSeed = hashSeed(`${match.id}-${activeTeam.id}-${side}`);
   const sidePoolOffset = side === "HOME" ? 0 : 5;
 
@@ -600,6 +695,24 @@ export function buildTeamLineupForMatch(
     slotIdx: number,
     isBench: boolean
   ): Player => {
+    const apiSourceList = isBench ? apiBench : apiLineup;
+    const apiEntry = apiSourceList[slotIdx];
+
+    // 0. If API lineup/bench entry matches a real store player for this team, return that store player
+    if (apiEntry) {
+      const matchedByEntry = baseTeamPlayersFromStore.find(
+        (p) =>
+          !usedIds.has(p.id) &&
+          ((apiEntry.id !== undefined && String(apiEntry.id) === p.id) ||
+            apiEntry.name === p.name)
+      );
+      if (matchedByEntry) {
+        usedIds.add(matchedByEntry.id);
+        usedNames.add(matchedByEntry.name);
+        return matchedByEntry;
+      }
+    }
+
     const synId = `pitch-${match.id}-${activeTeam.id}-${
       isBench ? "bench" : "start"
     }-${slotIdx}`;
@@ -613,23 +726,17 @@ export function buildTeamLineupForMatch(
     }
 
     // 2. Check if a non-synthetic base store player matches this match, team, and position
-    if (!isBench) {
-      const existingBase = baseTeamPlayersFromStore.find(
-        (p) =>
-          p.position === slot.role &&
-          !usedIds.has(p.id) &&
-          !usedNames.has(p.name)
-      );
-      if (existingBase) {
-        usedIds.add(existingBase.id);
-        usedNames.add(existingBase.name);
-        return existingBase;
-      }
+    const existingBase = baseTeamPlayersFromStore.find(
+      (p) =>
+        p.position === slot.role &&
+        !usedIds.has(p.id) &&
+        !usedNames.has(p.name)
+    );
+    if (existingBase) {
+      usedIds.add(existingBase.id);
+      usedNames.add(existingBase.name);
+      return existingBase;
     }
-
-    // 3. Check if API provided real lineup/bench entry for this index
-    const apiSourceList = isBench ? apiBench : apiLineup;
-    const apiEntry = apiSourceList[slotIdx];
 
     // Pick a unique fallback name from the side's pool (0..4 for HOME, 5..9 for AWAY)
     const poolSize = Math.min(5, slot.fallbackKoLastNames.length);
@@ -680,6 +787,7 @@ export function buildTeamLineupForMatch(
       id: synId,
       name: koName,
       englishName: enName,
+      nationalTeam: activeTeam.name,
       matchId: match.id,
       teamId: activeTeam.id,
       teamName: activeTeam.name,
@@ -723,9 +831,6 @@ export function buildTeamLineupForMatch(
   const bench = BENCH_5_TEMPLATE.slice(0, 5).map((slot, idx) =>
     buildSlotPlayer(slot, idx, true)
   );
-
-  const formation =
-    activeTeam.formation || (side === "HOME" ? "4-3-3" : "4-2-3-1");
 
   return {
     startingLineup: starters.slice(0, 11),
@@ -816,6 +921,15 @@ export default function FormationPitchModal({
         [capped[4], capped[5]], // Double Pivot
         [capped[6], capped[7], capped[8], capped[9]], // Back 4
         [capped[10]], // GK
+      ];
+    }
+
+    if (formationLabel === "4-4-2") {
+      return [
+        [capped[0], capped[1]], // 2 FW
+        [capped[2], capped[3], capped[4], capped[5]], // 4 MF
+        [capped[6], capped[7], capped[8], capped[9]], // 4 DF
+        [capped[10]], // 1 GK
       ];
     }
 
