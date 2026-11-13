@@ -12,6 +12,7 @@ import {
   UserRole,
   StoredUserAccount,
   PersistedPlayerPrice,
+  Position,
 } from "@/types";
 import {
   INITIAL_CASH,
@@ -67,6 +68,7 @@ interface TradeStoreState {
   setActiveTab: (tab: BottomTab) => void;
   toggleExpandMatch: (matchId: string) => void;
   ensurePlayerInStore: (player: Player) => void;
+  syncPlayersFromMatches: (matches: Match[]) => void;
   tickMarket: () => void;
   buyPlayer: (playerId: string, quantity: number) => TradeExecutionResult;
   sellPlayer: (playerId: string, quantity: number) => TradeExecutionResult;
@@ -240,6 +242,9 @@ export function isNationalTeamInfo(team?: TeamInfo | null): boolean {
  */
 export function isNationalTeamMatch(match?: Match | null): boolean {
   if (!match) return false;
+  if (typeof match.isInternational === "boolean") {
+    return match.isInternational;
+  }
   const leagueIdLower = (match.leagueId || "").trim().toLowerCase();
   if (NATIONAL_LEAGUE_IDS.has(leagueIdLower)) return true;
   if (
@@ -635,8 +640,58 @@ export const useTradeStore = create<TradeStoreState>()(
 
       ensurePlayerInStore: (newPlayer) => {
         const { players, playerPrices } = get();
-        const existingIdx = players.findIndex((p) => p.id === newPlayer.id);
+        const existingIdx = players.findIndex(
+          (p) =>
+            p.id === newPlayer.id ||
+            (!newPlayer.id.startsWith("pitch-") &&
+              !p.id.startsWith("pitch-") &&
+              p.name.trim() === newPlayer.name.trim())
+        );
+
         if (existingIdx !== -1) {
+          // Existing player: preserve currentPrice, priceHistory, marketSupply; only update team/nationalTeam metadata if changed
+          const existing = players[existingIdx];
+          const incomingNat = resolveNationalTeamName(newPlayer.nationalTeam) || newPlayer.nationalTeam || existing.nationalTeam;
+          const isIncomingNatTeam = isNationalTeamInfo({
+            id: newPlayer.teamId,
+            name: newPlayer.teamName,
+            shortName: newPlayer.teamShort,
+            color: newPlayer.teamColor,
+          });
+
+          const nextTeamName =
+            !isIncomingNatTeam && newPlayer.teamName
+              ? newPlayer.teamName
+              : existing.teamName;
+          const nextTeamId =
+            !isIncomingNatTeam && newPlayer.teamId
+              ? newPlayer.teamId
+              : existing.teamId;
+          const nextTeamShort =
+            !isIncomingNatTeam && newPlayer.teamShort
+              ? newPlayer.teamShort
+              : existing.teamShort;
+          const nextTeamColor =
+            !isIncomingNatTeam && newPlayer.teamColor
+              ? newPlayer.teamColor
+              : existing.teamColor;
+
+          if (
+            existing.teamName !== nextTeamName ||
+            existing.teamId !== nextTeamId ||
+            existing.nationalTeam !== incomingNat
+          ) {
+            const nextPlayers = [...players];
+            nextPlayers[existingIdx] = {
+              ...existing,
+              teamName: nextTeamName,
+              teamId: nextTeamId,
+              teamShort: nextTeamShort,
+              teamColor: nextTeamColor,
+              nationalTeam: incomingNat,
+            };
+            set({ players: nextPlayers });
+          }
           return;
         }
 
@@ -664,9 +719,13 @@ export const useTradeStore = create<TradeStoreState>()(
 
         const normalized: Player = {
           ...newPlayer,
-          tier: newPlayer.tier ?? tierCfg.tier,
-          totalShares: newPlayer.totalShares ?? tierCfg.totalShares,
-          marketSupply: newPlayer.marketSupply ?? tierCfg.marketSupply,
+          nationalTeam:
+            resolveNationalTeamName(newPlayer.nationalTeam) ||
+            newPlayer.nationalTeam ||
+            "",
+          tier: tierCfg.tier,
+          totalShares: tierCfg.totalShares,
+          marketSupply: tierCfg.marketSupply,
           basePrice: base,
           initialPrice: base,
           currentPrice,
@@ -685,6 +744,310 @@ export const useTradeStore = create<TradeStoreState>()(
             },
           },
         });
+      },
+
+      syncPlayersFromMatches: (incomingMatches) => {
+        if (!Array.isArray(incomingMatches) || incomingMatches.length === 0) {
+          return;
+        }
+
+        const state = get();
+        const nextPlayers = [...state.players];
+        const nextPlayerPrices: Record<string, PersistedPlayerPrice> = {
+          ...state.playerPrices,
+        };
+        let playersChanged = false;
+
+        const normalizeRole = (rawPos?: string): Position => {
+          const upper = String(rawPos || "MF").trim().toUpperCase();
+          if (upper === "GK" || upper.includes("KEEP")) return "GK";
+          if (upper === "DF" || upper.includes("DEF") || upper.includes("BACK"))
+            return "DF";
+          if (
+            upper === "FW" ||
+            upper.includes("FORW") ||
+            upper.includes("OFFEN") ||
+            upper.includes("ATT") ||
+            upper.includes("WING")
+          )
+            return "FW";
+          return "MF";
+        };
+
+        const computeAutoBasePrice = (
+          pos: Position,
+          leagueId: string,
+          age?: number,
+          seedStr = ""
+        ): number => {
+          let hash = 0;
+          for (let i = 0; i < seedStr.length; i++) {
+            hash = (hash * 31 + seedStr.charCodeAt(i)) | 0;
+          }
+          const absHash = Math.abs(hash);
+
+          // Wonderkid rule: age <= 21 -> C-tier Wonderkid (< 5000)
+          const isWonderkid = typeof age === "number" && age > 0 && age <= 21;
+          if (isWonderkid) {
+            return roundToTen(4300 + (absHash % 6) * 100);
+          }
+
+          const roleBase =
+            pos === "FW"
+              ? 11600
+              : pos === "MF"
+              ? 10400
+              : pos === "DF"
+              ? 9000
+              : 8400;
+
+          const lid = leagueId.toLowerCase();
+          const prestigeBonus =
+            lid.includes("cl") ||
+            lid.includes("pl") ||
+            lid === "epl" ||
+            lid === "wc" ||
+            lid === "ec"
+              ? 1200
+              : 400;
+
+          const variance = ((absHash % 9) - 3) * 200;
+          return roundToTen(Math.max(5200, roleBase + prestigeBonus + variance));
+        };
+
+        for (const match of incomingMatches) {
+          const isAMatch = isNationalTeamMatch(match);
+          const sides: TeamInfo[] = [match.homeTeam, match.awayTeam].filter(
+            Boolean
+          );
+
+          for (const team of sides) {
+            const rosterItems = [
+              ...(Array.isArray(team.lineup) ? team.lineup : []),
+              ...(Array.isArray(team.bench) ? team.bench : []),
+            ];
+
+            rosterItems.forEach((item, idx) => {
+              if (!item || !item.name) return;
+              const rawName = item.name.trim();
+              const itemIdStr =
+                item.id !== undefined ? String(item.id).trim() : "";
+              const extIdStr =
+                item.externalId !== undefined
+                  ? String(item.externalId).trim()
+                  : "";
+
+              const existingIdx = nextPlayers.findIndex((p) => {
+                if (p.id.startsWith("pitch-")) return false;
+                if (itemIdStr && p.id === itemIdStr) return true;
+                if (extIdStr && (p.id === extIdStr || p.id === `api-p-${extIdStr}`))
+                  return true;
+                if (p.name.trim() === rawName) return true;
+                if (
+                  p.englishName &&
+                  p.englishName.trim().toLowerCase() === rawName.toLowerCase()
+                )
+                  return true;
+                return false;
+              });
+
+              const resolvedNat = isAMatch
+                ? resolveNationalTeamName(item.nationalTeam || team.name) ||
+                  item.nationalTeam ||
+                  team.name
+                : resolveNationalTeamName(item.nationalTeam) ||
+                  item.nationalTeam ||
+                  "";
+
+              if (existingIdx !== -1) {
+                // Existing store player: preserve currentPrice, priceHistory, marketSupply; update team/nationalTeam if changed
+                const existing = nextPlayers[existingIdx];
+                let updated = existing;
+
+                if (resolvedNat && existing.nationalTeam !== resolvedNat) {
+                  updated = { ...updated, nationalTeam: resolvedNat };
+                }
+
+                if (!isAMatch) {
+                  // Club match: update club team info if player transferred
+                  const nextClubName = item.team?.trim() || team.name;
+                  if (
+                    nextClubName &&
+                    existing.teamName !== nextClubName &&
+                    !isNationalTeamInfo(team)
+                  ) {
+                    updated = {
+                      ...updated,
+                      teamId: team.id || existing.teamId,
+                      teamName: nextClubName,
+                      teamShort: team.shortName || existing.teamShort,
+                      teamColor: team.color || existing.teamColor,
+                    };
+                  }
+                } else if (
+                  item.team &&
+                  item.team.trim() !== team.name.trim() &&
+                  !resolveNationalTeamName(item.team)
+                ) {
+                  // A-Match where API also supplied explicit club name
+                  const explicitClub = item.team.trim();
+                  if (existing.teamName !== explicitClub) {
+                    updated = {
+                      ...updated,
+                      teamName: explicitClub,
+                    };
+                  }
+                }
+
+                if (updated !== existing) {
+                  nextPlayers[existingIdx] = updated;
+                  playersChanged = true;
+                }
+                return;
+              }
+
+              // New player: dynamically list in store using getTierConfig(basePrice) & merge with persisted playerPrices
+              const position = normalizeRole(
+                typeof item.position === "string" ? item.position : "MF"
+              );
+              const newId =
+                itemIdStr && !itemIdStr.startsWith("pitch-")
+                  ? itemIdStr.startsWith("p-") || itemIdStr.startsWith("api-p-")
+                    ? itemIdStr
+                    : `api-p-${itemIdStr}`
+                  : extIdStr
+                  ? `api-p-${extIdStr}`
+                  : `api-p-${team.id}-${idx}-${rawName
+                      .toLowerCase()
+                      .replace(/[^a-z0-9가-힣]+/g, "-")}`;
+
+              const basePrice = computeAutoBasePrice(
+                position,
+                match.leagueId,
+                item.age,
+                `${newId}-${rawName}`
+              );
+              const tierCfg = getTierConfig(basePrice);
+              const savedPrice = nextPlayerPrices[newId];
+
+              const currentPrice = clampToPriceLimit(
+                savedPrice?.currentPrice ?? basePrice,
+                basePrice
+              );
+              const previousPrice = clampToPriceLimit(
+                savedPrice?.previousPrice ?? basePrice,
+                basePrice
+              );
+              const priceHistory =
+                savedPrice?.priceHistory && savedPrice.priceHistory.length > 0
+                  ? savedPrice.priceHistory.map((pt) => ({
+                      timeLabel: pt.timeLabel,
+                      price: clampToPriceLimit(pt.price, basePrice),
+                    }))
+                  : [
+                      { timeLabel: "15'", price: basePrice },
+                      { timeLabel: "30'", price: basePrice },
+                      { timeLabel: "45'", price: previousPrice },
+                      { timeLabel: "60'", price: previousPrice },
+                      { timeLabel: "현재", price: currentPrice },
+                    ];
+
+              const clubName =
+                !isAMatch
+                  ? item.team?.trim() || team.name
+                  : item.team && item.team.trim() !== team.name.trim()
+                  ? item.team.trim()
+                  : team.name;
+
+              const newListedPlayer: Player = {
+                id: newId,
+                name: rawName,
+                englishName: rawName,
+                nationalTeam: resolvedNat || (isAMatch ? team.name : "기타"),
+                matchId: match.id,
+                teamId: team.id,
+                teamName: clubName,
+                teamShort: team.shortName,
+                teamColor: team.color,
+                position,
+                backNumber: item.shirtNumber ?? ((idx % 25) + 1),
+                tier: tierCfg.tier,
+                totalShares: tierCfg.totalShares,
+                marketSupply: tierCfg.marketSupply,
+                basePrice,
+                initialPrice: basePrice,
+                currentPrice,
+                previousPrice,
+                priceHistory,
+                lastEvent: {
+                  text:
+                    tierCfg.tier === "C"
+                      ? "⚡ 원더키드 신규 상장 · 실시간 라인업 연동"
+                      : "📋 실시간 라인업 자동 상장 종목",
+                  sentiment: "positive",
+                  minute: match.minute ?? 0,
+                },
+                stats: {
+                  rating: 7.3,
+                  goals: 0,
+                  assists: 0,
+                  shotsOnTarget: 1,
+                  keyPasses: 1,
+                },
+              };
+
+              nextPlayers.push(newListedPlayer);
+              nextPlayerPrices[newId] = {
+                currentPrice,
+                previousPrice,
+                priceHistory,
+              };
+              playersChanged = true;
+            });
+          }
+        }
+
+        // Also merge incomingMatches into state.matches so tickMarket can update live API matches
+        const existingMatchMap = new Map(
+          state.matches.map((m) => [m.id, m] as const)
+        );
+        let matchesChanged = false;
+        for (const inc of incomingMatches) {
+          const prev = existingMatchMap.get(inc.id);
+          if (!prev) {
+            existingMatchMap.set(inc.id, inc);
+            matchesChanged = true;
+          } else if (
+            prev.isInternational !== inc.isInternational ||
+            (!prev.homeTeam.lineup && inc.homeTeam.lineup) ||
+            (!prev.awayTeam.lineup && inc.awayTeam.lineup)
+          ) {
+            existingMatchMap.set(inc.id, {
+              ...inc,
+              minute: prev.minute ?? inc.minute,
+              homeTeam: {
+                ...inc.homeTeam,
+                score: prev.homeTeam.score ?? inc.homeTeam.score,
+              },
+              awayTeam: {
+                ...inc.awayTeam,
+                score: prev.awayTeam.score ?? inc.awayTeam.score,
+              },
+            });
+            matchesChanged = true;
+          }
+        }
+
+        if (playersChanged || matchesChanged) {
+          set({
+            ...(playersChanged
+              ? { players: nextPlayers, playerPrices: nextPlayerPrices }
+              : {}),
+            ...(matchesChanged
+              ? { matches: Array.from(existingMatchMap.values()) }
+              : {}),
+          });
+        }
       },
 
       tickMarket: () => {

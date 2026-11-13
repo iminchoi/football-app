@@ -88,6 +88,7 @@ export default function MatchesTabView({
   const holdings = useTradeStore((s) => s.holdings);
   const expandedMatchIds = useTradeStore((s) => s.expandedMatchIds);
   const toggleExpandMatch = useTradeStore((s) => s.toggleExpandMatch);
+  const syncPlayersFromMatches = useTradeStore((s) => s.syncPlayersFromMatches);
 
   const visibleHoldings = user ? holdings : EMPTY_HOLDINGS;
 
@@ -135,13 +136,18 @@ export default function MatchesTabView({
       setDataSource(data.source || "UNKNOWN");
 
       if (data.source === "FOOTBALL_DATA_API") {
-        setApiMatches(Array.isArray(data.matches) ? data.matches : []);
+        const fetchedList: Match[] = Array.isArray(data.matches)
+          ? data.matches
+          : [];
+        setApiMatches(fetchedList);
+        syncPlayersFromMatches(fetchedList);
         setStatusMessage(null);
       } else if (data.source === "AMATCH_FALLBACK") {
-        const fallbackList = Array.isArray(data.matches)
+        const fallbackList: Match[] = Array.isArray(data.matches)
           ? data.matches
           : storeMockMatches;
         setApiMatches(fallbackList);
+        syncPlayersFromMatches(fallbackList);
         setStatusMessage(data.message || null);
       } else {
         // Fallback when API key is empty or error occurs
@@ -161,9 +167,10 @@ export default function MatchesTabView({
         const filteredMock = storeMockMatches.filter(
           (m) => m.dateKey === targetKey
         );
-        setApiMatches(
-          filteredMock.length > 0 ? filteredMock : storeMockMatches
-        );
+        const resolvedFallback =
+          filteredMock.length > 0 ? filteredMock : storeMockMatches;
+        setApiMatches(resolvedFallback);
+        syncPlayersFromMatches(resolvedFallback);
         setStatusMessage(data.message || null);
       }
     } catch {

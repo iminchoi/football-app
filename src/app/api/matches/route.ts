@@ -1,11 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Match, MatchStatus } from "@/types";
+import { ApiLineupPlayer, Match, MatchStatus, Position } from "@/types";
 import {
   INITIAL_MATCHES,
   NATIONAL_TEAM_DUMMY_MATCHES,
 } from "@/data/dummyData";
 
 const FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4/matches";
+
+const INTERNATIONAL_COMPETITION_CODES = new Set([
+  "WC",
+  "EC",
+  "UNL",
+  "NL",
+  "CA",
+  "AMATCH",
+]);
+
+const INTERNATIONAL_COMPETITION_IDS = new Set([
+  "2000", // FIFA World Cup
+  "2018", // UEFA European Championship
+  "2154", // UEFA Nations League
+  "2080", // Copa America
+]);
 
 // Supported major club leagues + international (A-Match) competitions by code and numeric ID
 const TARGET_COMPETITION_CODES = new Set([
@@ -103,6 +119,135 @@ function mapApiStatus(rawStatus: string): MatchStatus {
   return "UPCOMING";
 }
 
+function normalizePosition(rawPos?: string): Position {
+  if (!rawPos) return "MF";
+  const upper = rawPos.trim().toUpperCase();
+  if (upper === "GK" || upper.includes("GOALKEEPER") || upper.includes("KEEPER")) {
+    return "GK";
+  }
+  if (
+    upper === "DF" ||
+    upper.includes("DEFENCE") ||
+    upper.includes("DEFENDER") ||
+    upper.includes("BACK")
+  ) {
+    return "DF";
+  }
+  if (
+    upper === "FW" ||
+    upper.includes("OFFENCE") ||
+    upper.includes("FORWARD") ||
+    upper.includes("ATTACK") ||
+    upper.includes("WINGER") ||
+    upper.includes("STRIKER")
+  ) {
+    return "FW";
+  }
+  return "MF";
+}
+
+function calculatePlayerAge(dateOfBirth?: string, rawAge?: number): number | undefined {
+  if (typeof rawAge === "number" && Number.isFinite(rawAge) && rawAge > 0) {
+    return rawAge;
+  }
+  if (!dateOfBirth) return undefined;
+  const dob = new Date(dateOfBirth);
+  if (Number.isNaN(dob.getTime())) return undefined;
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const monthDiff = now.getMonth() - dob.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < dob.getDate())) {
+    age--;
+  }
+  return age > 0 ? age : undefined;
+}
+
+function normalizeLineupPlayers(
+  rawList: any,
+  teamName: string,
+  isInternational: boolean
+): ApiLineupPlayer[] | undefined {
+  if (!Array.isArray(rawList) || rawList.length === 0) return undefined;
+
+  return rawList.map((raw: Record<string, any>, idx: number) => {
+    const rawId = raw.id ?? raw.externalId;
+    const rawName = String(raw.name || `선수 ${idx + 1}`).trim();
+    const slug = rawName
+      .toLowerCase()
+      .replace(/[^a-z0-9가-힣]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const externalId =
+      rawId !== undefined
+        ? String(rawId)
+        : `ext-${teamName.toLowerCase()}-${slug || idx}`;
+    const normalizedId =
+      rawId !== undefined && String(rawId).startsWith("p-")
+        ? String(rawId)
+        : `api-p-${externalId}`;
+
+    const position = normalizePosition(raw.position);
+    const clubOrTeamName = String(
+      raw.team || raw.currentTeam?.name || teamName
+    ).trim();
+    const nationalTeam = isInternational
+      ? teamName
+      : String(raw.nationalTeam || raw.nationality || "").trim();
+    const age = calculatePlayerAge(raw.dateOfBirth, raw.age);
+
+    return {
+      id: normalizedId,
+      externalId,
+      name: rawName,
+      position,
+      shirtNumber:
+        typeof raw.shirtNumber === "number" ? raw.shirtNumber : undefined,
+      team: clubOrTeamName,
+      nationalTeam,
+      ...(age !== undefined ? { age } : {}),
+    };
+  });
+}
+
+function enrichMatchMetadata(match: Match, defaultInternational = false): Match {
+  const isInternational =
+    match.isInternational ??
+    (defaultInternational ||
+      INTERNATIONAL_COMPETITION_CODES.has(match.leagueId.toUpperCase()) ||
+      match.leagueCountry.includes("A매치") ||
+      match.leagueName.includes("A매치"));
+
+  return {
+    ...match,
+    isInternational,
+    homeTeam: {
+      ...match.homeTeam,
+      lineup: normalizeLineupPlayers(
+        match.homeTeam.lineup,
+        match.homeTeam.name,
+        isInternational
+      ),
+      bench: normalizeLineupPlayers(
+        match.homeTeam.bench,
+        match.homeTeam.name,
+        isInternational
+      ),
+    },
+    awayTeam: {
+      ...match.awayTeam,
+      lineup: normalizeLineupPlayers(
+        match.awayTeam.lineup,
+        match.awayTeam.name,
+        isInternational
+      ),
+      bench: normalizeLineupPlayers(
+        match.awayTeam.bench,
+        match.awayTeam.name,
+        isInternational
+      ),
+    },
+  };
+}
+
 function formatKstTime(utcDateStr: string): string {
   try {
     const date = new Date(utcDateStr);
@@ -152,16 +297,13 @@ export async function GET(request: NextRequest) {
   const isValidKey = apiKey.length >= 16 && /^[a-zA-Z0-9]+$/.test(apiKey);
 
   if (!apiKey || !isValidKey) {
-    console.log(
-      `[DEBUG API KEY]: Missing or invalid key (length: ${apiKey.length}). Returning MOCK_FALLBACK for date=${targetDate}`
-    );
     return NextResponse.json({
       source: "MOCK_FALLBACK",
       date: targetDate,
       message: !apiKey
         ? ".env.local에 FOOTBALL_DATA_API_KEY가 비어 있어 데모 경기 데이터를 표시합니다."
         : ".env.local의 FOOTBALL_DATA_API_KEY 형식이 유효하지 않습니다.",
-      matches: INITIAL_MATCHES,
+      matches: INITIAL_MATCHES.map((m) => enrichMatchMetadata(m, false)),
     });
   }
 
@@ -172,8 +314,6 @@ export async function GET(request: NextRequest) {
   const requestUrl = `${FOOTBALL_DATA_BASE_URL}?dateFrom=${utcDateFrom}&dateTo=${utcDateTo}`;
   const plFallbackUrl = `https://api.football-data.org/v4/competitions/PL/matches?dateFrom=${utcDateFrom}&dateTo=${utcDateTo}`;
 
-  console.log("[DEBUG API URL]:", requestUrl);
-
   try {
     const res = await fetch(requestUrl, {
       method: "GET",
@@ -183,10 +323,7 @@ export async function GET(request: NextRequest) {
       next: { revalidate: 60 },
     });
 
-    console.log("[DEBUG API STATUS]:", res.status, res.statusText);
-
     const data = await res.json().catch(() => ({}));
-    console.log("[DEBUG RAW RES]:", JSON.stringify(data));
 
     if (!res.ok) {
       return NextResponse.json(
@@ -195,7 +332,7 @@ export async function GET(request: NextRequest) {
           date: targetDate,
           message: `Football-Data API 응답 오류 (Status: ${res.status}). 데모 데이터를 대신 표시합니다.`,
           errorDetail: data,
-          matches: INITIAL_MATCHES,
+          matches: INITIAL_MATCHES.map((m) => enrichMatchMetadata(m, false)),
         },
         { status: 200 }
       );
@@ -222,9 +359,6 @@ export async function GET(request: NextRequest) {
       if (plRes && plRes.ok) {
         const plData = await plRes.json().catch(() => ({}));
         if (Array.isArray(plData.matches) && plData.matches.length > 0) {
-          console.log(
-            `[DEBUG PL DIRECT FETCH]: Added ${plData.matches.length} PL (2021) matches from /competitions/PL/matches`
-          );
           const existingIds = new Set(rawMatches.map((m) => m.id));
           for (const pm of plData.matches) {
             if (!existingIds.has(pm.id)) {
@@ -265,7 +399,7 @@ export async function GET(request: NextRequest) {
     const finalRawMatches =
       majorLeagueMatches.length > 0 ? majorLeagueMatches : dateMatched;
 
-    // Sort so Premier League (PL / 2021) always appears at the top
+    // Sort so A-Match (order 0) and Premier League (PL / 2021, order 1) appear at the top
     finalRawMatches.sort((a, b) => {
       const codeA = String(a.competition?.code || a.competition?.id || "").toUpperCase();
       const codeB = String(b.competition?.code || b.competition?.id || "").toUpperCase();
@@ -274,16 +408,17 @@ export async function GET(request: NextRequest) {
       return orderA - orderB;
     });
 
-    console.log(
-      `[DEBUG FILTERED COUNT]: raw=${rawMatches.length}, dateMatched=${dateMatched.length}, final=${finalRawMatches.length} (targetDate=${targetDate})`
-    );
-
     const normalizedMatches: Match[] = finalRawMatches.map((m) => {
       const compCode = String(m.competition?.code || "").toUpperCase();
       const compIdStr = String(m.competition?.id || "");
       const koLeague =
         LEAGUE_KO_MAP[compCode] || LEAGUE_KO_MAP[compIdStr];
       const status = mapApiStatus(m.status);
+
+      const isInternational =
+        INTERNATIONAL_COMPETITION_CODES.has(compCode) ||
+        INTERNATIONAL_COMPETITION_IDS.has(compIdStr) ||
+        Boolean(koLeague?.country?.includes("A매치"));
 
       const homeScore =
         m.score?.fullTime?.home ?? m.score?.halfTime?.home ?? undefined;
@@ -301,6 +436,9 @@ export async function GET(request: NextRequest) {
           .slice(0, 3)
           .toUpperCase();
 
+      const homeTeamName = m.homeTeam?.shortName || m.homeTeam?.name || "홈팀";
+      const awayTeamName = m.awayTeam?.shortName || m.awayTeam?.name || "원정팀";
+
       // Normalize leagueId so PL / 2021 always groups cleanly under "pl-2021"
       const normalizedLeagueId =
         compCode === "PL" || compIdStr === "2021"
@@ -314,6 +452,7 @@ export async function GET(request: NextRequest) {
         leagueName: koLeague?.name || m.competition?.name || "유럽 리그",
         leagueCountry: koLeague?.country || m.area?.name || "국제",
         leagueEmblem: m.competition?.emblem || undefined,
+        isInternational,
         status,
         rawStatus: String(m.status || ""),
         minute: status === "LIVE" ? m.minute ?? 45 : undefined,
@@ -321,25 +460,41 @@ export async function GET(request: NextRequest) {
           status === "FT" ? "종료" : formatKstTime(m.utcDate || ""),
         homeTeam: {
           id: homeTla.toLowerCase(),
-          name: m.homeTeam?.shortName || m.homeTeam?.name || "홈팀",
+          name: homeTeamName,
           shortName: homeTla,
           color: getColorForId(m.homeTeam?.id || homeTla),
           crest: m.homeTeam?.crest || undefined,
           score: homeScore ?? undefined,
           formation: m.homeTeam?.formation || "4-3-3",
-          lineup: Array.isArray(m.homeTeam?.lineup) ? m.homeTeam.lineup : undefined,
-          bench: Array.isArray(m.homeTeam?.bench) ? m.homeTeam.bench : undefined,
+          lineup: normalizeLineupPlayers(
+            m.homeTeam?.lineup,
+            homeTeamName,
+            isInternational
+          ),
+          bench: normalizeLineupPlayers(
+            m.homeTeam?.bench,
+            homeTeamName,
+            isInternational
+          ),
         },
         awayTeam: {
           id: awayTla.toLowerCase(),
-          name: m.awayTeam?.shortName || m.awayTeam?.name || "원정팀",
+          name: awayTeamName,
           shortName: awayTla,
           color: getColorForId(m.awayTeam?.id || awayTla),
           crest: m.awayTeam?.crest || undefined,
           score: awayScore ?? undefined,
           formation: m.awayTeam?.formation || "4-2-3-1",
-          lineup: Array.isArray(m.awayTeam?.lineup) ? m.awayTeam.lineup : undefined,
-          bench: Array.isArray(m.awayTeam?.bench) ? m.awayTeam.bench : undefined,
+          lineup: normalizeLineupPlayers(
+            m.awayTeam?.lineup,
+            awayTeamName,
+            isInternational
+          ),
+          bench: normalizeLineupPlayers(
+            m.awayTeam?.bench,
+            awayTeamName,
+            isInternational
+          ),
         },
         highlightText:
           status === "LIVE"
@@ -358,7 +513,9 @@ export async function GET(request: NextRequest) {
         count: NATIONAL_TEAM_DUMMY_MATCHES.length,
         message:
           "클럽 리그 휴식기(A매치 주간)로 주요 국가대표 매치업 및 클럽-대표팀 통합 시세를 표시합니다.",
-        matches: NATIONAL_TEAM_DUMMY_MATCHES,
+        matches: NATIONAL_TEAM_DUMMY_MATCHES.map((m) =>
+          enrichMatchMetadata(m, true)
+        ),
       });
     }
 
@@ -369,17 +526,13 @@ export async function GET(request: NextRequest) {
       matches: normalizedMatches,
     });
   } catch (error: any) {
-    console.log(
-      `[DEBUG API EXCEPTION] (${targetDate}):`,
-      error?.message || error
-    );
     return NextResponse.json({
       source: "NETWORK_FALLBACK",
       date: targetDate,
       message: `API 연동 중 네트워크 예외가 발생해 데모 경기를 표시합니다. (${
         error?.message || "Unknown error"
       })`,
-      matches: INITIAL_MATCHES,
+      matches: INITIAL_MATCHES.map((m) => enrichMatchMetadata(m, false)),
     });
   }
 }

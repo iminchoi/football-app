@@ -614,15 +614,24 @@ export function buildTeamLineupForMatch(
       usedNames.add(p.name);
     };
 
+    const findInNationalPool = (entry: ApiLineupPlayer): Player | undefined => {
+      const entryId = entry.id !== undefined ? String(entry.id) : "";
+      const extId =
+        entry.externalId !== undefined ? String(entry.externalId) : "";
+      return baseTeamPlayersFromStore.find(
+        (p) =>
+          !usedIds.has(p.id) &&
+          ((entryId && p.id === entryId) ||
+            (extId && (p.id === extId || p.id === `api-p-${extId}`)) ||
+            entry.name === p.name ||
+            p.englishName.toLowerCase() === entry.name.toLowerCase())
+      );
+    };
+
     // 1. Match explicit lineup order from activeTeam.lineup if present
     for (const entry of apiLineup) {
       if (amatchStarters.length >= 11) break;
-      const matched = baseTeamPlayersFromStore.find(
-        (p) =>
-          !usedIds.has(p.id) &&
-          ((entry.id !== undefined && String(entry.id) === p.id) ||
-            entry.name === p.name)
-      );
+      const matched = findInNationalPool(entry);
       if (matched) {
         markUsed(matched);
         amatchStarters.push(matched);
@@ -660,12 +669,7 @@ export function buildTeamLineupForMatch(
     // 3. Match explicit bench entries from activeTeam.bench, then remaining unused national team players
     for (const entry of apiBench) {
       if (amatchBench.length >= 5) break;
-      const matched = baseTeamPlayersFromStore.find(
-        (p) =>
-          !usedIds.has(p.id) &&
-          ((entry.id !== undefined && String(entry.id) === p.id) ||
-            entry.name === p.name)
-      );
+      const matched = findInNationalPool(entry);
       if (matched) {
         markUsed(matched);
         amatchBench.push(matched);
@@ -698,14 +702,27 @@ export function buildTeamLineupForMatch(
     const apiSourceList = isBench ? apiBench : apiLineup;
     const apiEntry = apiSourceList[slotIdx];
 
-    // 0. If API lineup/bench entry matches a real store player for this team, return that store player
+    // 0. If API lineup/bench entry exists, prioritize matching the synced store player by ID/externalId/name
     if (apiEntry) {
-      const matchedByEntry = baseTeamPlayersFromStore.find(
-        (p) =>
-          !usedIds.has(p.id) &&
-          ((apiEntry.id !== undefined && String(apiEntry.id) === p.id) ||
-            apiEntry.name === p.name)
-      );
+      const entryId = apiEntry.id !== undefined ? String(apiEntry.id) : "";
+      const extId =
+        apiEntry.externalId !== undefined ? String(apiEntry.externalId) : "";
+      const matchedByEntry =
+        baseTeamPlayersFromStore.find(
+          (p) =>
+            !usedIds.has(p.id) &&
+            ((entryId && p.id === entryId) ||
+              (extId && (p.id === extId || p.id === `api-p-${extId}`)) ||
+              apiEntry.name === p.name ||
+              p.englishName.toLowerCase() === apiEntry.name.toLowerCase())
+        ) ??
+        storePlayers.find(
+          (p) =>
+            !p.id.startsWith("pitch-") &&
+            !usedIds.has(p.id) &&
+            ((entryId && p.id === entryId) ||
+              (extId && (p.id === extId || p.id === `api-p-${extId}`)))
+        );
       if (matchedByEntry) {
         usedIds.add(matchedByEntry.id);
         usedNames.add(matchedByEntry.name);
@@ -725,13 +742,17 @@ export function buildTeamLineupForMatch(
       return existingSynInStore;
     }
 
-    // 2. Check if a non-synthetic base store player matches this match, team, and position
-    const existingBase = baseTeamPlayersFromStore.find(
-      (p) =>
-        p.position === slot.role &&
-        !usedIds.has(p.id) &&
-        !usedNames.has(p.name)
-    );
+    // 2. Fallback guard when API lineup is empty: check registered store players for this club/team
+    const existingBase =
+      baseTeamPlayersFromStore.find(
+        (p) =>
+          p.position === slot.role &&
+          !usedIds.has(p.id) &&
+          !usedNames.has(p.name)
+      ) ??
+      baseTeamPlayersFromStore.find(
+        (p) => !usedIds.has(p.id) && !usedNames.has(p.name)
+      );
     if (existingBase) {
       usedIds.add(existingBase.id);
       usedNames.add(existingBase.name);
