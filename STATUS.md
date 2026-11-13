@@ -1,19 +1,17 @@
 # STATUS
 
 ## Current State
-- Estimated MVP completion: ~85% (client-side trading prototype complete; server persistence and live match event ingestion remain).
-- Verification: `npx tsc --noEmit` passes with 0 errors; `next dev` compiles cleanly (`GET /` and `GET /api/matches` return HTTP 200).
-- Working features: 3-tab mobile UI (`MATCHES`, `PORTFOLIO`, `MARKET`), multi-account local auth & portfolio isolation, 5s market ticker with +/-30% price cap/floor, 0-90' timeline & OHLC candlestick charts, formation pitch view, and Football-Data.org v4 API route with fallback modes.
+- Estimated MVP completion: ~92% (client-side trading, multi-account supply sync, and live match event price binding complete; external DB persistence remains).
+- Verification: `npx tsc --noEmit` and `npm run build` (Next.js 15 production build + ESLint + type check) pass with 0 errors.
+- Working features: 3-tab mobile UI (`MATCHES`, `PORTFOLIO`, `MARKET`), multi-account local auth & portfolio isolation, all-account supply sync across match cards and trade sheet, 5s market ticker with +/-30% price cap/floor, 0-90' timeline & OHLC candlestick charts, formation pitch view, and Football-Data.org v4 API route with live match event (`GOAL`, `ASSIST`, `YELLOW_CARD`, `RED_CARD`, `SUB_OUT`) binding and fallback modes.
 
 ## Recent Changes
-- `src/components/TradeBottomSheet.tsx`: added `timeLabel` fallback (`${minute}'`) in `TICK` series (`TS2322` fix) and wired all-account `availableShares` with `"물량 소진 (Sold Out)"` state.
-- `src/app/api/matches/route.ts`: replaced all `any` usages with explicit Football-Data interfaces, narrowed `catch (error: unknown)`, and added `AbortSignal.timeout(8000)` to upstream fetches.
-- `src/components/matches/MatchesTabView.tsx`: removed `eslint-disable`, wrapped `fetchMatchesByDate` in `useCallback`, and added `AbortController` request cancellation on rapid date changes and unmount.
-- `src/store/useTradeStore.ts` & `src/types/index.ts`: isolated `watchlist` per account across `login`, `signup`, `logout`, `resetAll`, and `toggleWatchlist`; enforced all-account `availableShares` check in `buyPlayer`.
-- `src/utils/tier.ts`: updated `getAvailableShares` to sum holdings across all stored accounts without double-counting the active session.
-- `src/components/market/MarketChartTabView.tsx`: extended `EPL` league filter to match normalized `"pl-2021"` API league IDs.
+- `src/types/index.ts`: added `ApiMatchEvent` interface and `Match.events` optional array for real match event ingestion.
+- `src/app/api/matches/route.ts`: added `normalizeMatchEvents` to parse Football-Data.org `goals`, `bookings`, and `substitutions` into normalized `ApiMatchEvent[]`.
+- `src/store/useTradeStore.ts`: bound `match.events` idempotently in `syncPlayersFromMatches` to update player prices (scaled by tier `volatilityMultiplier` and clamped to +/-30%), append `ChartEventMarker` points, and increment match stats (`goals`, `assists`, `rating`).
+- `src/components/matches/MatchAccordionCard.tsx`: wired `user`, `accounts`, and `normalizeAccountKey` into `getAvailableShares` so match-card supply and sold-out badges match `TradeBottomSheet`; removed duplicate nested `football-app/` folder.
+- `.env.example`: documented `FOOTBALL_DATA_API_KEY` configuration template without hardcoded secrets.
 
 ## Known Issues & Next Steps
-1. **Priority 1 — Sync `MatchAccordionCard` supply badge**: pass `accounts` and active account key to `getAvailableShares` in `src/components/matches/MatchAccordionCard.tsx` so match-card sold-out badges match `TradeBottomSheet`.
-2. **Priority 2 — Browser UI & E2E verification**: verify 390x844 mobile layout, rapid date switching, EPL filter, chart period tabs, and multi-account sold-out behavior in a live browser session.
-3. **Priority 3 — Real API key & live event binding**: configure `FOOTBALL_DATA_API_KEY` in `.env.local` to verify live lineups/scores and map real match events (goals/cards) to player price ticks.
+1. **Live API Key Activation**: copy `.env.example` to `.env.local` and set a valid `FOOTBALL_DATA_API_KEY` to switch `/api/matches` from `MOCK_FALLBACK` to live Football-Data.org responses.
+2. **Interactive Browser Session**: use `/browser` in an interactive session to visually inspect 390x844 mobile viewport rendering with live API fixtures.

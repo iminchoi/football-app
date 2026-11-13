@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   ApiLineupPlayer,
+  ApiMatchEvent,
   Match,
   MatchStatus,
   Position,
@@ -213,6 +214,34 @@ interface FootballDataTeamRaw {
   bench?: FootballDataLineupPlayerRaw[];
 }
 
+interface FootballDataEventPersonRaw {
+  id?: number | string;
+  name?: string;
+}
+
+interface FootballDataGoalRaw {
+  minute?: number;
+  injuryTime?: number | null;
+  type?: string;
+  team?: { id?: number | string; name?: string };
+  scorer?: FootballDataEventPersonRaw;
+  assist?: FootballDataEventPersonRaw | null;
+}
+
+interface FootballDataBookingRaw {
+  minute?: number;
+  team?: { id?: number | string; name?: string };
+  player?: FootballDataEventPersonRaw;
+  card?: string;
+}
+
+interface FootballDataSubstitutionRaw {
+  minute?: number;
+  team?: { id?: number | string; name?: string };
+  playerOut?: FootballDataEventPersonRaw;
+  playerIn?: FootballDataEventPersonRaw;
+}
+
 interface FootballDataMatchRaw {
   id?: number | string;
   utcDate?: string;
@@ -231,6 +260,99 @@ interface FootballDataMatchRaw {
   };
   homeTeam?: FootballDataTeamRaw;
   awayTeam?: FootballDataTeamRaw;
+  goals?: FootballDataGoalRaw[];
+  bookings?: FootballDataBookingRaw[];
+  substitutions?: FootballDataSubstitutionRaw[];
+}
+
+function normalizeMatchEvents(
+  rawMatch: FootballDataMatchRaw,
+  matchId: string
+): ApiMatchEvent[] | undefined {
+  const events: ApiMatchEvent[] = [];
+
+  if (Array.isArray(rawMatch.goals)) {
+    rawMatch.goals.forEach((goal, idx) => {
+      const minute = Math.min(90, Math.max(1, Number(goal.minute ?? 45)));
+      const goalType = String(goal.type || "REGULAR").toUpperCase();
+      if (goalType === "OWN") return;
+
+      const scorerName = String(goal.scorer?.name || "").trim();
+      if (scorerName) {
+        const scorerId =
+          goal.scorer?.id !== undefined ? String(goal.scorer.id) : undefined;
+        events.push({
+          id: `${matchId}-goal-${minute}-${scorerId ?? idx}`,
+          minute,
+          type: "GOAL",
+          playerId: scorerId,
+          playerName: scorerName,
+          teamName: goal.team?.name,
+        });
+      }
+
+      const assistName = String(goal.assist?.name || "").trim();
+      if (assistName) {
+        const assistId =
+          goal.assist?.id !== undefined ? String(goal.assist.id) : undefined;
+        events.push({
+          id: `${matchId}-assist-${minute}-${assistId ?? idx}`,
+          minute,
+          type: "ASSIST",
+          playerId: assistId,
+          playerName: assistName,
+          teamName: goal.team?.name,
+        });
+      }
+    });
+  }
+
+  if (Array.isArray(rawMatch.bookings)) {
+    rawMatch.bookings.forEach((booking, idx) => {
+      const playerName = String(booking.player?.name || "").trim();
+      if (!playerName) return;
+      const minute = Math.min(90, Math.max(1, Number(booking.minute ?? 45)));
+      const cardUpper = String(booking.card || "YELLOW").toUpperCase();
+      const eventType =
+        cardUpper.includes("RED") ? "RED_CARD" : "YELLOW_CARD";
+      const playerId =
+        booking.player?.id !== undefined
+          ? String(booking.player.id)
+          : undefined;
+
+      events.push({
+        id: `${matchId}-${eventType.toLowerCase()}-${minute}-${playerId ?? idx}`,
+        minute,
+        type: eventType,
+        playerId,
+        playerName,
+        teamName: booking.team?.name,
+      });
+    });
+  }
+
+  if (Array.isArray(rawMatch.substitutions)) {
+    rawMatch.substitutions.forEach((sub, idx) => {
+      const outName = String(sub.playerOut?.name || "").trim();
+      if (!outName) return;
+      const minute = Math.min(90, Math.max(1, Number(sub.minute ?? 60)));
+      const outId =
+        sub.playerOut?.id !== undefined
+          ? String(sub.playerOut.id)
+          : undefined;
+
+      events.push({
+        id: `${matchId}-subout-${minute}-${outId ?? idx}`,
+        minute,
+        type: "SUB_OUT",
+        playerId: outId,
+        playerName: outName,
+        teamName: sub.team?.name,
+      });
+    });
+  }
+
+  return events.length > 0 ? events : undefined;
 }
 
 function normalizeLineupPlayers(
@@ -546,8 +668,11 @@ export async function GET(request: NextRequest) {
           ? "pl-2021"
           : String(compCode || compIdStr || "other").toLowerCase();
 
+      const matchId = `fd-${m.id}`;
+      const matchEvents = normalizeMatchEvents(m, matchId);
+
       return {
-        id: `fd-${m.id}`,
+        id: matchId,
         utcDate: m.utcDate,
         leagueId: normalizedLeagueId,
         leagueName: koLeague?.name || m.competition?.name || "유럽 리그",
@@ -603,6 +728,7 @@ export async function GET(request: NextRequest) {
             : status === "FT"
             ? `경기 종료 (${homeScore ?? 0} : ${awayScore ?? 0})`
             : `킥오프 ${formatKstTime(m.utcDate || "")} (KST)`,
+        ...(matchEvents ? { events: matchEvents } : {}),
       };
     });
 

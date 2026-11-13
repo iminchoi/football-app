@@ -16,6 +16,7 @@ import {
   PricePoint,
   ChartEventType,
   ChartEventMarker,
+  EventSentiment,
   getPositionLine,
   normalizeDetailedPosition,
 } from "@/types";
@@ -1219,6 +1220,188 @@ export const useTradeStore = create<TradeStoreState>()(
               playersChanged = true;
             });
           }
+
+          // Bind real match events (goals, assists, cards, substitutions) idempotently to player price ticks
+          if (Array.isArray(match.events) && match.events.length > 0) {
+            for (const ev of match.events) {
+              const evNameLower = ev.playerName.trim().toLowerCase();
+              const evIdStr = ev.playerId ? String(ev.playerId).trim() : "";
+
+              const targetIdx = nextPlayers.findIndex((p) => {
+                if (p.id.startsWith("pitch-")) return false;
+                if (
+                  evIdStr &&
+                  (p.id === evIdStr || p.id === `api-p-${evIdStr}`)
+                ) {
+                  return true;
+                }
+                if (p.name.trim().toLowerCase() === evNameLower) return true;
+                if (
+                  p.englishName &&
+                  p.englishName.trim().toLowerCase() === evNameLower
+                ) {
+                  return true;
+                }
+                return false;
+              });
+
+              if (targetIdx === -1) continue;
+
+              const target = nextPlayers[targetIdx];
+              const minute = Math.min(90, Math.max(1, ev.minute));
+              const alreadyApplied = target.priceHistory.some(
+                (pt) => pt.minute === minute && pt.event?.type === ev.type
+              );
+              if (alreadyApplied) continue;
+
+              const basePrice = roundToTen(
+                target.basePrice ?? target.initialPrice ?? 10000
+              );
+              const openPrice = clampToPriceLimit(
+                target.openPrice ?? target.priceHistory[0]?.price ?? basePrice,
+                basePrice
+              );
+              const tierCfg = getTierConfig(basePrice);
+
+              const eventSpec: Record<
+                ChartEventType,
+                {
+                  baseRate: number;
+                  sentiment: EventSentiment;
+                  shortLabel: string;
+                  bannerText: string;
+                }
+              > = {
+                GOAL: {
+                  baseRate: 0.085,
+                  sentiment: "positive",
+                  shortLabel: "⚽ 득점",
+                  bannerText: `⚽ ${minute}' 실경기 득점 반영!`,
+                },
+                ASSIST: {
+                  baseRate: 0.05,
+                  sentiment: "positive",
+                  shortLabel: "🎯 어시스트",
+                  bannerText: `🎯 ${minute}' 실경기 어시스트 반영!`,
+                },
+                SAVE: {
+                  baseRate: 0.04,
+                  sentiment: "positive",
+                  shortLabel: "🧤 슈퍼세이브",
+                  bannerText: `🧤 ${minute}' 실경기 결정적 선방!`,
+                },
+                YELLOW_CARD: {
+                  baseRate: -0.03,
+                  sentiment: "negative",
+                  shortLabel: "🟨 경고",
+                  bannerText: `🟨 ${minute}' 실경기 옐로카드 경고`,
+                },
+                RED_CARD: {
+                  baseRate: -0.1,
+                  sentiment: "negative",
+                  shortLabel: "🟥 퇴장",
+                  bannerText: `🟥 ${minute}' 실경기 레드카드 퇴장`,
+                },
+                SUB_OUT: {
+                  baseRate: -0.015,
+                  sentiment: "neutral",
+                  shortLabel: "🔄 교체",
+                  bannerText: `🔄 ${minute}' 실경기 교체 아웃`,
+                },
+              };
+
+              const spec = eventSpec[ev.type];
+              const rawRate = spec.baseRate * tierCfg.volatilityMultiplier;
+              const prevPrice = clampToPriceLimit(
+                target.currentPrice,
+                basePrice
+              );
+              const nextPrice = clampToPriceLimit(
+                Math.round(prevPrice * (1 + rawRate)),
+                basePrice
+              );
+              const impactPct = Number(
+                (
+                  ((nextPrice - prevPrice) / Math.max(1, prevPrice)) *
+                  100
+                ).toFixed(1)
+              );
+              const sign = impactPct > 0 ? "+" : "";
+              const marker: ChartEventMarker = {
+                type: ev.type,
+                label: `${spec.shortLabel} (${sign}${impactPct}%)`,
+                impactPercent: impactPct,
+              };
+
+              const updatedHistory = normalizePriceHistory(
+                [
+                  ...target.priceHistory,
+                  {
+                    minute,
+                    timeLabel: formatMinuteLabel(minute),
+                    price: nextPrice,
+                    changePercentFromOpen:
+                      openPrice > 0
+                        ? Number(
+                            (((nextPrice - openPrice) / openPrice) * 100).toFixed(
+                              2
+                            )
+                          )
+                        : 0,
+                    event: marker,
+                  },
+                ],
+                openPrice,
+                basePrice
+              );
+
+              const nextStats = { ...target.stats };
+              if (ev.type === "GOAL") {
+                nextStats.goals += 1;
+                nextStats.shotsOnTarget += 1;
+                nextStats.rating = Number(
+                  Math.min(9.9, nextStats.rating + 0.4).toFixed(1)
+                );
+              } else if (ev.type === "ASSIST") {
+                nextStats.assists += 1;
+                nextStats.keyPasses += 1;
+                nextStats.rating = Number(
+                  Math.min(9.9, nextStats.rating + 0.3).toFixed(1)
+                );
+              } else if (ev.type === "YELLOW_CARD") {
+                nextStats.rating = Number(
+                  Math.max(4.5, nextStats.rating - 0.2).toFixed(1)
+                );
+              } else if (ev.type === "RED_CARD") {
+                nextStats.rating = Number(
+                  Math.max(3.5, nextStats.rating - 0.8).toFixed(1)
+                );
+              }
+
+              const updatedPlayer: Player = {
+                ...target,
+                previousPrice: prevPrice,
+                currentPrice: nextPrice,
+                priceHistory: updatedHistory,
+                lastEvent: {
+                  text: spec.bannerText,
+                  sentiment: spec.sentiment,
+                  minute,
+                },
+                stats: nextStats,
+              };
+
+              nextPlayers[targetIdx] = updatedPlayer;
+              nextPlayerPrices[updatedPlayer.id] = {
+                openPrice,
+                closePrice: updatedPlayer.closePrice,
+                currentPrice: nextPrice,
+                previousPrice: prevPrice,
+                priceHistory: updatedHistory,
+              };
+              playersChanged = true;
+            }
+          }
         }
 
         // Also merge incomingMatches into state.matches so tickMarket can update live API matches
@@ -1233,19 +1416,23 @@ export const useTradeStore = create<TradeStoreState>()(
             matchesChanged = true;
           } else if (
             prev.isInternational !== inc.isInternational ||
+            prev.status !== inc.status ||
+            prev.homeTeam.score !== inc.homeTeam.score ||
+            prev.awayTeam.score !== inc.awayTeam.score ||
+            (inc.events?.length ?? 0) !== (prev.events?.length ?? 0) ||
             (!prev.homeTeam.lineup && inc.homeTeam.lineup) ||
             (!prev.awayTeam.lineup && inc.awayTeam.lineup)
           ) {
             existingMatchMap.set(inc.id, {
               ...inc,
-              minute: prev.minute ?? inc.minute,
+              minute: inc.minute ?? prev.minute,
               homeTeam: {
                 ...inc.homeTeam,
-                score: prev.homeTeam.score ?? inc.homeTeam.score,
+                score: inc.homeTeam.score ?? prev.homeTeam.score,
               },
               awayTeam: {
                 ...inc.awayTeam,
-                score: prev.awayTeam.score ?? inc.awayTeam.score,
+                score: inc.awayTeam.score ?? prev.awayTeam.score,
               },
             });
             matchesChanged = true;

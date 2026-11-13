@@ -219,6 +219,15 @@ export interface ApiLineupPlayer {
   age?: number;
 }
 
+export interface ApiMatchEvent {
+  id: string;
+  minute: number;
+  type: ChartEventType;
+  playerId?: string;
+  playerName: string;
+  teamName?: string;
+}
+
 export interface TeamInfo {
   id: string;
   name: string;
@@ -247,6 +256,7 @@ export interface Match {
   homeTeam: TeamInfo;
   awayTeam: TeamInfo;
   highlightText?: string;
+  events?: ApiMatchEvent[];
 }
 
 export interface Holding {

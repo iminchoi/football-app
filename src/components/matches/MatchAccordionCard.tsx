@@ -15,6 +15,7 @@ import {
   useTradeStore,
   doesPlayerBelongToTeam,
   isNationalTeamMatch,
+  normalizeAccountKey,
 } from "@/store/useTradeStore";
 import { getAvailableShares } from "@/utils/tier";
 import { buildTeamLineupForMatch } from "./FormationPitchModal";
@@ -38,7 +39,9 @@ export default function MatchAccordionCard({
   onSelectPlayerTrade,
   onOpenPitchView,
 }: MatchAccordionCardProps) {
+  const user = useTradeStore((s) => s.user);
   const storeHoldings = useTradeStore((s) => s.holdings);
+  const accounts = useTradeStore((s) => s.accounts);
   const watchlist = useTradeStore((s) => s.watchlist);
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
   const [selectedSide, setSelectedSide] = useState<"HOME" | "AWAY">("HOME");
@@ -303,7 +306,9 @@ export default function MatchAccordionCard({
                   const isWatched = watchlist.includes(player.id);
                   const availableShares = getAvailableShares(
                     player,
-                    storeHoldings
+                    storeHoldings,
+                    accounts,
+                    user ? normalizeAccountKey(user.id) : undefined
                   );
                   const isSoldOut = availableShares === 0;
 
