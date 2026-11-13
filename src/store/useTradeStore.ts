@@ -13,6 +13,8 @@ import {
   StoredUserAccount,
   PersistedPlayerPrice,
   Position,
+  getPositionLine,
+  normalizeDetailedPosition,
 } from "@/types";
 import {
   INITIAL_CASH,
@@ -759,19 +761,7 @@ export const useTradeStore = create<TradeStoreState>()(
         let playersChanged = false;
 
         const normalizeRole = (rawPos?: string): Position => {
-          const upper = String(rawPos || "MF").trim().toUpperCase();
-          if (upper === "GK" || upper.includes("KEEP")) return "GK";
-          if (upper === "DF" || upper.includes("DEF") || upper.includes("BACK"))
-            return "DF";
-          if (
-            upper === "FW" ||
-            upper.includes("FORW") ||
-            upper.includes("OFFEN") ||
-            upper.includes("ATT") ||
-            upper.includes("WING")
-          )
-            return "FW";
-          return "MF";
+          return normalizeDetailedPosition(rawPos);
         };
 
         const computeAutoBasePrice = (
@@ -792,12 +782,13 @@ export const useTradeStore = create<TradeStoreState>()(
             return roundToTen(4300 + (absHash % 6) * 100);
           }
 
+          const line = getPositionLine(pos);
           const roleBase =
-            pos === "FW"
+            line === "FW"
               ? 11600
-              : pos === "MF"
+              : line === "MF"
               ? 10400
-              : pos === "DF"
+              : line === "DF"
               ? 9000
               : 8400;
 
@@ -1104,7 +1095,10 @@ export const useTradeStore = create<TradeStoreState>()(
 
           // Event-driven price calculation with Single Source of Truth tier config (Wonderkid Rule):
           const tierCfg = getTierConfig(basePrice);
-          const pool = POSITION_EVENTS[player.position];
+          const pool =
+            POSITION_EVENTS[player.position] ??
+            POSITION_EVENTS[getPositionLine(player.position)] ??
+            POSITION_EVENTS.MF;
           const chosen = pool[Math.floor(Math.random() * pool.length)];
 
           const isSpecialGoalOrAssist =

@@ -17,7 +17,10 @@ import {
   Holding,
   TradeType,
   Position,
+  DetailedPosition,
   ApiLineupPlayer,
+  getPositionLine,
+  normalizeDetailedPosition,
 } from "@/types";
 import {
   roundToTen,
@@ -35,285 +38,264 @@ interface FormationPitchModalProps {
   onSelectPlayerTrade: (player: Player, type: TradeType) => void;
 }
 
-interface RosterSlot {
-  role: Position;
+export type SupportedFormation = "4-3-3" | "4-2-3-1";
+
+export interface FormationSlotSpec {
+  slotKey: string;
+  slotPosition: DetailedPosition;
+  rowIndex: number; // 0 = top attack row .. last = GK row
+  colIndex: number; // left -> right (0-based within row)
+  compatiblePositions: DetailedPosition[]; // Priority 2 adjacent/same-line fallback order
   defaultBackNumber: number;
   fallbackKoLastNames: string[];
   fallbackEnLastNames: string[];
   basePriceSeed: number;
 }
 
-// 11-player starting template (3 FW, 3 MF, 4 DF, 1 GK) with 10 distinct names per slot
-// (First 5 used primarily for HOME, next 5 for AWAY so teams never overlap)
-export const STARTING_11_TEMPLATE: RosterSlot[] = [
-  // FW (3)
+interface RosterSlot {
+  role: DetailedPosition;
+  defaultBackNumber: number;
+  fallbackKoLastNames: string[];
+  fallbackEnLastNames: string[];
+  basePriceSeed: number;
+}
+
+const FALLBACK_POOL_BY_POSITION: Record<
+  DetailedPosition,
   {
-    role: "FW",
+    defaultBackNumber: number;
+    ko: string[];
+    en: string[];
+    basePriceSeed: number;
+  }
+> = {
+  LW: {
     defaultBackNumber: 7,
-    fallbackKoLastNames: [
+    ko: [
       "손흥민",
       "마르티넬리",
-      "포든",
       "비니시우스",
       "래시포드",
-      "일디즈",
-      "하파엘 레앙",
-      "그리즈만",
       "니코 윌리엄스",
+      "하파엘 레앙",
+      "고든",
       "바르콜라",
+      "도쿠",
+      "크바라츠헬리아",
     ],
-    fallbackEnLastNames: [
+    en: [
       "Son",
       "Martinelli",
-      "Foden",
       "Vinicius",
       "Rashford",
-      "Yildiz",
-      "Leao",
-      "Griezmann",
       "Nico Williams",
+      "Leao",
+      "Gordon",
       "Barcola",
+      "Doku",
+      "Kvaratskhelia",
     ],
     basePriceSeed: 15500,
   },
-  {
-    role: "FW",
+  ST: {
     defaultBackNumber: 9,
-    fallbackKoLastNames: [
+    ko: [
       "홀란드",
       "케인",
       "라우타로",
       "솔란케",
       "하베르츠",
-      "블라호비치",
       "음바페",
       "레반도프스키",
       "이삭",
-      "피나몬티",
+      "모라타",
+      "블라호비치",
     ],
-    fallbackEnLastNames: [
+    en: [
       "Haaland",
       "Kane",
       "Lautaro",
       "Solanke",
       "Havertz",
-      "Vlahovic",
       "Mbappe",
       "Lewandowski",
       "Isak",
-      "Pinamonti",
+      "Morata",
+      "Vlahovic",
     ],
     basePriceSeed: 18000,
   },
-  {
-    role: "FW",
+  RW: {
     defaultBackNumber: 11,
-    fallbackKoLastNames: [
+    ko: [
       "살라",
       "사카",
       "야말",
       "뎀벨레",
       "쿠두스",
-      "콘세이상",
       "풀리식",
       "호드리구",
       "올리세",
       "음뵈모",
+      "페드로 네투",
     ],
-    fallbackEnLastNames: [
+    en: [
       "Salah",
       "Saka",
       "Yamal",
       "Dembele",
       "Kudus",
-      "Conceicao",
       "Pulisic",
       "Rodrygo",
       "Olise",
       "Mbeumo",
+      "Pedro Neto",
     ],
     basePriceSeed: 15800,
   },
-  // MF (3)
-  {
-    role: "MF",
+  LAM: {
+    defaultBackNumber: 11,
+    ko: [
+      "미토마",
+      "무시알라",
+      "그릴리쉬",
+      "배준호",
+      "차비 시몬스",
+      "산초",
+      "펠릭스",
+      "일디즈",
+      "은쿤쿠",
+      "가르나초",
+    ],
+    en: [
+      "Mitoma",
+      "Musiala",
+      "Grealish",
+      "Bae Jun-Ho",
+      "Xavi Simons",
+      "Sancho",
+      "Joao Felix",
+      "Yildiz",
+      "Nkunku",
+      "Garnacho",
+    ],
+    basePriceSeed: 13600,
+  },
+  CAM: {
     defaultBackNumber: 10,
-    fallbackKoLastNames: [
+    ko: [
       "매디슨",
       "외데고르",
       "벨링엄",
-      "무시알라",
       "파머",
-      "코프메이너르스",
-      "바렐라",
+      "더브라위너",
+      "브루노",
+      "다니 올모",
       "비르츠",
-      "차비 시몬스",
-      "주앙 네베스",
+      "이재성",
+      "쿠보",
     ],
-    fallbackEnLastNames: [
+    en: [
       "Maddison",
       "Odegaard",
       "Bellingham",
-      "Musiala",
       "Palmer",
-      "Koopmeiners",
-      "Barella",
+      "De Bruyne",
+      "Bruno",
+      "Dani Olmo",
       "Wirtz",
-      "Xavi Simons",
-      "Joao Neves",
+      "Lee Jae-Sung",
+      "Kubo",
     ],
-    basePriceSeed: 14200,
+    basePriceSeed: 14600,
   },
-  {
-    role: "MF",
+  RAM: {
+    defaultBackNumber: 47,
+    ko: [
+      "포든",
+      "이강인",
+      "도안 리츠",
+      "클루셉스키",
+      "디아비",
+      "보웬",
+      "마운트",
+      "제레미 피노",
+      "브라힘 디아스",
+      "아센시오",
+    ],
+    en: [
+      "Foden",
+      "Kang-In Lee",
+      "Doan",
+      "Kulusevski",
+      "Diaby",
+      "Bowen",
+      "Mount",
+      "Yeremy Pino",
+      "Brahim Diaz",
+      "Asensio",
+    ],
+    basePriceSeed: 14000,
+  },
+  CM: {
     defaultBackNumber: 8,
-    fallbackKoLastNames: [
-      "더브라위너",
-      "라이스",
+    ko: [
       "발베르데",
       "페드리",
-      "브루노",
-      "로카텔리",
-      "찰하노글루",
       "비티냐",
+      "파비안 루이스",
+      "베르나르두",
+      "바렐라",
       "맥알리스터",
       "프렌키 데용",
+      "카마빙가",
+      "자이르에메리",
     ],
-    fallbackEnLastNames: [
-      "De Bruyne",
-      "Rice",
+    en: [
       "Valverde",
       "Pedri",
-      "Bruno",
-      "Locatelli",
-      "Calhanoglu",
       "Vitinha",
+      "Fabian Ruiz",
+      "Bernardo",
+      "Barella",
       "Mac Allister",
       "De Jong",
+      "Camavinga",
+      "Zaire-Emery",
     ],
-    basePriceSeed: 13800,
+    basePriceSeed: 13500,
   },
-  {
-    role: "MF",
+  DM: {
     defaultBackNumber: 6,
-    fallbackKoLastNames: [
+    ko: [
       "로드리",
-      "이강인",
+      "라이스",
+      "엔도 와타루",
+      "황인범",
+      "코비 마이누",
       "키미히",
       "카이세도",
       "기마랑이스",
-      "케프렌 튀랑",
       "츄아메니",
-      "파비안 루이스",
-      "토날리",
-      "바델리",
+      "주앙 네베스",
     ],
-    fallbackEnLastNames: [
+    en: [
       "Rodri",
-      "Lee",
+      "Rice",
+      "Endo",
+      "Hwang In-Beom",
+      "Mainoo",
       "Kimmich",
       "Caicedo",
       "Guimaraes",
-      "K. Thuram",
       "Tchouameni",
-      "Fabian Ruiz",
-      "Tonali",
-      "Badelj",
+      "Joao Neves",
     ],
-    basePriceSeed: 12800,
+    basePriceSeed: 13000,
   },
-  // DF (4)
-  {
-    role: "DF",
-    defaultBackNumber: 23,
-    fallbackKoLastNames: [
-      "포로",
-      "화이트",
-      "워커",
-      "하키미",
-      "카르바할",
-      "캄비아소",
-      "아놀드",
-      "쿤데",
-      "프림퐁",
-      "덤프리스",
-    ],
-    fallbackEnLastNames: [
-      "Porro",
-      "White",
-      "Walker",
-      "Hakimi",
-      "Carvajal",
-      "Cambiaso",
-      "Arnold",
-      "Kounde",
-      "Frimpong",
-      "Dumfries",
-    ],
-    basePriceSeed: 10200,
-  },
-  {
-    role: "DF",
+  LB: {
     defaultBackNumber: 3,
-    fallbackKoLastNames: [
-      "김민재",
-      "살리바",
-      "후벵디아스",
-      "뤼디거",
-      "판더펜",
-      "브레메르",
-      "파우 쿠바르시",
-      "마르퀴뇨스",
-      "코나테",
-      "칼룰루",
-    ],
-    fallbackEnLastNames: [
-      "Kim",
-      "Saliba",
-      "Dias",
-      "Rudiger",
-      "Van de Ven",
-      "Bremer",
-      "Cubarsi",
-      "Marquinhos",
-      "Konate",
-      "Kalulu",
-    ],
-    basePriceSeed: 11200,
-  },
-  {
-    role: "DF",
-    defaultBackNumber: 4,
-    fallbackKoLastNames: [
-      "반다이크",
-      "로메로",
-      "아라우호",
-      "바스토니",
-      "마갈량이스",
-      "가티",
-      "우파메카노",
-      "파초",
-      "타",
-      "바스케스",
-    ],
-    fallbackEnLastNames: [
-      "Van Dijk",
-      "Romero",
-      "Araujo",
-      "Bastoni",
-      "Gabriel",
-      "Gatti",
-      "Upamecano",
-      "Pacho",
-      "Tah",
-      "Vasquez",
-    ],
-    basePriceSeed: 11000,
-  },
-  {
-    role: "DF",
-    defaultBackNumber: 19,
-    fallbackKoLastNames: [
+    ko: [
       "우도기",
       "그바르디올",
       "테오",
@@ -322,10 +304,10 @@ export const STARTING_11_TEMPLATE: RosterSlot[] = [
       "디마르코",
       "발데",
       "누누 멘데스",
-      "칼라피오리",
-      "마르틴",
+      "쿠쿠렐라",
+      "콜윌",
     ],
-    fallbackEnLastNames: [
+    en: [
       "Udogie",
       "Gvardiol",
       "Theo",
@@ -334,46 +316,184 @@ export const STARTING_11_TEMPLATE: RosterSlot[] = [
       "Dimarco",
       "Balde",
       "Nuno Mendes",
-      "Calafiori",
-      "Martin",
+      "Cucurella",
+      "Colwill",
     ],
     basePriceSeed: 10000,
   },
-  // GK (1)
-  {
-    role: "GK",
+  CB: {
+    defaultBackNumber: 4,
+    ko: [
+      "김민재",
+      "살리바",
+      "후벵 디아스",
+      "뤼디거",
+      "판더펜",
+      "반다이크",
+      "로메로",
+      "아라우호",
+      "바스토니",
+      "파우 쿠바르시",
+    ],
+    en: [
+      "Min-Jae Kim",
+      "Saliba",
+      "Ruben Dias",
+      "Rudiger",
+      "Van de Ven",
+      "Van Dijk",
+      "Romero",
+      "Araujo",
+      "Bastoni",
+      "Cubarsi",
+    ],
+    basePriceSeed: 11200,
+  },
+  RB: {
+    defaultBackNumber: 2,
+    ko: [
+      "포로",
+      "화이트",
+      "워커",
+      "하키미",
+      "카르바할",
+      "알렉산더-아놀드",
+      "쿤데",
+      "프림퐁",
+      "설영우",
+      "달롯",
+    ],
+    en: [
+      "Porro",
+      "White",
+      "Walker",
+      "Hakimi",
+      "Carvajal",
+      "Alexander-Arnold",
+      "Kounde",
+      "Frimpong",
+      "Seol Young-Woo",
+      "Dalot",
+    ],
+    basePriceSeed: 10400,
+  },
+  GK: {
     defaultBackNumber: 1,
-    fallbackKoLastNames: [
+    ko: [
       "비카리오",
       "알리송",
       "에데르송",
       "쿠르투아",
       "노이어",
-      "디 그레고리오",
-      "애미 마르티네스",
+      "픽포드",
+      "다비드 라야",
       "돈나룸마",
-      "오블락",
-      "좀머",
+      "디오구 코스타",
+      "조현우",
     ],
-    fallbackEnLastNames: [
+    en: [
       "Vicario",
       "Alisson",
       "Ederson",
       "Courtois",
       "Neuer",
-      "Di Gregorio",
-      "Martinez",
+      "Pickford",
+      "David Raya",
       "Donnarumma",
-      "Oblak",
-      "Sommer",
+      "Diogo Costa",
+      "Jo Hyeon-Woo",
     ],
     basePriceSeed: 9200,
   },
+};
+
+function makeSlotSpec(
+  slotKey: string,
+  slotPosition: DetailedPosition,
+  rowIndex: number,
+  colIndex: number,
+  compatiblePositions: DetailedPosition[],
+  backNumberOverride?: number
+): FormationSlotSpec {
+  const pool = FALLBACK_POOL_BY_POSITION[slotPosition];
+  return {
+    slotKey,
+    slotPosition,
+    rowIndex,
+    colIndex,
+    compatiblePositions,
+    defaultBackNumber: backNumberOverride ?? pool.defaultBackNumber,
+    fallbackKoLastNames: pool.ko,
+    fallbackEnLastNames: pool.en,
+    basePriceSeed: pool.basePriceSeed,
+  };
+}
+
+/**
+ * 1) 4-3-3 고정 11슬롯 구성 (좌 ➔ 우 순서 엄수):
+ * - Row 0 (공격 3): [LW] (좌측 윙어), [ST] (중앙 스트라이커), [RW] (우측 윙어)
+ * - Row 1 (중원 3): [CM] (좌측 중앙 미드필더), [CM] (중앙/수비형 미드필더), [CM] (우측 중앙 미드필더)
+ * - Row 2 (수비 4): [LB] (좌측 풀백), [CB] (좌측 센터백), [CB] (우측 센터백), [RB] (우측 풀백)
+ * - Row 3 (골키퍼 1): [GK] (중앙 최후방)
+ */
+export const FORMATION_433_SLOTS: FormationSlotSpec[] = [
+  // Row 0: [LW, ST, RW]
+  makeSlotSpec("433-lw", "LW", 0, 0, ["LW", "LAM", "RW", "ST"], 7),
+  makeSlotSpec("433-st", "ST", 0, 1, ["ST", "LW", "RW", "CAM"], 9),
+  makeSlotSpec("433-rw", "RW", 0, 2, ["RW", "RAM", "LW", "ST"], 11),
+  // Row 1: [CM (좌), CM (중/DM), CM (우)]
+  makeSlotSpec("433-lcm", "CM", 1, 0, ["CM", "CAM", "LAM", "DM"], 8),
+  makeSlotSpec("433-ccm", "CM", 1, 1, ["CM", "DM", "CAM"], 6),
+  makeSlotSpec("433-rcm", "CM", 1, 2, ["CM", "CAM", "RAM", "DM"], 10),
+  // Row 2: [LB, CB (좌), CB (우), RB]
+  makeSlotSpec("433-lb", "LB", 2, 0, ["LB", "CB"], 3),
+  makeSlotSpec("433-lcb", "CB", 2, 1, ["CB", "LB", "RB"], 4),
+  makeSlotSpec("433-rcb", "CB", 2, 2, ["CB", "RB", "LB"], 5),
+  makeSlotSpec("433-rb", "RB", 2, 3, ["RB", "CB"], 2),
+  // Row 3: [GK]
+  makeSlotSpec("433-gk", "GK", 3, 0, ["GK"], 1),
 ];
+
+/**
+ * 2) 4-2-3-1 고정 11슬롯 구성 (좌 ➔ 우 순서 엄수):
+ * - Row 0 (원톱 1): [ST] (중앙 최전방 원톱 스트라이커)
+ * - Row 1 (2선 3): [LAM] (좌측 공미/윙어), [CAM] (중앙 공미), [RAM] (우측 공미/윙어)
+ * - Row 2 (3선 2): [DM] (좌측 수미), [DM] (우측 수미)
+ * - Row 3 (수비 4): [LB] (좌측 풀백), [CB] (좌측 센터백), [CB] (우측 센터백), [RB] (우측 풀백)
+ * - Row 4 (골키퍼 1): [GK] (중앙 최후방)
+ */
+export const FORMATION_4231_SLOTS: FormationSlotSpec[] = [
+  // Row 0: [ST]
+  makeSlotSpec("4231-st", "ST", 0, 0, ["ST", "LW", "RW", "CAM"], 9),
+  // Row 1: [LAM, CAM, RAM]
+  makeSlotSpec("4231-lam", "LAM", 1, 0, ["LAM", "LW", "CM", "CAM"], 7),
+  makeSlotSpec("4231-cam", "CAM", 1, 1, ["CAM", "CM", "LAM", "RAM"], 10),
+  makeSlotSpec("4231-ram", "RAM", 1, 2, ["RAM", "RW", "CM", "CAM"], 11),
+  // Row 2: [DM (좌), DM (우)]
+  makeSlotSpec("4231-ldm", "DM", 2, 0, ["DM", "CM", "CAM"], 6),
+  makeSlotSpec("4231-rdm", "DM", 2, 1, ["DM", "CM", "CAM"], 8),
+  // Row 3: [LB, CB (좌), CB (우), RB]
+  makeSlotSpec("4231-lb", "LB", 3, 0, ["LB", "CB"], 3),
+  makeSlotSpec("4231-lcb", "CB", 3, 1, ["CB", "LB", "RB"], 4),
+  makeSlotSpec("4231-rcb", "CB", 3, 2, ["CB", "RB", "LB"], 5),
+  makeSlotSpec("4231-rb", "RB", 3, 3, ["RB", "CB"], 2),
+  // Row 4: [GK]
+  makeSlotSpec("4231-gk", "GK", 4, 0, ["GK"], 1),
+];
+
+export const STARTING_11_TEMPLATE: RosterSlot[] = FORMATION_433_SLOTS.map(
+  (s) => ({
+    role: s.slotPosition,
+    defaultBackNumber: s.defaultBackNumber,
+    fallbackKoLastNames: s.fallbackKoLastNames,
+    fallbackEnLastNames: s.fallbackEnLastNames,
+    basePriceSeed: s.basePriceSeed,
+  })
+);
 
 const BENCH_5_TEMPLATE: RosterSlot[] = [
   {
-    role: "FW",
+    role: "ST",
     defaultBackNumber: 14,
     fallbackKoLastNames: [
       "황희찬",
@@ -402,7 +522,7 @@ const BENCH_5_TEMPLATE: RosterSlot[] = [
     basePriceSeed: 11800,
   },
   {
-    role: "MF",
+    role: "CAM",
     defaultBackNumber: 18,
     fallbackKoLastNames: [
       "클루셉스키",
@@ -431,13 +551,13 @@ const BENCH_5_TEMPLATE: RosterSlot[] = [
     basePriceSeed: 4800,
   },
   {
-    role: "MF",
+    role: "CM",
     defaultBackNumber: 21,
     fallbackKoLastNames: [
       "사르",
       "조르지뉴",
       "모드리치",
-      "구도간",
+      "귄도안",
       "에제",
       "더글라스 루이스",
       "프레테시",
@@ -460,8 +580,8 @@ const BENCH_5_TEMPLATE: RosterSlot[] = [
     basePriceSeed: 4600,
   },
   {
-    role: "DF",
-    defaultBackNumber: 5,
+    role: "CB",
+    defaultBackNumber: 15,
     fallbackKoLastNames: [
       "스톤스",
       "드라구신",
@@ -519,6 +639,74 @@ const BENCH_5_TEMPLATE: RosterSlot[] = [
   },
 ];
 
+const DEFENSIVE_POSITIONS = new Set<DetailedPosition>(["GK", "LB", "CB", "RB"]);
+const FORWARD_POSITIONS = new Set<DetailedPosition>(["LW", "ST", "RW"]);
+const ATTACK_AND_MID_SLOTS = new Set<DetailedPosition>([
+  "LW",
+  "ST",
+  "RW",
+  "LAM",
+  "CAM",
+  "RAM",
+  "CM",
+  "DM",
+]);
+
+/**
+ * 절대 금지 규칙 (구역 침범 차단 가드):
+ * 1) CB, LB, RB, GK 선수는 어떠한 경우에도 ST, LW, RW, CAM, LAM, RAM (및 CM, DM) 슬롯에 배치할 수 없다.
+ * 2) ST, LW, RW 선수는 DF (LB, CB, RB) 또는 GK 슬롯에 배치할 수 없다.
+ * 3) GK 슬롯에는 오직 GK만, GK 선수는 오직 GK 슬롯에만 배치할 수 있다.
+ * 4) LB와 RB 간 좌우 풀백 스왑을 금지한다 (풀백 부재 시 CB만 보완 허용).
+ */
+export function isPositionAllowedInSlot(
+  playerPosRaw: Position,
+  slotPos: DetailedPosition
+): boolean {
+  const playerPos = normalizeDetailedPosition(playerPosRaw);
+
+  if (slotPos === "GK" || playerPos === "GK") {
+    return playerPos === "GK" && slotPos === "GK";
+  }
+
+  // Rule 1: CB, LB, RB, GK can NEVER be placed in ST, LW, RW, CAM, LAM, RAM, CM, DM slots
+  if (DEFENSIVE_POSITIONS.has(playerPos) && ATTACK_AND_MID_SLOTS.has(slotPos)) {
+    return false;
+  }
+
+  // Rule 2: ST, LW, RW can NEVER be placed in DF (LB, CB, RB) or GK slots
+  if (FORWARD_POSITIONS.has(playerPos) && DEFENSIVE_POSITIONS.has(slotPos)) {
+    return false;
+  }
+
+  // Rule 3: Midfielders cannot be placed into DF slots
+  if (
+    !DEFENSIVE_POSITIONS.has(playerPos) &&
+    DEFENSIVE_POSITIONS.has(slotPos)
+  ) {
+    return false;
+  }
+
+  // Rule 4: Prevent LB <-> RB left/right fullback inversion
+  if (
+    (slotPos === "LB" && playerPos === "RB") ||
+    (slotPos === "RB" && playerPos === "LB")
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+export function normalizeSupportedFormation(
+  rawFormation?: string,
+  side: "HOME" | "AWAY" = "HOME"
+): SupportedFormation {
+  if (rawFormation?.trim() === "4-2-3-1") return "4-2-3-1";
+  if (rawFormation?.trim() === "4-3-3") return "4-3-3";
+  return side === "HOME" ? "4-3-3" : "4-2-3-1";
+}
+
 function extractLastName(player: Player): string {
   const koTrimmed = player.name.trim();
   if (koTrimmed.length <= 4) return koTrimmed;
@@ -561,6 +749,8 @@ function buildSparklineHistory(
 }
 
 // Pure helper to build a strictly deduplicated 11-player starting lineup + 5-player bench for a team
+// Enforces 2-pass priority slot matching (Priority 1: Exact DetailedPosition match -> Priority 2: Adjacent compatible role)
+// and strict zone-invasion guard (CB/LB/RB/GK never in ST/LW/RW/CAM/LAM/RAM/CM/DM; ST/LW/RW never in DF/GK).
 export function buildTeamLineupForMatch(
   match: Match,
   side: "HOME" | "AWAY",
@@ -568,20 +758,21 @@ export function buildTeamLineupForMatch(
 ): {
   startingLineup: Player[];
   benchLineup: Player[];
-  formation: string;
+  formation: SupportedFormation;
 } {
   const activeTeam = side === "HOME" ? match.homeTeam : match.awayTeam;
+  const formation = normalizeSupportedFormation(activeTeam?.formation, side);
   if (!activeTeam) {
     return {
       startingLineup: [],
       benchLineup: [],
-      formation: "4-3-3",
+      formation,
     };
   }
 
   const isAMatch = isNationalTeamMatch(match);
 
-  // Include non-synthetic base players (from dummyData) that belong to this team
+  // Include non-synthetic base players (from dummyData / store) that belong to this team
   // - For A-Matches: strictly matches ONLY player.nationalTeam === activeTeam
   // - For Club Matches: strictly matches ONLY club fields
   const baseTeamPlayersFromStore = storePlayers.filter(
@@ -600,166 +791,220 @@ export function buildTeamLineupForMatch(
   const usedIds = new Set<string>();
   const usedNames = new Set<string>();
 
-  const formation =
-    activeTeam.formation || (side === "HOME" ? "4-3-3" : "4-2-3-1");
-
-  // If this is an A-Match (or a team with full store roster >= 11), build starting 11 and bench
-  // strictly from actual nationalTeam store players without mixing any foreign fallback names.
-  if (isAMatch && baseTeamPlayersFromStore.length > 0) {
-    const amatchStarters: Player[] = [];
-    const amatchBench: Player[] = [];
-
-    const markUsed = (p: Player) => {
-      usedIds.add(p.id);
-      usedNames.add(p.name);
-    };
-
-    const findInNationalPool = (entry: ApiLineupPlayer): Player | undefined => {
-      const entryId = entry.id !== undefined ? String(entry.id) : "";
-      const extId =
-        entry.externalId !== undefined ? String(entry.externalId) : "";
-      return baseTeamPlayersFromStore.find(
-        (p) =>
-          !usedIds.has(p.id) &&
-          ((entryId && p.id === entryId) ||
-            (extId && (p.id === extId || p.id === `api-p-${extId}`)) ||
-            entry.name === p.name ||
-            p.englishName.toLowerCase() === entry.name.toLowerCase())
-      );
-    };
-
-    // 1. Match explicit lineup order from activeTeam.lineup if present
-    for (const entry of apiLineup) {
-      if (amatchStarters.length >= 11) break;
-      const matched = findInNationalPool(entry);
-      if (matched) {
-        markUsed(matched);
-        amatchStarters.push(matched);
-      }
-    }
-
-    // 2. If fewer than 11 starters were resolved (e.g. live API without lineup IDs),
-    // fill remaining starter slots from baseTeamPlayersFromStore ordered by formation roles
-    if (amatchStarters.length < 11) {
-      const roleOrder: Position[] =
-        formation === "4-4-2"
-          ? ["FW", "FW", "MF", "MF", "MF", "MF", "DF", "DF", "DF", "DF", "GK"]
-          : ["FW", "FW", "FW", "MF", "MF", "MF", "DF", "DF", "DF", "DF", "GK"];
-
-      for (const targetRole of roleOrder) {
-        if (amatchStarters.length >= 11) break;
-        const roleMatch = baseTeamPlayersFromStore.find(
-          (p) => !usedIds.has(p.id) && p.position === targetRole
-        );
-        if (roleMatch) {
-          markUsed(roleMatch);
-          amatchStarters.push(roleMatch);
-        }
-      }
-
-      for (const p of baseTeamPlayersFromStore) {
-        if (amatchStarters.length >= 11) break;
-        if (!usedIds.has(p.id)) {
-          markUsed(p);
-          amatchStarters.push(p);
-        }
-      }
-    }
-
-    // 3. Match explicit bench entries from activeTeam.bench, then remaining unused national team players
-    for (const entry of apiBench) {
-      if (amatchBench.length >= 5) break;
-      const matched = findInNationalPool(entry);
-      if (matched) {
-        markUsed(matched);
-        amatchBench.push(matched);
-      }
-    }
-
-    for (const p of baseTeamPlayersFromStore) {
-      if (amatchBench.length >= 5) break;
-      if (!usedIds.has(p.id)) {
-        markUsed(p);
-        amatchBench.push(p);
-      }
-    }
-
-    return {
-      startingLineup: amatchStarters.slice(0, 11),
-      benchLineup: amatchBench.slice(0, 5),
-      formation,
-    };
-  }
+  const markUsed = (p: Player) => {
+    usedIds.add(p.id);
+    usedNames.add(p.name.trim());
+  };
 
   const teamSeed = hashSeed(`${match.id}-${activeTeam.id}-${side}`);
   const sidePoolOffset = side === "HOME" ? 0 : 5;
 
-  const buildSlotPlayer = (
+  // Build candidate pool for starting 11:
+  // 1) Resolve explicit apiLineup entries against storePlayers (or build temporary candidate if not yet in store)
+  // 2) Append any remaining baseTeamPlayersFromStore so club/national team stars are available for slot matching
+  const starterCandidates: Player[] = [];
+  const seenCandidateIds = new Set<string>();
+
+  const findStorePlayerForEntry = (
+    entry: ApiLineupPlayer
+  ): Player | undefined => {
+    const entryId = entry.id !== undefined ? String(entry.id) : "";
+    const extId =
+      entry.externalId !== undefined ? String(entry.externalId) : "";
+    const entryNameTrimmed = (entry.name || "").trim();
+
+    return (
+      baseTeamPlayersFromStore.find(
+        (p) =>
+          (entryId && p.id === entryId) ||
+          (extId && (p.id === extId || p.id === `api-p-${extId}`)) ||
+          (entryNameTrimmed && p.name.trim() === entryNameTrimmed) ||
+          (entryNameTrimmed &&
+            p.englishName.trim().toLowerCase() ===
+              entryNameTrimmed.toLowerCase())
+      ) ??
+      (!isAMatch
+        ? storePlayers.find(
+            (p) =>
+              !p.id.startsWith("pitch-") &&
+              ((entryId && p.id === entryId) ||
+                (extId && (p.id === extId || p.id === `api-p-${extId}`)))
+          )
+        : undefined)
+    );
+  };
+
+  apiLineup.forEach((entry, idx) => {
+    const matched = findStorePlayerForEntry(entry);
+    if (matched) {
+      // If entry explicitly specifies a DetailedPosition for this match, respect it if compatible with player's line
+      const entryPos = entry.position
+        ? normalizeDetailedPosition(entry.position)
+        : normalizeDetailedPosition(matched.position);
+      const matchedPos = normalizeDetailedPosition(matched.position);
+      const effectivePosition =
+        getPositionLine(entryPos) === getPositionLine(matchedPos)
+          ? entryPos
+          : matchedPos;
+
+      const candidate: Player =
+        effectivePosition !== matched.position
+          ? { ...matched, position: effectivePosition }
+          : matched;
+
+      if (!seenCandidateIds.has(candidate.id)) {
+        seenCandidateIds.add(candidate.id);
+        starterCandidates.push(candidate);
+      }
+      return;
+    }
+
+    if (!isAMatch && entry && entry.name) {
+      const normalizedPos = normalizeDetailedPosition(entry.position);
+      const pool = FALLBACK_POOL_BY_POSITION[normalizedPos];
+      const basePrice = roundToTen(
+        pool.basePriceSeed + ((teamSeed + idx * 17) % 8) * 100
+      );
+      const deltaPct = (((teamSeed + idx * 7) % 13) - 6) * 0.008;
+      const currentPrice = clampToPriceLimit(
+        basePrice * (1 + deltaPct),
+        basePrice
+      );
+      const tierCfg = getTierConfig(basePrice);
+      const tempId =
+        entry.id !== undefined
+          ? String(entry.id)
+          : `pitch-api-${match.id}-${activeTeam.id}-${idx}`;
+
+      if (!seenCandidateIds.has(tempId)) {
+        seenCandidateIds.add(tempId);
+        starterCandidates.push({
+          id: tempId,
+          name: entry.name.trim(),
+          englishName: entry.name.trim(),
+          nationalTeam: entry.nationalTeam || activeTeam.name,
+          matchId: match.id,
+          teamId: activeTeam.id,
+          teamName: entry.team || activeTeam.name,
+          teamShort: activeTeam.shortName,
+          teamColor: activeTeam.color,
+          position: normalizedPos,
+          backNumber: entry.shirtNumber || pool.defaultBackNumber,
+          tier: tierCfg.tier,
+          totalShares: tierCfg.totalShares,
+          marketSupply: tierCfg.marketSupply,
+          basePrice,
+          initialPrice: basePrice,
+          currentPrice,
+          previousPrice: basePrice,
+          priceHistory: buildSparklineHistory(
+            basePrice,
+            currentPrice,
+            teamSeed + idx
+          ),
+          lastEvent: {
+            text: "⚡ 포지션 정상 소화 · 실시간 시세 거래 가능",
+            sentiment: currentPrice >= basePrice ? "positive" : "neutral",
+            minute: match.minute ?? 45,
+          },
+          stats: {
+            rating: Number(
+              (6.5 + ((teamSeed + idx * 11) % 14) * 0.1).toFixed(1)
+            ),
+            goals: 0,
+            assists: 0,
+            shotsOnTarget: 1,
+            keyPasses: 1,
+          },
+        });
+      }
+    }
+  });
+
+  // Also include all baseTeamPlayersFromStore in the candidate pool (so if apiLineup is absent or partial, real players are matched to their true positions)
+  for (const baseP of baseTeamPlayersFromStore) {
+    if (!seenCandidateIds.has(baseP.id)) {
+      seenCandidateIds.add(baseP.id);
+      starterCandidates.push({
+        ...baseP,
+        position: normalizeDetailedPosition(baseP.position),
+      });
+    }
+  }
+
+  // Select the 11 fixed slots for the active formation ("4-3-3" or "4-2-3-1")
+  const formationSlots: FormationSlotSpec[] =
+    formation === "4-2-3-1" ? FORMATION_4231_SLOTS : FORMATION_433_SLOTS;
+
+  const assignedStarters: Array<Player | null> = new Array(
+    formationSlots.length
+  ).fill(null);
+
+  // PASS 1 (1순위 — 정확 매칭): player.position === slot.slotPosition
+  formationSlots.forEach((slot, slotIdx) => {
+    const exactCandidate = starterCandidates.find((p) => {
+      if (usedIds.has(p.id) || usedNames.has(p.name.trim())) return false;
+      const pPos = normalizeDetailedPosition(p.position);
+      return (
+        pPos === slot.slotPosition &&
+        isPositionAllowedInSlot(pPos, slot.slotPosition)
+      );
+    });
+
+    if (exactCandidate) {
+      markUsed(exactCandidate);
+      assignedStarters[slotIdx] = exactCandidate;
+    }
+  });
+
+  // PASS 2 (2순위 — 동일 라인/인접 포지션 보완 + 절대 금지 구역 침범 가드)
+  formationSlots.forEach((slot, slotIdx) => {
+    if (assignedStarters[slotIdx]) return;
+
+    for (const compatPos of slot.compatiblePositions) {
+      if (!isPositionAllowedInSlot(compatPos, slot.slotPosition)) continue;
+
+      const compatibleCandidate = starterCandidates.find((p) => {
+        if (usedIds.has(p.id) || usedNames.has(p.name.trim())) return false;
+        const pPos = normalizeDetailedPosition(p.position);
+        return (
+          pPos === compatPos && isPositionAllowedInSlot(pPos, slot.slotPosition)
+        );
+      });
+
+      if (compatibleCandidate) {
+        markUsed(compatibleCandidate);
+        assignedStarters[slotIdx] = compatibleCandidate;
+        break;
+      }
+    }
+  });
+
+  // Helper to build a synthetic role-matched slot player (Pass 3 fallback when team has fewer than 11 players in store)
+  const buildSyntheticForSlot = (
     slot: RosterSlot,
     slotIdx: number,
     isBench: boolean
   ): Player => {
-    const apiSourceList = isBench ? apiBench : apiLineup;
-    const apiEntry = apiSourceList[slotIdx];
-
-    // 0. If API lineup/bench entry exists, prioritize matching the synced store player by ID/externalId/name
-    if (apiEntry) {
-      const entryId = apiEntry.id !== undefined ? String(apiEntry.id) : "";
-      const extId =
-        apiEntry.externalId !== undefined ? String(apiEntry.externalId) : "";
-      const matchedByEntry =
-        baseTeamPlayersFromStore.find(
-          (p) =>
-            !usedIds.has(p.id) &&
-            ((entryId && p.id === entryId) ||
-              (extId && (p.id === extId || p.id === `api-p-${extId}`)) ||
-              apiEntry.name === p.name ||
-              p.englishName.toLowerCase() === apiEntry.name.toLowerCase())
-        ) ??
-        storePlayers.find(
-          (p) =>
-            !p.id.startsWith("pitch-") &&
-            !usedIds.has(p.id) &&
-            ((entryId && p.id === entryId) ||
-              (extId && (p.id === extId || p.id === `api-p-${extId}`)))
-        );
-      if (matchedByEntry) {
-        usedIds.add(matchedByEntry.id);
-        usedNames.add(matchedByEntry.name);
-        return matchedByEntry;
-      }
-    }
-
     const synId = `pitch-${match.id}-${activeTeam.id}-${
       isBench ? "bench" : "start"
     }-${slotIdx}`;
 
-    // 1. If this exact slot player was already registered into Zustand store, use its live store state
+    // If this exact slot player was already registered into Zustand store AND its position is allowed in this slot, reuse its live store state
     const existingSynInStore = storePlayers.find((p) => p.id === synId);
-    if (existingSynInStore && !usedIds.has(existingSynInStore.id)) {
-      usedIds.add(existingSynInStore.id);
-      usedNames.add(existingSynInStore.name);
-      return existingSynInStore;
+    if (
+      existingSynInStore &&
+      !usedIds.has(existingSynInStore.id) &&
+      (isBench ||
+        isPositionAllowedInSlot(existingSynInStore.position, slot.role))
+    ) {
+      markUsed(existingSynInStore);
+      return {
+        ...existingSynInStore,
+        position: slot.role,
+      };
     }
 
-    // 2. Fallback guard when API lineup is empty: check registered store players for this club/team
-    const existingBase =
-      baseTeamPlayersFromStore.find(
-        (p) =>
-          p.position === slot.role &&
-          !usedIds.has(p.id) &&
-          !usedNames.has(p.name)
-      ) ??
-      baseTeamPlayersFromStore.find(
-        (p) => !usedIds.has(p.id) && !usedNames.has(p.name)
-      );
-    if (existingBase) {
-      usedIds.add(existingBase.id);
-      usedNames.add(existingBase.name);
-      return existingBase;
-    }
-
-    // Pick a unique fallback name from the side's pool (0..4 for HOME, 5..9 for AWAY)
     const poolSize = Math.min(5, slot.fallbackKoLastNames.length);
     let candidateIdx =
       sidePoolOffset + ((teamSeed + slotIdx) % Math.max(1, poolSize));
@@ -767,10 +1012,9 @@ export function buildTeamLineupForMatch(
       candidateIdx = candidateIdx % slot.fallbackKoLastNames.length;
     }
 
-    let koName = apiEntry?.name || slot.fallbackKoLastNames[candidateIdx];
-    let enName = apiEntry?.name || slot.fallbackEnLastNames[candidateIdx];
+    let koName = slot.fallbackKoLastNames[candidateIdx];
+    let enName = slot.fallbackEnLastNames[candidateIdx];
 
-    // Ensure no duplicate name within the same team's roster
     if (usedNames.has(koName)) {
       for (let k = 0; k < slot.fallbackKoLastNames.length; k++) {
         const altKo = slot.fallbackKoLastNames[k];
@@ -785,13 +1029,9 @@ export function buildTeamLineupForMatch(
     usedIds.add(synId);
     usedNames.add(koName);
 
-    const backNumber = apiEntry?.shirtNumber || slot.defaultBackNumber;
-
-    // Auto-map virtual rating between 6.2 and 7.8
     const virtualRating = Number(
-      (6.2 + ((teamSeed + slotIdx * 11) % 17) * 0.1).toFixed(1)
+      (6.4 + ((teamSeed + slotIdx * 11) % 15) * 0.1).toFixed(1)
     );
-
     const basePrice = roundToTen(
       slot.basePriceSeed + ((teamSeed + slotIdx * 17) % 8) * 100
     );
@@ -800,8 +1040,6 @@ export function buildTeamLineupForMatch(
       basePrice * (1 + deltaPct),
       basePrice
     );
-
-    // Use Single Source of Truth getTierConfig(basePrice)
     const tierCfg = getTierConfig(basePrice);
 
     return {
@@ -815,7 +1053,7 @@ export function buildTeamLineupForMatch(
       teamShort: activeTeam.shortName,
       teamColor: activeTeam.color,
       position: slot.role,
-      backNumber,
+      backNumber: slot.defaultBackNumber,
       tier: tierCfg.tier,
       totalShares: tierCfg.totalShares,
       marketSupply: tierCfg.marketSupply,
@@ -845,13 +1083,58 @@ export function buildTeamLineupForMatch(
     };
   };
 
-  // Hard cap at 11 starters and 5 bench players via .slice(0, 11) and .slice(0, 5)
-  const starters = STARTING_11_TEMPLATE.slice(0, 11).map((slot, idx) =>
-    buildSlotPlayer(slot, idx, false)
-  );
-  const bench = BENCH_5_TEMPLATE.slice(0, 5).map((slot, idx) =>
-    buildSlotPlayer(slot, idx, true)
-  );
+  // PASS 3: Fill any still-unassigned starter slots with role-specific fallback players (never violating zone guard)
+  const starters: Player[] = formationSlots.map((slot, slotIdx) => {
+    const matched = assignedStarters[slotIdx];
+    if (matched) return matched;
+
+    return buildSyntheticForSlot(
+      {
+        role: slot.slotPosition,
+        defaultBackNumber: slot.defaultBackNumber,
+        fallbackKoLastNames: slot.fallbackKoLastNames,
+        fallbackEnLastNames: slot.fallbackEnLastNames,
+        basePriceSeed: slot.basePriceSeed,
+      },
+      slotIdx,
+      false
+    );
+  });
+
+  // Build 5-player bench:
+  // 1) Explicit apiBench matches
+  // 2) Remaining unused baseTeamPlayersFromStore
+  // 3) Role-specific bench fallback (for club teams with < 16 store players)
+  const bench: Player[] = [];
+  for (const entry of apiBench) {
+    if (bench.length >= 5) break;
+    const matched = findStorePlayerForEntry(entry);
+    if (matched && !usedIds.has(matched.id) && !usedNames.has(matched.name.trim())) {
+      markUsed(matched);
+      bench.push({
+        ...matched,
+        position: normalizeDetailedPosition(entry.position || matched.position),
+      });
+    }
+  }
+
+  for (const baseP of baseTeamPlayersFromStore) {
+    if (bench.length >= 5) break;
+    if (!usedIds.has(baseP.id) && !usedNames.has(baseP.name.trim())) {
+      markUsed(baseP);
+      bench.push({
+        ...baseP,
+        position: normalizeDetailedPosition(baseP.position),
+      });
+    }
+  }
+
+  if (!isAMatch && bench.length < 5) {
+    for (let idx = bench.length; idx < 5; idx++) {
+      const slot = BENCH_5_TEMPLATE[idx];
+      bench.push(buildSyntheticForSlot(slot, idx, true));
+    }
+  }
 
   return {
     startingLineup: starters.slice(0, 11),
@@ -936,30 +1219,31 @@ export default function FormationPitchModal({
     }
 
     if (formationLabel === "4-2-3-1") {
+      // Exact slot mapping for FORMATION_4231_SLOTS (left -> right):
+      // [0]: ST
+      // [1..3]: LAM, CAM, RAM
+      // [4..5]: DM, DM
+      // [6..9]: LB, CB, CB, RB
+      // [10]: GK
       return [
-        [capped[1]], // Striker (#9)
-        [capped[0], capped[3], capped[2]], // LW, CAM, RW
-        [capped[4], capped[5]], // Double Pivot
-        [capped[6], capped[7], capped[8], capped[9]], // Back 4
-        [capped[10]], // GK
+        [capped[0]], // [ST]
+        [capped[1], capped[2], capped[3]], // [LAM, CAM, RAM]
+        [capped[4], capped[5]], // [DM, DM]
+        [capped[6], capped[7], capped[8], capped[9]], // [LB, CB, CB, RB]
+        [capped[10]], // [GK]
       ];
     }
 
-    if (formationLabel === "4-4-2") {
-      return [
-        [capped[0], capped[1]], // 2 FW
-        [capped[2], capped[3], capped[4], capped[5]], // 4 MF
-        [capped[6], capped[7], capped[8], capped[9]], // 4 DF
-        [capped[10]], // 1 GK
-      ];
-    }
-
-    // Default 4-3-3 (3 FW + 3 MF + 4 DF + 1 GK = 11)
+    // Exact slot mapping for FORMATION_433_SLOTS (left -> right):
+    // [0..2]: LW, ST, RW
+    // [3..5]: CM, CM, CM
+    // [6..9]: LB, CB, CB, RB
+    // [10]: GK
     return [
-      [capped[0], capped[1], capped[2]], // 3 FW
-      [capped[3], capped[4], capped[5]], // 3 MF
-      [capped[6], capped[7], capped[8], capped[9]], // 4 DF
-      [capped[10]], // 1 GK
+      [capped[0], capped[1], capped[2]], // [LW, ST, RW]
+      [capped[3], capped[4], capped[5]], // [CM, CM, CM]
+      [capped[6], capped[7], capped[8], capped[9]], // [LB, CB, CB, RB]
+      [capped[10]], // [GK]
     ];
   }, [startingPlayers, formationLabel]);
 
@@ -1025,7 +1309,7 @@ export default function FormationPitchModal({
               />
               <span className="truncate">{match.homeTeam.name}</span>
               <span className="font-mono text-[10px] text-gray-400">
-                ({match.homeTeam.formation || "4-3-3"})
+                ({normalizeSupportedFormation(match.homeTeam.formation, "HOME")})
               </span>
             </button>
 
@@ -1044,7 +1328,7 @@ export default function FormationPitchModal({
               />
               <span className="truncate">{match.awayTeam.name}</span>
               <span className="font-mono text-[10px] text-gray-400">
-                ({match.awayTeam.formation || "4-2-3-1"})
+                ({normalizeSupportedFormation(match.awayTeam.formation, "AWAY")})
               </span>
             </button>
           </div>
@@ -1163,9 +1447,12 @@ export default function FormationPitchModal({
                               )}
                             </div>
 
-                            {/* Player Last Name */}
-                            <span className="mt-1 rounded-md bg-black/45 px-1.5 py-0.5 text-[11px] font-extrabold text-white backdrop-blur-[2px]">
-                              {extractLastName(player)}
+                            {/* Player Last Name + DetailedPosition Tag */}
+                            <span className="mt-1 flex items-center gap-1 rounded-md bg-black/45 px-1.5 py-0.5 text-[11px] font-extrabold text-white backdrop-blur-[2px]">
+                              <span className="font-mono text-[9px] font-black text-emerald-300">
+                                {player.position}
+                              </span>
+                              <span>{extractLastName(player)}</span>
                             </span>
 
                             {/* Mini Live Price Chip: e.g. 16,400P ▲9.3% */}

@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ApiLineupPlayer, Match, MatchStatus, Position } from "@/types";
+import {
+  ApiLineupPlayer,
+  Match,
+  MatchStatus,
+  Position,
+  normalizeDetailedPosition,
+} from "@/types";
 import {
   INITIAL_MATCHES,
   NATIONAL_TEAM_DUMMY_MATCHES,
@@ -119,31 +125,48 @@ function mapApiStatus(rawStatus: string): MatchStatus {
   return "UPCOMING";
 }
 
-function normalizePosition(rawPos?: string): Position {
-  if (!rawPos) return "MF";
+function normalizeFormationCode(
+  rawFormation?: string,
+  fallback: "4-3-3" | "4-2-3-1" = "4-3-3"
+): "4-3-3" | "4-2-3-1" {
+  if (!rawFormation) return fallback;
+  const cleaned = rawFormation.trim();
+  if (cleaned === "4-2-3-1") return "4-2-3-1";
+  if (cleaned === "4-3-3") return "4-3-3";
+  return fallback;
+}
+
+function normalizePosition(
+  rawPos?: string,
+  dfCounter = 0,
+  mfCounter = 0,
+  fwCounter = 0
+): Position {
+  if (!rawPos) return "CM";
   const upper = rawPos.trim().toUpperCase();
-  if (upper === "GK" || upper.includes("GOALKEEPER") || upper.includes("KEEPER")) {
-    return "GK";
+
+  // If rawPos is generic "DF" / "DEFENCE" / "DEFENDER", distribute across LB, CB, CB, RB
+  if (upper === "DF" || upper === "DEFENCE" || upper === "DEFENDER") {
+    const dfCycle: Position[] = ["LB", "CB", "CB", "RB"];
+    return dfCycle[dfCounter % dfCycle.length];
   }
-  if (
-    upper === "DF" ||
-    upper.includes("DEFENCE") ||
-    upper.includes("DEFENDER") ||
-    upper.includes("BACK")
-  ) {
-    return "DF";
+  // If rawPos is generic "MF" / "MIDFIELD" / "MIDFIELDER", distribute across CM, DM, CAM
+  if (upper === "MF" || upper === "MIDFIELD" || upper === "MIDFIELDER") {
+    const mfCycle: Position[] = ["CM", "DM", "CAM", "LAM", "RAM"];
+    return mfCycle[mfCounter % mfCycle.length];
   }
+  // If rawPos is generic "FW" / "OFFENCE" / "FORWARD" / "ATTACK", distribute across LW, ST, RW
   if (
     upper === "FW" ||
-    upper.includes("OFFENCE") ||
-    upper.includes("FORWARD") ||
-    upper.includes("ATTACK") ||
-    upper.includes("WINGER") ||
-    upper.includes("STRIKER")
+    upper === "OFFENCE" ||
+    upper === "FORWARD" ||
+    upper === "ATTACK"
   ) {
-    return "FW";
+    const fwCycle: Position[] = ["LW", "ST", "RW"];
+    return fwCycle[fwCounter % fwCycle.length];
   }
-  return "MF";
+
+  return normalizeDetailedPosition(rawPos);
 }
 
 function calculatePlayerAge(dateOfBirth?: string, rawAge?: number): number | undefined {
@@ -169,6 +192,10 @@ function normalizeLineupPlayers(
 ): ApiLineupPlayer[] | undefined {
   if (!Array.isArray(rawList) || rawList.length === 0) return undefined;
 
+  let dfCount = 0;
+  let mfCount = 0;
+  let fwCount = 0;
+
   return rawList.map((raw: Record<string, any>, idx: number) => {
     const rawId = raw.id ?? raw.externalId;
     const rawName = String(raw.name || `선수 ${idx + 1}`).trim();
@@ -185,7 +212,29 @@ function normalizeLineupPlayers(
         ? String(rawId)
         : `api-p-${externalId}`;
 
-    const position = normalizePosition(raw.position);
+    const upperRawPos = String(raw.position || "").trim().toUpperCase();
+    const position = normalizePosition(raw.position, dfCount, mfCount, fwCount);
+    if (
+      upperRawPos === "DF" ||
+      upperRawPos === "DEFENCE" ||
+      upperRawPos === "DEFENDER"
+    ) {
+      dfCount++;
+    } else if (
+      upperRawPos === "MF" ||
+      upperRawPos === "MIDFIELD" ||
+      upperRawPos === "MIDFIELDER"
+    ) {
+      mfCount++;
+    } else if (
+      upperRawPos === "FW" ||
+      upperRawPos === "OFFENCE" ||
+      upperRawPos === "FORWARD" ||
+      upperRawPos === "ATTACK"
+    ) {
+      fwCount++;
+    }
+
     const clubOrTeamName = String(
       raw.team || raw.currentTeam?.name || teamName
     ).trim();
@@ -221,6 +270,7 @@ function enrichMatchMetadata(match: Match, defaultInternational = false): Match 
     isInternational,
     homeTeam: {
       ...match.homeTeam,
+      formation: normalizeFormationCode(match.homeTeam.formation, "4-3-3"),
       lineup: normalizeLineupPlayers(
         match.homeTeam.lineup,
         match.homeTeam.name,
@@ -234,6 +284,7 @@ function enrichMatchMetadata(match: Match, defaultInternational = false): Match 
     },
     awayTeam: {
       ...match.awayTeam,
+      formation: normalizeFormationCode(match.awayTeam.formation, "4-2-3-1"),
       lineup: normalizeLineupPlayers(
         match.awayTeam.lineup,
         match.awayTeam.name,
@@ -465,7 +516,7 @@ export async function GET(request: NextRequest) {
           color: getColorForId(m.homeTeam?.id || homeTla),
           crest: m.homeTeam?.crest || undefined,
           score: homeScore ?? undefined,
-          formation: m.homeTeam?.formation || "4-3-3",
+          formation: normalizeFormationCode(m.homeTeam?.formation, "4-3-3"),
           lineup: normalizeLineupPlayers(
             m.homeTeam?.lineup,
             homeTeamName,
@@ -484,7 +535,7 @@ export async function GET(request: NextRequest) {
           color: getColorForId(m.awayTeam?.id || awayTla),
           crest: m.awayTeam?.crest || undefined,
           score: awayScore ?? undefined,
-          formation: m.awayTeam?.formation || "4-2-3-1",
+          formation: normalizeFormationCode(m.awayTeam?.formation, "4-2-3-1"),
           lineup: normalizeLineupPlayers(
             m.awayTeam?.lineup,
             awayTeamName,

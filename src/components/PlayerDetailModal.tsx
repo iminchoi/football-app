@@ -18,7 +18,11 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from "recharts";
-import { Player } from "@/types";
+import {
+  Player,
+  getPositionLine,
+  normalizeDetailedPosition,
+} from "@/types";
 import {
   PLAYER_DETAILED_PROFILES,
   PlayerDetailedProfile,
@@ -52,14 +56,19 @@ function getRolePitchCoords(roleLabel: string): { x: number; y: number } {
     case "RW":
     case "RF":
       return { x: 78, y: 24 };
+    case "LAM":
+      return { x: 26, y: 38 };
     case "CAM":
       return { x: 50, y: 38 };
+    case "RAM":
+      return { x: 74, y: 38 };
     case "LM":
       return { x: 22, y: 46 };
     case "RM":
       return { x: 78, y: 46 };
     case "CM":
       return { x: 50, y: 52 };
+    case "DM":
     case "CDM":
       return { x: 50, y: 64 };
     case "LB":
@@ -164,7 +173,8 @@ function buildDetailedProfileForPlayer(player: Player): PlayerDetailedProfile {
   }
 
   const seed = hashSeed(`${player.id}-${player.name}`);
-  const pos = player.position;
+  const detailedPos = normalizeDetailedPosition(player.position);
+  const pos = getPositionLine(detailedPos);
   const ratingBase = player.stats?.rating ?? 7.3;
 
   // Height, Age, Foot, Nationality, Contract
@@ -187,45 +197,27 @@ function buildDetailedProfileForPlayer(player: Player): PlayerDetailedProfile {
 
   const nationality =
     NATIONALITY_BY_NAME[player.name] ||
+    (player.nationalTeam ? `🌍 ${player.nationalTeam}` : "") ||
     FALLBACK_NATIONALITIES[seed % FALLBACK_NATIONALITIES.length];
 
   const contractYear = 2027 + (seed % 4);
 
-  // Primary & Secondary Role Labels for Mini Pitch
-  let primaryRoleLabel = "CM";
-  let secondaryRoleLabels: string[] = ["CAM"];
+  // Primary & Secondary Role Labels for Mini Pitch (directly honoring player.position DetailedPosition)
+  const primaryRoleLabel = detailedPos;
+  let secondaryRoleLabels: string[] = [];
 
-  if (pos === "FW") {
-    const fwRoles = [
-      { primary: "ST", secondary: ["LW", "RW"] },
-      { primary: "LW", secondary: ["ST", "LM"] },
-      { primary: "RW", secondary: ["ST", "CAM"] },
-    ];
-    const picked = fwRoles[seed % fwRoles.length];
-    primaryRoleLabel = picked.primary;
-    secondaryRoleLabels = picked.secondary;
-  } else if (pos === "MF") {
-    const mfRoles = [
-      { primary: "CAM", secondary: ["CM", "RW"] },
-      { primary: "CM", secondary: ["CDM", "CAM"] },
-      { primary: "CDM", secondary: ["CM"] },
-    ];
-    const picked = mfRoles[seed % mfRoles.length];
-    primaryRoleLabel = picked.primary;
-    secondaryRoleLabels = picked.secondary;
-  } else if (pos === "DF") {
-    const dfRoles = [
-      { primary: "CB", secondary: ["LCB", "RCB"] },
-      { primary: "RB", secondary: ["RM"] },
-      { primary: "LB", secondary: ["LM"] },
-    ];
-    const picked = dfRoles[seed % dfRoles.length];
-    primaryRoleLabel = picked.primary;
-    secondaryRoleLabels = picked.secondary;
-  } else {
-    primaryRoleLabel = "GK";
-    secondaryRoleLabels = [];
-  }
+  if (detailedPos === "ST") secondaryRoleLabels = ["LW", "RW"];
+  else if (detailedPos === "LW") secondaryRoleLabels = ["LAM", "ST"];
+  else if (detailedPos === "RW") secondaryRoleLabels = ["RAM", "ST"];
+  else if (detailedPos === "LAM") secondaryRoleLabels = ["LW", "CAM"];
+  else if (detailedPos === "CAM") secondaryRoleLabels = ["CM", "LAM", "RAM"];
+  else if (detailedPos === "RAM") secondaryRoleLabels = ["RW", "CAM"];
+  else if (detailedPos === "CM") secondaryRoleLabels = ["DM", "CAM"];
+  else if (detailedPos === "DM") secondaryRoleLabels = ["CM"];
+  else if (detailedPos === "LB") secondaryRoleLabels = ["CB"];
+  else if (detailedPos === "RB") secondaryRoleLabels = ["CB"];
+  else if (detailedPos === "CB") secondaryRoleLabels = ["LCB", "RCB"];
+  else secondaryRoleLabels = [];
 
   // Radar Chart Percentiles (0 ~ 100%)
   const radarStats =

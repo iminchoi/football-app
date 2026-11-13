@@ -20,7 +20,7 @@ import {
   clampToPriceLimit,
 } from "@/store/useTradeStore";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
-import { Player, TradeType } from "@/types";
+import { Player, TradeType, getPositionLine } from "@/types";
 import PlayerDetailModal from "@/components/PlayerDetailModal";
 
 interface TradeBottomSheetProps {
@@ -193,7 +193,7 @@ function buildPeriodSeries(
 // Build 3-line real-time match event timeline tailored to position & player state
 function buildPlayerEventTimeline(player: Player): TimelineEventItem[] {
   const seed = Math.round(seededNoise(player.id, 77) * 100);
-  const pos = player.position;
+  const pos = getPositionLine(player.position);
   const goals = player.stats?.goals ?? 0;
   const assists = player.stats?.assists ?? 0;
 
@@ -310,7 +310,7 @@ function buildPlayerEventTimeline(player: Player): TimelineEventItem[] {
 // Build FotMob-style horizontal gauge bar stats (7 rows per position)
 function buildFotMobStats(player: Player): FotMobStatBarItem[] {
   const seed = Math.round(seededNoise(player.id, 99) * 100);
-  const pos = player.position;
+  const pos = getPositionLine(player.position);
   const goals = player.stats?.goals ?? 0;
   const assists = player.stats?.assists ?? 0;
 
