@@ -11,7 +11,6 @@ import {
   ShoppingBag,
   CheckCircle2,
   AlertCircle,
-  Zap,
   BarChart3,
   Star,
 } from "lucide-react";
@@ -21,6 +20,13 @@ import {
   clampToPriceLimit,
   normalizeAccountKey,
 } from "@/store/useTradeStore";
+import {
+  calculateChangePercentFromOpen,
+  calculateDiffFromOpen,
+  derivePlayerMarketData,
+  extractInitialMatchEvents,
+  resolvePlayerMatchContext,
+} from "@/utils/priceEngine";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
 import { Player, TradeType, getPositionLine } from "@/types";
 import PlayerDetailModal from "@/components/PlayerDetailModal";
@@ -39,14 +45,6 @@ type ChartPeriod = "TICK" | "1M" | "1D" | "1W" | "1M_MONTH";
 interface PeriodPoint {
   timeLabel: string;
   price: number;
-}
-
-interface TimelineEventItem {
-  minuteLabel: string;
-  icon: string;
-  title: string;
-  rateLabel: string;
-  badgeStyle: string;
 }
 
 type StatGaugeTier = "HIGH" | "MID" | "LOW";
@@ -192,123 +190,6 @@ function buildPeriodSeries(
     );
     return { timeLabel: mLabel, price: cursor };
   });
-}
-
-// Build 3-line real-time match event timeline tailored to position & player state
-function buildPlayerEventTimeline(player: Player): TimelineEventItem[] {
-  const seed = Math.round(seededNoise(player.id, 77) * 100);
-  const pos = getPositionLine(player.position);
-  const goals = player.stats?.goals ?? 0;
-  const assists = player.stats?.assists ?? 0;
-
-  if (pos === "GK") {
-    return [
-      {
-        minuteLabel: `${62 + (seed % 18)}'`,
-        icon: "🧤",
-        title: "박스 안 결정적 슈퍼세이브",
-        rateLabel: "+3.5%",
-        badgeStyle: "bg-emerald-50 text-[#00985f] border border-emerald-200",
-      },
-      {
-        minuteLabel: `${38 + (seed % 15)}'`,
-        icon: "🎯",
-        title: "역습 기점 정확한 롱킥 연결",
-        rateLabel: "+1.2%",
-        badgeStyle: "bg-blue-50 text-blue-600 border border-blue-200",
-      },
-      {
-        minuteLabel: `${14 + (seed % 12)}'`,
-        icon: "🛡️",
-        title: "코너킥 공중볼 안정적 캐칭",
-        rateLabel: "+0.8%",
-        badgeStyle: "bg-gray-100 text-gray-700 border border-gray-200",
-      },
-    ];
-  }
-
-  if (pos === "DF") {
-    return [
-      {
-        minuteLabel: `${67 + (seed % 15)}'`,
-        icon: "🛡️",
-        title: "페널티박스 결정적 태클 차단",
-        rateLabel: "+2.8%",
-        badgeStyle: "bg-emerald-50 text-[#00985f] border border-emerald-200",
-      },
-      {
-        minuteLabel: `${41 + (seed % 14)}'`,
-        icon: "👟",
-        title: "전방 침투 패스 인터셉트",
-        rateLabel: "+1.5%",
-        badgeStyle: "bg-blue-50 text-blue-600 border border-blue-200",
-      },
-      {
-        minuteLabel: `${19 + (seed % 10)}'`,
-        icon: "⚡",
-        title: "공중볼 경합 승리 후 빌드업",
-        rateLabel: "+1.0%",
-        badgeStyle: "bg-gray-100 text-gray-700 border border-gray-200",
-      },
-    ];
-  }
-
-  if (pos === "MF") {
-    return [
-      {
-        minuteLabel: `${58 + (seed % 20)}'`,
-        icon: assists > 0 ? "🅰️" : "👟",
-        title:
-          assists > 0
-            ? "결정적 스루패스 어시스트 기록"
-            : "수비 라인 허무는 핵심 키패스",
-        rateLabel: assists > 0 ? "+5.0%" : "+1.8%",
-        badgeStyle: "bg-emerald-50 text-[#00985f] border border-emerald-200",
-      },
-      {
-        minuteLabel: `${34 + (seed % 12)}'`,
-        icon: "🎯",
-        title: "아크 정면 날카로운 유효슈팅",
-        rateLabel: "+1.5%",
-        badgeStyle: "bg-blue-50 text-blue-600 border border-blue-200",
-      },
-      {
-        minuteLabel: `${15 + (seed % 10)}'`,
-        icon: "⚡",
-        title: "중원 탈압박 드리블 돌파 성공",
-        rateLabel: "+1.0%",
-        badgeStyle: "bg-gray-100 text-gray-700 border border-gray-200",
-      },
-    ];
-  }
-
-  // Default FW
-  return [
-    {
-      minuteLabel: `${24 + (seed % 35)}'`,
-      icon: "⚽",
-      title:
-        goals > 0
-          ? "골 득점 성공 (결정적 피니시)"
-          : "박스 안 위협적인 침투 슈팅",
-      rateLabel: goals > 0 ? "+8.0%" : "+2.4%",
-      badgeStyle: "bg-emerald-50 text-[#00985f] border border-emerald-200",
-    },
-    {
-      minuteLabel: `${18 + (seed % 10)}'`,
-      icon: "🎯",
-      title: "유효슈팅 (골문 구석 강슛)",
-      rateLabel: "+1.5%",
-      badgeStyle: "bg-blue-50 text-blue-600 border border-blue-200",
-    },
-    {
-      minuteLabel: `${11 + (seed % 6)}'`,
-      icon: "👟",
-      title: "동료 찬스 연결 키패스",
-      rateLabel: "+1.0%",
-      badgeStyle: "bg-gray-100 text-gray-700 border border-gray-200",
-    },
-  ];
 }
 
 // Build FotMob-style horizontal gauge bar stats (7 rows per position)
@@ -563,6 +444,7 @@ export default function TradeBottomSheet({
 }: TradeBottomSheetProps) {
   const user = useTradeStore((state) => state.user);
   const players = useTradeStore((state) => state.players);
+  const matches = useTradeStore((state) => state.matches);
   const cash = useTradeStore((state) => state.cash);
   const holdings = useTradeStore((state) => state.holdings);
   const accounts = useTradeStore((state) => state.accounts);
@@ -641,9 +523,33 @@ export default function TradeBottomSheet({
   const basePrice = roundToTen(
     player.basePrice ?? player.initialPrice ?? player.currentPrice
   );
-  const currentPrice = roundToTen(player.currentPrice);
-  const diffFromBase = currentPrice - basePrice;
-  const pctFromBase = basePrice > 0 ? (diffFromBase / basePrice) * 100 : 0;
+  const rawOpenPrice = roundToTen(
+    player.openPrice ?? player.priceHistory[0]?.price ?? basePrice
+  );
+  const ctx = resolvePlayerMatchContext(player, matches);
+  const fallbackSsot = derivePlayerMarketData({
+    playerId: player.id,
+    openPrice: rawOpenPrice,
+    basePrice,
+    events: extractInitialMatchEvents({
+      ...player,
+      openPrice: rawOpenPrice,
+      basePrice,
+    }),
+    currentMinute: ctx.minute,
+    matchStatus: ctx.status,
+  });
+
+  const openPrice = player.openPrice ?? fallbackSsot.openPrice;
+  const currentPrice = roundToTen(
+    player.currentPrice ?? fallbackSsot.currentPrice
+  );
+  const highPrice = player.highPrice ?? fallbackSsot.highPrice;
+  const lowPrice = player.lowPrice ?? fallbackSsot.lowPrice;
+  const volume = player.volume ?? fallbackSsot.volume;
+
+  const diffFromBase = calculateDiffFromOpen(currentPrice, openPrice);
+  const pctFromBase = calculateChangePercentFromOpen(currentPrice, openPrice);
 
   // Market supply & liquidity metrics (Single Source of Truth + Dynamic availableShares)
   const tierCfg = getTierConfig(basePrice);
@@ -676,6 +582,9 @@ export default function TradeBottomSheet({
 
   const maxCapPrice = roundToTen(basePrice * MAX_PRICE_MULTIPLIER);
   const minFloorPrice = roundToTen(basePrice * MIN_PRICE_MULTIPLIER);
+  const isAtUpperLimit = currentPrice >= maxCapPrice;
+  const isAtLowerLimit = currentPrice <= minFloorPrice;
+  const isBuyBlockedByCap = tradeType === "BUY" && isAtUpperLimit;
 
   // Period chart series
   const series = buildPeriodSeries(player, period);
@@ -685,8 +594,7 @@ export default function TradeBottomSheet({
     periodStartPrice > 0 ? (periodDiff / periodStartPrice) * 100 : 0;
   const isUp = period === "TICK" ? pctFromBase >= 0 : periodDiff >= 0;
 
-  // Timeline & 7-Row FotMob Gauge Stats
-  const timelineEvents = buildPlayerEventTimeline(player);
+  // 7-Row FotMob Gauge Stats
   const fotMobStats = buildFotMobStats(player);
 
   // Max purchasable or sellable quantity (capped by availableShares on BUY)
@@ -707,11 +615,11 @@ export default function TradeBottomSheet({
 
   const isBuySoldOut = tradeType === "BUY" && isSoldOut;
 
-  // Allow clicking confirm when unauthenticated (unless sold out on BUY) so Auth Guard can intercept & open AuthModal
-  const canExecute = isBuySoldOut
+  // When unauthenticated (user === null), button is always clickable to open AuthModal immediately
+  const canExecute = !user
+    ? true
+    : isBuyBlockedByCap || isBuySoldOut
     ? false
-    : !user
-    ? quantity >= 1
     : quantity >= 1 &&
       (tradeType === "BUY"
         ? totalAmount <= cash && quantity <= availableShares
@@ -979,10 +887,16 @@ export default function TradeBottomSheet({
                   {pctFromBase.toFixed(2)}%
                 </span>
               </div>
-              <p className="mt-0.5 font-mono text-[11px] text-gray-400">
-                기준가 {basePrice.toLocaleString()}P · 상한{" "}
-                {maxCapPrice.toLocaleString()}P / 하한{" "}
-                {minFloorPrice.toLocaleString()}P
+              <p className="mt-0.5 font-mono text-[11px] text-gray-500">
+                시가 {openPrice.toLocaleString()}P · 고가{" "}
+                <span className="text-[#00A878] font-bold">
+                  {highPrice.toLocaleString()}P
+                </span>{" "}
+                · 저가{" "}
+                <span className="text-[#F07868] font-bold">
+                  {lowPrice.toLocaleString()}P
+                </span>{" "}
+                · 거래량 {volume.toLocaleString()}주
               </p>
             </div>
 
@@ -1020,54 +934,15 @@ export default function TradeBottomSheet({
           </div>
         </div>
 
-        {/* Scrollable Middle Area: 0~90m Match Timeline Chart + Event Timeline + 7-Row FotMob Gauge Stats */}
+        {/* Scrollable Middle Area: 0~90m Match Timeline Chart + 7-Row FotMob Gauge Stats */}
         <div className="flex-1 overflow-y-auto px-5 py-2.5 space-y-2.5">
-          {/* A. 0~90 Minute Match Timeline Chart & Event Marker System */}
+          {/* A. 0~90 Minute Match Timeline Chart & Event Chips */}
           <MatchTimelineChart
             player={player}
             onOpenFullScreenCandle={() => setIsCandleModalOpen(true)}
           />
 
-          {/* B. Middle-Upper: Real-time Event Timeline (3-Line Feed) */}
-          <div className="bg-gray-50 border border-gray-100 rounded-xl p-2.5">
-            <div className="mb-1.5 flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <Zap className="h-3.5 w-3.5 text-[#00985f]" />
-                <span className="text-xs font-extrabold text-gray-800">
-                  실시간 경기 이벤트 타임라인
-                </span>
-              </div>
-              <span className="text-[10px] font-medium text-gray-400">
-                최근 시세 변동 요인
-              </span>
-            </div>
-
-            <div className="space-y-1">
-              {timelineEvents.map((ev, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-1 border border-gray-100 text-xs"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="w-7 shrink-0 font-mono text-[11px] font-bold text-gray-400">
-                      {ev.minuteLabel}
-                    </span>
-                    <span className="shrink-0 text-xs">{ev.icon}</span>
-                    <span className="truncate text-xs font-semibold text-gray-700">
-                      {ev.title}
-                    </span>
-                  </div>
-                  <span
-                    className={`shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[10px] font-extrabold ${ev.badgeStyle}`}
-                  >
-                    {ev.rateLabel}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* C. Middle-Lower: FotMob Style Horizontal Gauge Bar Stats (7 Rows) */}
+          {/* B. FotMob Style Horizontal Gauge Bar Stats (7 Rows) */}
           <div className="bg-gray-50 border border-gray-100 rounded-xl p-2.5">
             <div className="mb-2 flex items-center justify-between">
               <div className="flex items-center gap-1.5">
@@ -1215,7 +1090,7 @@ export default function TradeBottomSheet({
               <button
                 type="button"
                 onClick={() => handleAdjust(-1)}
-                disabled={isBuySoldOut || quantity <= 1}
+                disabled={isBuySoldOut || isBuyBlockedByCap || quantity <= 1}
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-700 transition hover:bg-gray-100 active:scale-95 disabled:opacity-40"
               >
                 <Minus className="h-3.5 w-3.5" />
@@ -1224,11 +1099,11 @@ export default function TradeBottomSheet({
               <div className="relative w-20 shrink-0">
                 <input
                   type="number"
-                  min={isBuySoldOut ? 0 : 1}
+                  min={isBuySoldOut || isBuyBlockedByCap ? 0 : 1}
                   max={tradeType === "BUY" ? availableShares : undefined}
                   step={1}
-                  disabled={isBuySoldOut}
-                  value={isBuySoldOut ? 0 : quantity}
+                  disabled={isBuySoldOut || isBuyBlockedByCap}
+                  value={isBuySoldOut || isBuyBlockedByCap ? 0 : quantity}
                   onChange={(e) => {
                     const v = parseInt(e.target.value, 10);
                     if (Number.isNaN(v) || v < 1) {
@@ -1261,7 +1136,11 @@ export default function TradeBottomSheet({
               <button
                 type="button"
                 onClick={() => handleAdjust(1)}
-                disabled={isBuySoldOut || (maxQty > 0 && quantity >= maxQty)}
+                disabled={
+                  isBuySoldOut ||
+                  isBuyBlockedByCap ||
+                  (maxQty > 0 && quantity >= maxQty)
+                }
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-700 transition hover:bg-gray-100 active:scale-95 disabled:opacity-40"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -1270,7 +1149,11 @@ export default function TradeBottomSheet({
               <button
                 type="button"
                 onClick={() => handleAdjust(5)}
-                disabled={isBuySoldOut || (maxQty > 0 && quantity >= maxQty)}
+                disabled={
+                  isBuySoldOut ||
+                  isBuyBlockedByCap ||
+                  (maxQty > 0 && quantity >= maxQty)
+                }
                 className="h-9 rounded-xl bg-[#f1f3f5] px-2.5 font-mono text-xs font-bold text-gray-700 transition hover:bg-gray-200 active:scale-95 disabled:opacity-40"
               >
                 +5
@@ -1279,7 +1162,7 @@ export default function TradeBottomSheet({
               <button
                 type="button"
                 onClick={handleSetMax}
-                disabled={isBuySoldOut || maxQty <= 0}
+                disabled={isBuySoldOut || isBuyBlockedByCap || maxQty <= 0}
                 className="h-9 rounded-xl bg-emerald-50 border border-emerald-200 px-2.5 font-mono text-xs font-extrabold text-[#00985f] transition hover:bg-emerald-100 active:scale-95 disabled:opacity-40"
               >
                 MAX
@@ -1331,6 +1214,20 @@ export default function TradeBottomSheet({
             </div>
           </div>
 
+          {/* Upper (+30%) / Lower (-30%) Price Limit Notice Banner */}
+          {isAtUpperLimit && (
+            <div className="flex items-center justify-between rounded-xl bg-rose-50 border border-rose-200 px-3 py-1.5 text-[11px] font-extrabold text-rose-600">
+              <span>🔥 상한가(+30%) 도달 — 추가 매수 불가 (매도만 가능)</span>
+              <span className="font-mono">{maxCapPrice.toLocaleString()}P</span>
+            </div>
+          )}
+          {isAtLowerLimit && (
+            <div className="flex items-center justify-between rounded-xl bg-sky-50 border border-sky-200 px-3 py-1.5 text-[11px] font-extrabold text-sky-700">
+              <span>❄️ 하한가(-30%) 도달 — 가격 하한선 보호 적용 중</span>
+              <span className="font-mono">{minFloorPrice.toLocaleString()}P</span>
+            </div>
+          )}
+
           {/* Error Alert (when order fails) */}
           {feedback && feedback.type === "error" && (
             <div className="flex items-center gap-2 rounded-xl bg-rose-50 border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600">
@@ -1339,19 +1236,25 @@ export default function TradeBottomSheet({
             </div>
           )}
 
-          {/* [매수/매도 확정 버튼] with Sold-out Guard & Auth Guard */}
+          {/* [매수/매도 확정 버튼] with Upper-Limit Guard, Sold-out Guard & Auth Guard */}
           <button
             type="submit"
             disabled={!canExecute}
             className={`w-full rounded-2xl py-3 text-sm font-extrabold text-white shadow-md transition-transform active:scale-95 ${
-              !canExecute
+              !user
+                ? "bg-gray-900 hover:bg-gray-800"
+                : !canExecute
                 ? "cursor-not-allowed bg-gray-300 text-gray-500 shadow-none"
                 : tradeType === "BUY"
                 ? "bg-[#00A878] hover:opacity-95"
                 : "bg-[#F07868] hover:opacity-95"
             }`}
           >
-            {isBuySoldOut
+            {!user
+              ? "[🔒 로그인 후 거래하기]"
+              : isBuyBlockedByCap
+              ? "상한가 도달 — 추가 매수 불가 (매도만 가능)"
+              : isBuySoldOut
               ? "물량 소진 (Sold Out)"
               : tradeType === "BUY"
               ? `${player.name} ${quantity}주 매수 확정`

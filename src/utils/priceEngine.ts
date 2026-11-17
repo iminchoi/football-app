@@ -1,0 +1,768 @@
+import {
+  CandleData,
+  CandleTimeframe,
+  ChartEventMarker,
+  ChartEventType,
+  Match,
+  MatchEvent,
+  MatchEventType,
+  MatchStatus,
+  Player,
+  PricePoint,
+} from "@/types";
+import { getTierConfig } from "@/utils/tier";
+
+export const EVENT_TYPE_META: Record<
+  MatchEventType,
+  {
+    icon: string;
+    shortTitle: string;
+    defaultDescription: string;
+    fill: string;
+    stroke: string;
+    ring: string;
+    chipBg: string;
+    chipText: string;
+    chipBorder: string;
+    badgeStyle: string;
+  }
+> = {
+  GOAL: {
+    icon: "⚽",
+    shortTitle: "득점",
+    defaultDescription: "결정적 슈팅 득점 성공",
+    fill: "#00A878",
+    stroke: "#fbbf24",
+    ring: "rgba(0, 168, 120, 0.28)",
+    chipBg: "bg-[#00A878]/10",
+    chipText: "text-[#00A878]",
+    chipBorder: "border-[#00A878]/30",
+    badgeStyle: "bg-[#00A878]/10 text-[#00A878] border border-[#00A878]/25",
+  },
+  ASSIST: {
+    icon: "🅰️",
+    shortTitle: "도움",
+    defaultDescription: "결정적 찬스 메이킹 도움 기록",
+    fill: "#0284c7",
+    stroke: "#bae6fd",
+    ring: "rgba(2, 132, 199, 0.25)",
+    chipBg: "bg-sky-50",
+    chipText: "text-sky-700",
+    chipBorder: "border-sky-300",
+    badgeStyle: "bg-sky-50 text-sky-700 border border-sky-200",
+  },
+  SAVE: {
+    icon: "🧤",
+    shortTitle: "선방",
+    defaultDescription: "결정적 실점 위기 차단 및 슈퍼세이브",
+    fill: "#7c3aed",
+    stroke: "#ddd6fe",
+    ring: "rgba(124, 58, 237, 0.25)",
+    chipBg: "bg-violet-50",
+    chipText: "text-violet-700",
+    chipBorder: "border-violet-300",
+    badgeStyle: "bg-violet-50 text-violet-700 border border-violet-200",
+  },
+  YELLOW_CARD: {
+    icon: "🟨",
+    shortTitle: "경고",
+    defaultDescription: "반칙으로 인한 옐로카드 경고",
+    fill: "#d97706",
+    stroke: "#fde68a",
+    ring: "rgba(245, 158, 11, 0.25)",
+    chipBg: "bg-amber-50",
+    chipText: "text-amber-800",
+    chipBorder: "border-amber-300",
+    badgeStyle: "bg-amber-50 text-amber-800 border border-amber-200",
+  },
+  RED_CARD: {
+    icon: "🟥",
+    shortTitle: "퇴장",
+    defaultDescription: "위험한 반칙으로 인한 퇴장 선언",
+    fill: "#F07868",
+    stroke: "#fecdd3",
+    ring: "rgba(240, 120, 104, 0.28)",
+    chipBg: "bg-[#F07868]/10",
+    chipText: "text-[#F07868]",
+    chipBorder: "border-[#F07868]/30",
+    badgeStyle: "bg-[#F07868]/10 text-[#F07868] border border-[#F07868]/25",
+  },
+};
+
+/**
+ * Round any price or point value to the nearest 10 integer unit.
+ */
+export const roundToTen = (val: number): number => Math.round(val / 10) * 10;
+
+/**
+ * Clamp price strictly within [basePrice * 0.7, basePrice * 1.3] and round to 10.
+ */
+export const clampToPriceLimit = (price: number, basePrice: number): number => {
+  const floorPrice = roundToTen(basePrice * 0.7);
+  const capPrice = roundToTen(basePrice * 1.3);
+  const rounded = roundToTen(price);
+  return Math.max(floorPrice, Math.min(capPrice, rounded));
+};
+
+/**
+ * Unified percentage change formula against openPrice:
+ * ((currentPrice - openPrice) / openPrice) * 100
+ */
+export function calculateChangePercentFromOpen(
+  currentPrice: number,
+  openPrice: number
+): number {
+  if (!Number.isFinite(openPrice) || openPrice <= 0) return 0;
+  return Number((((currentPrice - openPrice) / openPrice) * 100).toFixed(2));
+}
+
+/**
+ * Unified absolute point difference against openPrice.
+ */
+export function calculateDiffFromOpen(
+  currentPrice: number,
+  openPrice: number
+): number {
+  return roundToTen(currentPrice) - roundToTen(openPrice);
+}
+
+/**
+ * Format match minute (0..95) into display label ("0'", "45'", "90+2'").
+ */
+export function formatMinuteLabel(minute: number): string {
+  const safeMin = Math.max(0, Math.round(minute));
+  if (safeMin > 90) {
+    return `90+${safeMin - 90}'`;
+  }
+  return `${safeMin}'`;
+}
+
+/**
+ * Deterministic hash-based noise in [0, 1) seeded by string + index.
+ */
+export function seededNoise(seedStr: string, index: number): number {
+  let h = 2166136261;
+  const str = `${seedStr}-${index}`;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 1000) / 1000;
+}
+
+/**
+ * Normalize any ChartEventType or raw string into strict MatchEventType.
+ */
+export function normalizeMatchEventType(
+  rawType?: ChartEventType | string,
+  impactPercent = 0
+): MatchEventType {
+  if (
+    rawType === "GOAL" ||
+    rawType === "ASSIST" ||
+    rawType === "YELLOW_CARD" ||
+    rawType === "RED_CARD" ||
+    rawType === "SAVE"
+  ) {
+    return rawType;
+  }
+  return impactPercent < 0 ? "YELLOW_CARD" : "ASSIST";
+}
+
+/**
+ * Strip leading emoji and trailing "(+X.X%)" from a legacy ChartEventMarker label
+ * to obtain a clean event description.
+ */
+export function cleanEventDescription(
+  rawLabel: string | undefined,
+  type: MatchEventType
+): string {
+  if (!rawLabel) return EVENT_TYPE_META[type].defaultDescription;
+  const stripped = rawLabel
+    .replace(/\([+-]?\d+(\.\d+)?%\)\s*$/g, "")
+    .replace(/^[⚽🅰️🧤🟨🟥🔄🧱⚡🎯🔥✨]+\s*/u, "")
+    .trim();
+  return stripped || EVENT_TYPE_META[type].defaultDescription;
+}
+
+/**
+ * Convert a canonical MatchEvent into a ChartEventMarker for chart pin rendering.
+ */
+export function toChartEventMarker(ev: MatchEvent): ChartEventMarker {
+  const meta = EVENT_TYPE_META[ev.type] ?? EVENT_TYPE_META.GOAL;
+  const sign = ev.priceImpactPercent >= 0 ? "+" : "";
+  return {
+    type: ev.type,
+    label: `${meta.icon} ${ev.description} (${sign}${ev.priceImpactPercent.toFixed(1)}%)`,
+    impactPercent: Number(ev.priceImpactPercent.toFixed(1)),
+  };
+}
+
+/**
+ * Sort and deduplicate MatchEvent[] by minute ascending (keeping latest event per minute).
+ */
+export function normalizeMatchEvents(
+  events: MatchEvent[],
+  playerId: string
+): MatchEvent[] {
+  if (!Array.isArray(events) || events.length === 0) return [];
+  const byMinute = new Map<number, MatchEvent>();
+  for (const ev of events) {
+    if (!ev || typeof ev.minute !== "number" || ev.minute <= 0) continue;
+    const min = Math.max(1, Math.min(95, Math.round(ev.minute)));
+    const type = normalizeMatchEventType(ev.type, ev.priceImpactPercent);
+    const impact = Number((ev.priceImpactPercent ?? 0).toFixed(1));
+    const desc = cleanEventDescription(ev.description, type);
+    byMinute.set(min, {
+      id: ev.id || `ev-${playerId}-${min}-${type}`,
+      playerId,
+      minute: min,
+      type,
+      description: desc,
+      priceImpactPercent: impact,
+    });
+  }
+  return Array.from(byMinute.values()).sort((a, b) => a.minute - b.minute);
+}
+
+/**
+ * Extract canonical MatchEvent[] from a player seed or persisted state.
+ */
+export function extractInitialMatchEvents(
+  player: Pick<
+    Player,
+    | "id"
+    | "position"
+    | "openPrice"
+    | "basePrice"
+    | "initialPrice"
+    | "currentPrice"
+    | "events"
+    | "priceHistory"
+    | "lastEvent"
+  >
+): MatchEvent[] {
+  if (Array.isArray(player.events) && player.events.length > 0) {
+    return normalizeMatchEvents(player.events, player.id);
+  }
+
+  const extracted: MatchEvent[] = [];
+  const openPrice = roundToTen(
+    player.openPrice ?? player.basePrice ?? player.initialPrice ?? 10000
+  );
+
+  for (const pt of player.priceHistory ?? []) {
+    if (pt.event && typeof pt.minute === "number" && pt.minute > 0) {
+      const min = Math.max(1, Math.min(95, Math.round(pt.minute)));
+      const type = normalizeMatchEventType(
+        pt.event.type,
+        pt.event.impactPercent
+      );
+      extracted.push({
+        id: `ev-${player.id}-${min}-${type}`,
+        playerId: player.id,
+        minute: min,
+        type,
+        description: cleanEventDescription(pt.event.label, type),
+        priceImpactPercent: Number((pt.event.impactPercent ?? 0).toFixed(1)),
+      });
+    }
+  }
+
+  // If no explicit event marker was in priceHistory but the player has a live/FT lastEvent at minute > 0,
+  // synthesize a canonical event so the timeline and price engine remain unified.
+  if (
+    extracted.length === 0 &&
+    player.lastEvent &&
+    player.lastEvent.minute > 0 &&
+    player.currentPrice !== openPrice
+  ) {
+    const min = Math.max(1, Math.min(95, Math.round(player.lastEvent.minute)));
+    const rawImpact = calculateChangePercentFromOpen(
+      player.currentPrice,
+      openPrice
+    );
+    const type: MatchEventType =
+      rawImpact < 0
+        ? "YELLOW_CARD"
+        : player.position === "GK" ||
+          player.position === "CB" ||
+          player.position === "LB" ||
+          player.position === "RB"
+        ? "SAVE"
+        : "ASSIST";
+    extracted.push({
+      id: `ev-${player.id}-${min}-${type}`,
+      playerId: player.id,
+      minute: min,
+      type,
+      description: cleanEventDescription(player.lastEvent.text, type),
+      priceImpactPercent: Number(rawImpact.toFixed(1)),
+    });
+  }
+
+  return normalizeMatchEvents(extracted, player.id);
+}
+
+interface MinuteBar {
+  minute: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  matchEvent?: MatchEvent;
+}
+
+/**
+ * Core pure generator: builds the minute-by-minute (0..endMinute) price & volume bars
+ * exclusively from (playerId, openPrice, basePrice, events, endMinute).
+ */
+function buildMinuteBarsFromEvents(params: {
+  playerId: string;
+  openPrice: number;
+  basePrice: number;
+  events: MatchEvent[];
+  endMinute: number;
+}): MinuteBar[] {
+  const { playerId, events } = params;
+  const basePrice = roundToTen(params.basePrice || params.openPrice || 10000);
+  const openPrice = clampToPriceLimit(params.openPrice || basePrice, basePrice);
+  const normalizedEvents = normalizeMatchEvents(events, playerId);
+  const maxEventMin =
+    normalizedEvents.length > 0
+      ? normalizedEvents[normalizedEvents.length - 1].minute
+      : 0;
+  const endMin = Math.max(0, Math.min(95, Math.max(params.endMinute, maxEventMin)));
+
+  const eventByMin = new Map<number, MatchEvent>();
+  for (const ev of normalizedEvents) {
+    eventByMin.set(ev.minute, ev);
+  }
+
+  const tierCfg = getTierConfig(basePrice);
+  const bars: MinuteBar[] = [
+    {
+      minute: 0,
+      open: openPrice,
+      high: openPrice,
+      low: openPrice,
+      close: openPrice,
+      volume: 60,
+    },
+  ];
+
+  let prevClose = openPrice;
+
+  for (let m = 1; m <= endMin; m++) {
+    const ev = eventByMin.get(m);
+    const noise = seededNoise(`${playerId}-min-tick`, m);
+    const volNoise = seededNoise(`${playerId}-min-vol`, m);
+
+    let close = prevClose;
+    if (ev) {
+      const impactRatio = ev.priceImpactPercent / 100;
+      close = clampToPriceLimit(prevClose * (1 + impactRatio), basePrice);
+      if (ev.priceImpactPercent > 0 && close <= prevClose) {
+        close = clampToPriceLimit(prevClose + 20, basePrice);
+      } else if (ev.priceImpactPercent < 0 && close >= prevClose) {
+        close = clampToPriceLimit(prevClose - 20, basePrice);
+      }
+    } else if (m % 2 === 0) {
+      // Gentle deterministic micro-movement so candles form natural bodies
+      const microRate =
+        (noise - 0.495) * 0.005 * tierCfg.volatilityMultiplier;
+      close = clampToPriceLimit(prevClose * (1 + microRate), basePrice);
+    }
+
+    const wickNoiseUp = seededNoise(`${playerId}-min-wick-up`, m);
+    const wickNoiseDown = seededNoise(`${playerId}-min-wick-down`, m);
+    const wickScale = ev ? 0.008 : 0.0035;
+    const wickUp = roundToTen(
+      basePrice * (0.001 + wickNoiseUp * wickScale) * tierCfg.volatilityMultiplier
+    );
+    const wickDown = roundToTen(
+      basePrice * (0.001 + wickNoiseDown * wickScale) * tierCfg.volatilityMultiplier
+    );
+
+    const high = clampToPriceLimit(
+      Math.max(prevClose, close) + wickUp,
+      basePrice
+    );
+    const low = clampToPriceLimit(
+      Math.min(prevClose, close) - wickDown,
+      basePrice
+    );
+    const swingRatio = Math.abs(close - prevClose) / Math.max(1, basePrice);
+    const baseMinuteVol = ev ? 420 : 28;
+    const volume = Math.max(
+      12,
+      Math.round(baseMinuteVol + swingRatio * 2400 + volNoise * 35)
+    );
+
+    bars.push({
+      minute: m,
+      open: prevClose,
+      high,
+      low,
+      close,
+      volume,
+      ...(ev ? { matchEvent: ev } : {}),
+    });
+
+    prevClose = close;
+  }
+
+  return bars;
+}
+
+export interface DerivedPlayerMarketData {
+  openPrice: number;
+  currentPrice: number;
+  previousPrice: number;
+  closePrice?: number;
+  highPrice: number;
+  lowPrice: number;
+  volume: number;
+  events: MatchEvent[];
+  priceHistory: PricePoint[];
+}
+
+/**
+ * Pure function that derives `PricePoint[]` (0~90m timeline) and unified daily metrics
+ * (`openPrice`, `currentPrice`, `highPrice`, `lowPrice`, `volume`) solely from `openPrice` and `events`.
+ */
+export function derivePlayerMarketData(params: {
+  playerId: string;
+  openPrice: number;
+  basePrice?: number;
+  events: MatchEvent[];
+  currentMinute?: number;
+  matchStatus?: MatchStatus;
+}): DerivedPlayerMarketData {
+  const basePrice = roundToTen(params.basePrice ?? params.openPrice ?? 10000);
+  const openPrice = clampToPriceLimit(params.openPrice ?? basePrice, basePrice);
+  const events = normalizeMatchEvents(params.events, params.playerId);
+  const maxEventMin =
+    events.length > 0 ? events[events.length - 1].minute : 0;
+
+  const status: MatchStatus = params.matchStatus ?? "LIVE";
+  const endMinute =
+    status === "UPCOMING" && maxEventMin === 0
+      ? 0
+      : status === "FT"
+      ? Math.max(90, maxEventMin)
+      : Math.max(1, Math.min(95, Math.max(params.currentMinute ?? 60, maxEventMin)));
+
+  const bars = buildMinuteBarsFromEvents({
+    playerId: params.playerId,
+    openPrice,
+    basePrice,
+    events,
+    endMinute,
+  });
+
+  const lastBar = bars[bars.length - 1];
+  const prevBar = bars.length >= 2 ? bars[bars.length - 2] : lastBar;
+  const currentPrice = lastBar.close;
+  const previousPrice = prevBar.close;
+
+  let highPrice = openPrice;
+  let lowPrice = openPrice;
+  let highMin = 0;
+  let lowMin = 0;
+  let totalVolume = 0;
+
+  for (const b of bars) {
+    if (b.high > highPrice) {
+      highPrice = b.high;
+      highMin = b.minute;
+    }
+    if (b.low < lowPrice) {
+      lowPrice = b.low;
+      lowMin = b.minute;
+    }
+    totalVolume += b.volume;
+  }
+
+  // Select key minutes for PricePoint[] (0', 3-minute ticks, 15-minute anchors, all event minutes, high/low minutes, and endMinute)
+  const selectedMinutes = new Set<number>([0, endMinute, highMin, lowMin]);
+  for (let m = 0; m <= endMinute; m += 3) {
+    selectedMinutes.add(m);
+  }
+  for (let m = 0; m <= endMinute; m += 15) {
+    selectedMinutes.add(m);
+  }
+  for (const ev of events) {
+    selectedMinutes.add(ev.minute);
+  }
+
+  const sortedMinutes = Array.from(selectedMinutes)
+    .filter((m) => m >= 0 && m <= endMinute)
+    .sort((a, b) => a - b);
+
+  const priceHistory: PricePoint[] = sortedMinutes.map((m) => {
+    const bar = bars[m] ?? bars[bars.length - 1];
+    return {
+      minute: m,
+      timeLabel: formatMinuteLabel(m),
+      price: bar.close,
+      changePercentFromOpen: calculateChangePercentFromOpen(
+        bar.close,
+        openPrice
+      ),
+      ...(bar.matchEvent ? { event: toChartEventMarker(bar.matchEvent) } : {}),
+    };
+  });
+
+  return {
+    openPrice,
+    currentPrice,
+    previousPrice,
+    ...(status === "FT" ? { closePrice: currentPrice } : {}),
+    highPrice,
+    lowPrice,
+    volume: totalVolume,
+    events,
+    priceHistory,
+  };
+}
+
+/**
+ * Pure function that derives `CandleData[]` directly from `openPrice` and `events: MatchEvent[]`.
+ * Ensures 100% alignment of open, close, high, low, volume, and event pins (e.g. 27' Goal)
+ * with `derivePlayerMarketData`.
+ */
+export function deriveCandlesFromEvents(params: {
+  playerId: string;
+  openPrice: number;
+  basePrice?: number;
+  events: MatchEvent[];
+  timeframe: CandleTimeframe;
+  matchStatus?: MatchStatus;
+  currentMinute?: number;
+}): CandleData[] {
+  const basePrice = roundToTen(params.basePrice ?? params.openPrice ?? 10000);
+  const openPrice = clampToPriceLimit(params.openPrice ?? basePrice, basePrice);
+  const events = normalizeMatchEvents(params.events, params.playerId);
+  const status: MatchStatus = params.matchStatus ?? "LIVE";
+
+  const derived = derivePlayerMarketData({
+    playerId: params.playerId,
+    openPrice,
+    basePrice,
+    events,
+    currentMinute: params.currentMinute,
+    matchStatus: status,
+  });
+
+  const finalClose = derived.currentPrice;
+  const maxEventMin =
+    events.length > 0 ? events[events.length - 1].minute : 0;
+  const endMin =
+    status === "UPCOMING" && maxEventMin === 0
+      ? 0
+      : status === "FT"
+      ? Math.max(90, maxEventMin)
+      : Math.max(1, Math.min(95, Math.max(params.currentMinute ?? 60, maxEventMin)));
+
+  if (params.timeframe === "1D") {
+    const count = 24;
+    const candles: CandleData[] = [];
+    const now = new Date();
+    let prevClose = clampToPriceLimit(
+      basePrice * (0.92 + seededNoise(params.playerId, 701) * 0.08),
+      basePrice
+    );
+
+    for (let i = 0; i < count; i++) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - (count - 1 - i));
+      const label = `${d.getMonth() + 1}/${d.getDate()}`;
+
+      if (i === count - 1) {
+        // Today's daily candle strictly uses the unified SSOT metrics
+        const latestEvent =
+          events.length > 0 ? events[events.length - 1] : undefined;
+        candles.push({
+          index: i,
+          minute: endMin,
+          label,
+          open: openPrice,
+          high: derived.highPrice,
+          low: derived.lowPrice,
+          close: finalClose,
+          volume: derived.volume,
+          ...(latestEvent
+            ? {
+                event: toChartEventMarker(latestEvent),
+                matchEvent: latestEvent,
+              }
+            : {}),
+        });
+        break;
+      }
+
+      const n1 = seededNoise(`${params.playerId}-1d-o`, i);
+      const n2 = seededNoise(`${params.playerId}-1d-h`, i);
+      const n3 = seededNoise(`${params.playerId}-1d-l`, i);
+
+      const open = prevClose;
+      const close =
+        i === count - 2
+          ? openPrice
+          : clampToPriceLimit(
+              open +
+                ((openPrice - open) / Math.max(1, count - 1 - i)) * 0.6 +
+                (n1 - 0.48) * basePrice * 0.035,
+              basePrice
+            );
+
+      const bodyMax = Math.max(open, close);
+      const bodyMin = Math.min(open, close);
+      const wickUp = roundToTen((0.004 + n2 * 0.018) * basePrice);
+      const wickDown = roundToTen((0.004 + n3 * 0.018) * basePrice);
+      const high = clampToPriceLimit(bodyMax + wickUp, basePrice);
+      const low = clampToPriceLimit(bodyMin - wickDown, basePrice);
+      const volume = Math.max(
+        60,
+        Math.round(180 + n2 * 260)
+      );
+
+      candles.push({
+        index: i,
+        label,
+        open,
+        high,
+        low,
+        close,
+        volume,
+      });
+      prevClose = close;
+    }
+    return candles;
+  }
+
+  // Match timeline candles: 1M (step=1m), 3M (step=3m), 15M (step=6m)
+  const bars = buildMinuteBarsFromEvents({
+    playerId: params.playerId,
+    openPrice,
+    basePrice,
+    events,
+    endMinute: endMin,
+  });
+
+  if (endMin === 0) {
+    return [
+      {
+        index: 0,
+        minute: 0,
+        label: "0'",
+        open: openPrice,
+        high: openPrice,
+        low: openPrice,
+        close: openPrice,
+        volume: bars[0].volume,
+      },
+    ];
+  }
+
+  const step = params.timeframe === "1M" ? 1 : params.timeframe === "3M" ? 3 : 6;
+  const candles: CandleData[] = [];
+  let idx = 0;
+
+  // First candle at 0' kickoff
+  candles.push({
+    index: idx++,
+    minute: 0,
+    label: "0'",
+    open: openPrice,
+    high: openPrice,
+    low: openPrice,
+    close: openPrice,
+    volume: bars[0].volume,
+  });
+
+  for (let mStart = 1; mStart <= endMin; mStart += step) {
+    const mEnd = Math.min(endMin, mStart + step - 1);
+    const slice = bars.slice(mStart, mEnd + 1);
+    if (slice.length === 0) break;
+
+    const open = slice[0].open;
+    const close = slice[slice.length - 1].close;
+    let high = Math.max(open, close);
+    let low = Math.min(open, close);
+    let volume = 0;
+    let bucketMatchEvent: MatchEvent | undefined;
+
+    for (const b of slice) {
+      if (b.high > high) high = b.high;
+      if (b.low < low) low = b.low;
+      volume += b.volume;
+      if (b.matchEvent) {
+        bucketMatchEvent = b.matchEvent;
+      }
+    }
+
+    // If a MatchEvent occurred in this bucket (e.g. 27' Goal), pin the exact event minute on the candle
+    const displayMin = bucketMatchEvent ? bucketMatchEvent.minute : mEnd;
+    const label =
+      displayMin === 45
+        ? "45'(HT)"
+        : displayMin === 90
+        ? "90'(FT)"
+        : formatMinuteLabel(displayMin);
+
+    candles.push({
+      index: idx++,
+      minute: displayMin,
+      label,
+      open,
+      high,
+      low,
+      close,
+      volume,
+      ...(bucketMatchEvent
+        ? {
+            event: toChartEventMarker(bucketMatchEvent),
+            matchEvent: bucketMatchEvent,
+          }
+        : {}),
+    });
+  }
+
+  return candles;
+}
+
+/**
+ * Helper to resolve a player's match status and current minute from the store's matches array.
+ */
+export function resolvePlayerMatchContext(
+  player: Pick<Player, "id" | "matchId" | "lastEvent" | "priceHistory" | "events">,
+  matches: Match[]
+): { status: MatchStatus; minute: number; match?: Match } {
+  const direct = matches.find((m) => m.id === player.matchId);
+  const status: MatchStatus = !direct
+    ? "LIVE"
+    : direct.status === "LIVE" || direct.rawStatus === "IN_PLAY"
+    ? "LIVE"
+    : direct.status === "FT" || direct.rawStatus === "FINISHED"
+    ? "FT"
+    : "UPCOMING";
+
+  const maxEvMin =
+    player.events && player.events.length > 0
+      ? Math.max(...player.events.map((e) => e.minute))
+      : player.priceHistory && player.priceHistory.length > 0
+      ? Math.max(...player.priceHistory.map((p) => p.minute ?? 0))
+      : 0;
+
+  const minute =
+    status === "FT"
+      ? Math.max(90, maxEvMin)
+      : status === "UPCOMING"
+      ? 0
+      : Math.max(1, direct?.minute ?? player.lastEvent?.minute ?? maxEvMin ?? 60);
+
+  return { status, minute, match: direct };
+}

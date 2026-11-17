@@ -16,6 +16,7 @@ import {
   PricePoint,
   ChartEventType,
   ChartEventMarker,
+  MatchEvent,
   EventSentiment,
   getPositionLine,
   normalizeDetailedPosition,
@@ -27,8 +28,28 @@ import {
   POSITION_EVENTS,
 } from "@/data/dummyData";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
+import {
+  roundToTen,
+  clampToPriceLimit,
+  formatMinuteLabel,
+  calculateChangePercentFromOpen,
+  calculateDiffFromOpen,
+  derivePlayerMarketData,
+  extractInitialMatchEvents,
+  normalizeMatchEvents,
+  normalizeMatchEventType,
+  cleanEventDescription,
+  resolvePlayerMatchContext,
+} from "@/utils/priceEngine";
 
-export { getAvailableShares };
+export {
+  getAvailableShares,
+  roundToTen,
+  clampToPriceLimit,
+  formatMinuteLabel,
+  calculateChangePercentFromOpen,
+  calculateDiffFromOpen,
+};
 
 export interface AuthActionResult {
   success: boolean;
@@ -88,9 +109,6 @@ interface TradeStoreState {
   ) => ForceGoalResult | null;
   resetAll: () => void;
 }
-
-// Round any price or point value to the nearest 10 integer unit
-export const roundToTen = (val: number): number => Math.round(val / 10) * 10;
 
 // Normalize account lookup key (case-insensitive ID matching)
 export const normalizeAccountKey = (id: string): string =>
@@ -152,14 +170,6 @@ function syncActiveUserToAccounts(
 
   return nextAccounts;
 }
-
-// Clamp price strictly within [basePrice * 0.7, basePrice * 1.3] and round to 10
-export const clampToPriceLimit = (price: number, basePrice: number): number => {
-  const floorPrice = roundToTen(basePrice * 0.7);
-  const capPrice = roundToTen(basePrice * 1.3);
-  const rounded = roundToTen(price);
-  return Math.max(floorPrice, Math.min(capPrice, rounded));
-};
 
 // Alias map to normalize international API team names/TLA codes to Korean nationalTeam names
 const NATIONAL_TEAM_ALIAS_MAP: Record<string, string> = {
@@ -382,13 +392,6 @@ export function parseMinuteFromLabel(
   return fallback;
 }
 
-export function formatMinuteLabel(minute: number): string {
-  if (minute > 90) {
-    return `90+${minute - 90}'`;
-  }
-  return `${Math.max(0, Math.round(minute))}'`;
-}
-
 export function normalizePriceHistory(
   rawHistory: PricePoint[] | undefined,
   openPrice: number,
@@ -414,10 +417,7 @@ export function normalizePriceHistory(
       idx === 0 ? 0 : idx * 15
     );
     const safePrice = clampToPriceLimit(pt.price, basePrice);
-    const changePct =
-      safeOpen > 0
-        ? Number((((safePrice - safeOpen) / safeOpen) * 100).toFixed(2))
-        : 0;
+    const changePct = calculateChangePercentFromOpen(safePrice, safeOpen);
     const prev = byMinute.get(inferredMin);
     byMinute.set(inferredMin, {
       minute: inferredMin,
@@ -449,7 +449,7 @@ export function normalizePriceHistory(
   return Array.from(byMinute.values()).sort((a, b) => a.minute - b.minute);
 }
 
-// Normalize initial players using getTierConfig(basePrice) as Single Source of Truth
+// Normalize initial players using getTierConfig(basePrice) and SSOT derivePlayerMarketData
 const NORMALIZED_INITIAL_PLAYERS: Player[] = INITIAL_PLAYERS.map((p) => {
   const basePrice = roundToTen(p.basePrice ?? p.initialPrice);
   const openPrice = clampToPriceLimit(
@@ -457,12 +457,20 @@ const NORMALIZED_INITIAL_PLAYERS: Player[] = INITIAL_PLAYERS.map((p) => {
     basePrice
   );
   const tierCfg = getTierConfig(basePrice);
-  const currentPrice = clampToPriceLimit(p.currentPrice, basePrice);
-  const previousPrice = clampToPriceLimit(p.previousPrice, basePrice);
-  const closePrice =
-    p.closePrice !== undefined
-      ? clampToPriceLimit(p.closePrice, basePrice)
-      : undefined;
+  const events = extractInitialMatchEvents({
+    ...p,
+    openPrice,
+    basePrice,
+  });
+  const ctx = resolvePlayerMatchContext({ ...p, events }, INITIAL_MATCHES);
+  const derived = derivePlayerMarketData({
+    playerId: p.id,
+    openPrice,
+    basePrice,
+    events,
+    currentMinute: ctx.minute,
+    matchStatus: ctx.status,
+  });
 
   return {
     ...p,
@@ -470,19 +478,26 @@ const NORMALIZED_INITIAL_PLAYERS: Player[] = INITIAL_PLAYERS.map((p) => {
     totalShares: p.totalShares ?? tierCfg.totalShares,
     marketSupply: p.marketSupply ?? tierCfg.marketSupply,
     basePrice,
-    openPrice,
-    ...(closePrice !== undefined ? { closePrice } : {}),
+    openPrice: derived.openPrice,
+    ...(derived.closePrice !== undefined
+      ? { closePrice: derived.closePrice }
+      : {}),
     initialPrice: basePrice,
-    currentPrice,
-    previousPrice,
-    priceHistory: normalizePriceHistory(p.priceHistory, openPrice, basePrice),
+    currentPrice: derived.currentPrice,
+    previousPrice: derived.previousPrice,
+    highPrice: derived.highPrice,
+    lowPrice: derived.lowPrice,
+    volume: derived.volume,
+    events: derived.events,
+    priceHistory: derived.priceHistory,
   };
 });
 
-// Overlay persisted playerPrices onto base players list
+// Overlay persisted playerPrices onto base players list using SSOT derivePlayerMarketData
 function applyPersistedPrices(
   basePlayers: Player[],
-  playerPrices: Record<string, PersistedPlayerPrice>
+  playerPrices: Record<string, PersistedPlayerPrice>,
+  matches: Match[] = INITIAL_MATCHES
 ): Player[] {
   if (!playerPrices || Object.keys(playerPrices).length === 0) {
     return basePlayers;
@@ -499,52 +514,57 @@ function applyPersistedPrices(
       saved.openPrice ?? player.openPrice ?? basePrice,
       basePrice
     );
-    const currentPrice = clampToPriceLimit(saved.currentPrice, basePrice);
-    const previousPrice = clampToPriceLimit(saved.previousPrice, basePrice);
-    const closePrice =
-      saved.closePrice !== undefined
-        ? clampToPriceLimit(saved.closePrice, basePrice)
-        : player.closePrice;
 
-    // Merge events from default dummy data if saved history lost them from an older version
-    const baseEventsByMin = new Map<number, ChartEventMarker>();
-    for (const bp of player.priceHistory ?? []) {
-      if (bp.event && typeof bp.minute === "number") {
-        baseEventsByMin.set(bp.minute, bp.event);
-      }
+    const savedEvents =
+      Array.isArray(saved.events) && saved.events.length > 0
+        ? normalizeMatchEvents(saved.events, player.id)
+        : extractInitialMatchEvents({
+            ...player,
+            openPrice,
+            basePrice,
+            priceHistory:
+              Array.isArray(saved.priceHistory) && saved.priceHistory.length > 0
+                ? saved.priceHistory
+                : player.priceHistory,
+          });
+
+    // Ensure base events (like 27' Goal) are preserved alongside any newly saved events
+    const mergedEventMap = new Map<number, MatchEvent>();
+    for (const ev of player.events ?? []) {
+      mergedEventMap.set(ev.minute, ev);
     }
-
-    const rawSavedHistory =
-      Array.isArray(saved.priceHistory) && saved.priceHistory.length > 0
-        ? saved.priceHistory.map((pt, idx) => {
-            const min = parseMinuteFromLabel(
-              pt.minute,
-              pt.timeLabel,
-              idx * 15
-            );
-            return {
-              ...pt,
-              minute: min,
-              event: pt.event ?? baseEventsByMin.get(min),
-            };
-          })
-        : player.priceHistory;
-
-    const priceHistory = normalizePriceHistory(
-      rawSavedHistory,
-      openPrice,
-      basePrice
+    for (const ev of savedEvents) {
+      mergedEventMap.set(ev.minute, ev);
+    }
+    const events = Array.from(mergedEventMap.values()).sort(
+      (a, b) => a.minute - b.minute
     );
+
+    const ctx = resolvePlayerMatchContext({ ...player, events }, matches);
+    const derived = derivePlayerMarketData({
+      playerId: player.id,
+      openPrice,
+      basePrice,
+      events,
+      currentMinute: ctx.minute,
+      matchStatus: ctx.status,
+    });
 
     return {
       ...player,
       basePrice,
-      openPrice,
-      ...(closePrice !== undefined ? { closePrice } : {}),
+      openPrice: derived.openPrice,
+      ...(derived.closePrice !== undefined
+        ? { closePrice: derived.closePrice }
+        : {}),
       initialPrice: basePrice,
-      currentPrice,
-      previousPrice,
-      priceHistory,
+      currentPrice: derived.currentPrice,
+      previousPrice: derived.previousPrice,
+      highPrice: derived.highPrice,
+      lowPrice: derived.lowPrice,
+      volume: derived.volume,
+      events: derived.events,
+      priceHistory: derived.priceHistory,
     };
   });
 }
@@ -877,23 +897,32 @@ export const useTradeStore = create<TradeStoreState>()(
           base
         );
 
-        const currentPrice = clampToPriceLimit(
-          savedPrice?.currentPrice ?? newPlayer.currentPrice,
-          base
+        const initialEvents =
+          savedPrice?.events && savedPrice.events.length > 0
+            ? normalizeMatchEvents(savedPrice.events, newPlayer.id)
+            : extractInitialMatchEvents({
+                ...newPlayer,
+                openPrice,
+                basePrice: base,
+                priceHistory:
+                  savedPrice?.priceHistory &&
+                  savedPrice.priceHistory.length > 0
+                    ? savedPrice.priceHistory
+                    : newPlayer.priceHistory,
+              });
+
+        const ctx = resolvePlayerMatchContext(
+          { ...newPlayer, events: initialEvents },
+          get().matches
         );
-        const previousPrice = clampToPriceLimit(
-          savedPrice?.previousPrice ?? newPlayer.previousPrice,
-          base
-        );
-        const rawHistory =
-          savedPrice?.priceHistory && savedPrice.priceHistory.length > 0
-            ? savedPrice.priceHistory
-            : newPlayer.priceHistory;
-        const priceHistory = normalizePriceHistory(
-          rawHistory,
+        const derived = derivePlayerMarketData({
+          playerId: newPlayer.id,
           openPrice,
-          base
-        );
+          basePrice: base,
+          events: initialEvents,
+          currentMinute: ctx.minute,
+          matchStatus: ctx.status,
+        });
 
         const normalized: Player = {
           ...newPlayer,
@@ -905,11 +934,18 @@ export const useTradeStore = create<TradeStoreState>()(
           totalShares: tierCfg.totalShares,
           marketSupply: tierCfg.marketSupply,
           basePrice: base,
-          openPrice,
+          openPrice: derived.openPrice,
+          ...(derived.closePrice !== undefined
+            ? { closePrice: derived.closePrice }
+            : {}),
           initialPrice: base,
-          currentPrice,
-          previousPrice,
-          priceHistory,
+          currentPrice: derived.currentPrice,
+          previousPrice: derived.previousPrice,
+          highPrice: derived.highPrice,
+          lowPrice: derived.lowPrice,
+          volume: derived.volume,
+          events: derived.events,
+          priceHistory: derived.priceHistory,
         };
 
         set({
@@ -921,6 +957,10 @@ export const useTradeStore = create<TradeStoreState>()(
               closePrice: normalized.closePrice,
               currentPrice: normalized.currentPrice,
               previousPrice: normalized.previousPrice,
+              highPrice: normalized.highPrice,
+              lowPrice: normalized.lowPrice,
+              volume: normalized.volume,
+              events: normalized.events,
               priceHistory: normalized.priceHistory,
             },
           },
@@ -1104,64 +1144,35 @@ export const useTradeStore = create<TradeStoreState>()(
                 basePrice
               );
 
-              const currentPrice = clampToPriceLimit(
-                savedPrice?.currentPrice ?? basePrice,
-                basePrice
-              );
-              const previousPrice = clampToPriceLimit(
-                savedPrice?.previousPrice ?? basePrice,
-                basePrice
-              );
               const isMatchFT =
                 match.status === "FT" || match.rawStatus === "FINISHED";
-              const closePrice = isMatchFT
-                ? clampToPriceLimit(
-                    savedPrice?.closePrice ?? currentPrice,
-                    basePrice
-                  )
-                : savedPrice?.closePrice;
+              const isMatchUpcoming =
+                match.status === "UPCOMING" ||
+                match.rawStatus === "TIMED" ||
+                match.rawStatus === "SCHEDULED";
+              const resolvedStatus = isMatchFT
+                ? "FT"
+                : isMatchUpcoming
+                ? "UPCOMING"
+                : "LIVE";
 
               const curMin = Math.min(
                 90,
                 Math.max(0, match.minute ?? (isMatchFT ? 90 : 45))
               );
-              const rawHistory =
-                savedPrice?.priceHistory && savedPrice.priceHistory.length > 0
-                  ? savedPrice.priceHistory
-                  : [
-                      {
-                        minute: 0,
-                        timeLabel: "0'",
-                        price: openPrice,
-                        changePercentFromOpen: 0,
-                      },
-                      {
-                        minute: 15,
-                        timeLabel: "15'",
-                        price: openPrice,
-                        changePercentFromOpen: 0,
-                      },
-                      {
-                        minute: 30,
-                        timeLabel: "30'",
-                        price: previousPrice,
-                      },
-                      {
-                        minute: 45,
-                        timeLabel: "45'",
-                        price: previousPrice,
-                      },
-                      {
-                        minute: Math.max(46, curMin),
-                        timeLabel: formatMinuteLabel(Math.max(46, curMin)),
-                        price: currentPrice,
-                      },
-                    ];
-              const priceHistory = normalizePriceHistory(
-                rawHistory,
+              const initialEvents =
+                savedPrice?.events && savedPrice.events.length > 0
+                  ? normalizeMatchEvents(savedPrice.events, newId)
+                  : [];
+
+              const derived = derivePlayerMarketData({
+                playerId: newId,
                 openPrice,
-                basePrice
-              );
+                basePrice,
+                events: initialEvents,
+                currentMinute: curMin,
+                matchStatus: resolvedStatus,
+              });
 
               const clubName =
                 !isAMatch
@@ -1186,12 +1197,16 @@ export const useTradeStore = create<TradeStoreState>()(
                 totalShares: tierCfg.totalShares,
                 marketSupply: tierCfg.marketSupply,
                 basePrice,
-                openPrice,
-                closePrice,
+                openPrice: derived.openPrice,
+                closePrice: derived.closePrice,
                 initialPrice: basePrice,
-                currentPrice,
-                previousPrice,
-                priceHistory,
+                currentPrice: derived.currentPrice,
+                previousPrice: derived.previousPrice,
+                highPrice: derived.highPrice,
+                lowPrice: derived.lowPrice,
+                volume: derived.volume,
+                events: derived.events,
+                priceHistory: derived.priceHistory,
                 lastEvent: {
                   text:
                     tierCfg.tier === "C"
@@ -1211,17 +1226,21 @@ export const useTradeStore = create<TradeStoreState>()(
 
               nextPlayers.push(newListedPlayer);
               nextPlayerPrices[newId] = {
-                openPrice,
-                closePrice,
-                currentPrice,
-                previousPrice,
-                priceHistory,
+                openPrice: derived.openPrice,
+                closePrice: derived.closePrice,
+                currentPrice: derived.currentPrice,
+                previousPrice: derived.previousPrice,
+                highPrice: derived.highPrice,
+                lowPrice: derived.lowPrice,
+                volume: derived.volume,
+                events: derived.events,
+                priceHistory: derived.priceHistory,
               };
               playersChanged = true;
             });
           }
 
-          // Bind real match events (goals, assists, cards, substitutions) idempotently to player price ticks
+          // Bind real match events (goals, assists, cards, substitutions) idempotently to player SSOT events
           if (Array.isArray(match.events) && match.events.length > 0) {
             for (const ev of match.events) {
               const evNameLower = ev.playerName.trim().toLowerCase();
@@ -1249,8 +1268,10 @@ export const useTradeStore = create<TradeStoreState>()(
 
               const target = nextPlayers[targetIdx];
               const minute = Math.min(90, Math.max(1, ev.minute));
-              const alreadyApplied = target.priceHistory.some(
-                (pt) => pt.minute === minute && pt.event?.type === ev.type
+              const normalizedType = normalizeMatchEventType(ev.type);
+              const existingEvents = target.events ?? [];
+              const alreadyApplied = existingEvents.some(
+                (e) => e.minute === minute && e.type === normalizedType
               );
               if (alreadyApplied) continue;
 
@@ -1268,92 +1289,74 @@ export const useTradeStore = create<TradeStoreState>()(
                 {
                   baseRate: number;
                   sentiment: EventSentiment;
-                  shortLabel: string;
+                  description: string;
                   bannerText: string;
                 }
               > = {
                 GOAL: {
                   baseRate: 0.085,
                   sentiment: "positive",
-                  shortLabel: "⚽ 득점",
+                  description: "실경기 득점 성공",
                   bannerText: `⚽ ${minute}' 실경기 득점 반영!`,
                 },
                 ASSIST: {
                   baseRate: 0.05,
                   sentiment: "positive",
-                  shortLabel: "🎯 어시스트",
+                  description: "실경기 결정적 어시스트",
                   bannerText: `🎯 ${minute}' 실경기 어시스트 반영!`,
                 },
                 SAVE: {
                   baseRate: 0.04,
                   sentiment: "positive",
-                  shortLabel: "🧤 슈퍼세이브",
+                  description: "실경기 결정적 슈퍼세이브",
                   bannerText: `🧤 ${minute}' 실경기 결정적 선방!`,
                 },
                 YELLOW_CARD: {
                   baseRate: -0.03,
                   sentiment: "negative",
-                  shortLabel: "🟨 경고",
+                  description: "실경기 옐로카드 경고",
                   bannerText: `🟨 ${minute}' 실경기 옐로카드 경고`,
                 },
                 RED_CARD: {
                   baseRate: -0.1,
                   sentiment: "negative",
-                  shortLabel: "🟥 퇴장",
+                  description: "실경기 레드카드 퇴장",
                   bannerText: `🟥 ${minute}' 실경기 레드카드 퇴장`,
                 },
                 SUB_OUT: {
                   baseRate: -0.015,
                   sentiment: "neutral",
-                  shortLabel: "🔄 교체",
+                  description: "실경기 교체 아웃",
                   bannerText: `🔄 ${minute}' 실경기 교체 아웃`,
                 },
               };
 
-              const spec = eventSpec[ev.type];
-              const rawRate = spec.baseRate * tierCfg.volatilityMultiplier;
-              const prevPrice = clampToPriceLimit(
-                target.currentPrice,
-                basePrice
-              );
-              const nextPrice = clampToPriceLimit(
-                Math.round(prevPrice * (1 + rawRate)),
-                basePrice
-              );
+              const spec = eventSpec[ev.type] ?? eventSpec.GOAL;
               const impactPct = Number(
-                (
-                  ((nextPrice - prevPrice) / Math.max(1, prevPrice)) *
-                  100
-                ).toFixed(1)
+                (spec.baseRate * tierCfg.volatilityMultiplier * 100).toFixed(1)
               );
-              const sign = impactPct > 0 ? "+" : "";
-              const marker: ChartEventMarker = {
-                type: ev.type,
-                label: `${spec.shortLabel} (${sign}${impactPct}%)`,
-                impactPercent: impactPct,
+
+              const newMatchEvent: MatchEvent = {
+                id: ev.id || `ev-${target.id}-${minute}-${normalizedType}`,
+                playerId: target.id,
+                minute,
+                type: normalizedType,
+                description: spec.description,
+                priceImpactPercent: impactPct,
               };
 
-              const updatedHistory = normalizePriceHistory(
-                [
-                  ...target.priceHistory,
-                  {
-                    minute,
-                    timeLabel: formatMinuteLabel(minute),
-                    price: nextPrice,
-                    changePercentFromOpen:
-                      openPrice > 0
-                        ? Number(
-                            (((nextPrice - openPrice) / openPrice) * 100).toFixed(
-                              2
-                            )
-                          )
-                        : 0,
-                    event: marker,
-                  },
-                ],
-                openPrice,
-                basePrice
+              const nextEvents = normalizeMatchEvents(
+                [...existingEvents, newMatchEvent],
+                target.id
               );
+              const derived = derivePlayerMarketData({
+                playerId: target.id,
+                openPrice,
+                basePrice,
+                events: nextEvents,
+                currentMinute: Math.max(minute, match.minute ?? minute),
+                matchStatus: match.status,
+              });
 
               const nextStats = { ...target.stats };
               if (ev.type === "GOAL") {
@@ -1380,9 +1383,17 @@ export const useTradeStore = create<TradeStoreState>()(
 
               const updatedPlayer: Player = {
                 ...target,
-                previousPrice: prevPrice,
-                currentPrice: nextPrice,
-                priceHistory: updatedHistory,
+                openPrice: derived.openPrice,
+                ...(derived.closePrice !== undefined
+                  ? { closePrice: derived.closePrice }
+                  : {}),
+                previousPrice: derived.previousPrice,
+                currentPrice: derived.currentPrice,
+                highPrice: derived.highPrice,
+                lowPrice: derived.lowPrice,
+                volume: derived.volume,
+                events: derived.events,
+                priceHistory: derived.priceHistory,
                 lastEvent: {
                   text: spec.bannerText,
                   sentiment: spec.sentiment,
@@ -1393,11 +1404,15 @@ export const useTradeStore = create<TradeStoreState>()(
 
               nextPlayers[targetIdx] = updatedPlayer;
               nextPlayerPrices[updatedPlayer.id] = {
-                openPrice,
-                closePrice: updatedPlayer.closePrice,
-                currentPrice: nextPrice,
-                previousPrice: prevPrice,
-                priceHistory: updatedHistory,
+                openPrice: derived.openPrice,
+                closePrice: derived.closePrice,
+                currentPrice: derived.currentPrice,
+                previousPrice: derived.previousPrice,
+                highPrice: derived.highPrice,
+                lowPrice: derived.lowPrice,
+                volume: derived.volume,
+                events: derived.events,
+                priceHistory: derived.priceHistory,
               };
               playersChanged = true;
             }
@@ -1525,33 +1540,64 @@ export const useTradeStore = create<TradeStoreState>()(
             (chosen.statEffect === "goal" || chosen.statEffect === "assist") &&
             Math.random() < 0.25;
 
-          // Mean of natural fluctuation is strictly 0% (Math.random() * 0.05 - 0.025)
-          // Both special events and natural ticks scale by tier volatilityMultiplier (S: 1.2x ~ C: 2.2x)
           const baseRate = isSpecialGoalOrAssist
             ? chosen.minRate +
               Math.random() * (chosen.maxRate - chosen.minRate)
             : Math.random() * 0.05 - 0.025;
           const rawRate = baseRate * tierCfg.volatilityMultiplier;
-
-          let nextPrice = Math.round(safeCurrentPrice * (1 + rawRate));
-          nextPrice = clampToPriceLimit(nextPrice, basePrice);
-
-          if (nextPrice === safeCurrentPrice) {
-            return {
-              ...player,
-              basePrice,
-              openPrice,
-              initialPrice: basePrice,
-              currentPrice: safeCurrentPrice,
-            };
-          }
+          const tickImpactPct = Number((rawRate * 100).toFixed(1));
 
           const currentMinute = Math.max(
             1,
             Math.min(95, match?.minute ?? player.lastEvent.minute ?? 46)
           );
-          const timeLabel = formatMinuteLabel(currentMinute);
 
+          const isMilestoneChartEvent =
+            isSpecialGoalOrAssist ||
+            (Boolean(chosen.chartEventType) &&
+              chosen.chartEventType !== "GOAL" &&
+              chosen.chartEventType !== "ASSIST" &&
+              Math.random() < 0.12 &&
+              ((chosen.chartEventType === "YELLOW_CARD" &&
+                tickImpactPct < 0) ||
+                (chosen.chartEventType === "SAVE" && tickImpactPct > 0)));
+
+          let nextEvents = player.events ?? [];
+          if (isMilestoneChartEvent && chosen.chartEventType && tickImpactPct !== 0) {
+            const evType = normalizeMatchEventType(
+              chosen.chartEventType,
+              tickImpactPct
+            );
+            const newEv: MatchEvent = {
+              id: `ev-${player.id}-${currentMinute}-${evType}`,
+              playerId: player.id,
+              minute: currentMinute,
+              type: evType,
+              description: cleanEventDescription(
+                chosen.chartEventTitle ?? chosen.text,
+                evType
+              ),
+              priceImpactPercent: tickImpactPct,
+            };
+            nextEvents = normalizeMatchEvents(
+              [
+                ...nextEvents.filter((e) => e.minute < currentMinute),
+                newEv,
+              ],
+              player.id
+            );
+          }
+
+          const derived = derivePlayerMarketData({
+            playerId: player.id,
+            openPrice,
+            basePrice,
+            events: nextEvents,
+            currentMinute,
+            matchStatus: "LIVE",
+          });
+
+          const nextPrice = derived.currentPrice;
           const nextStats = { ...player.stats };
           if (isSpecialGoalOrAssist && chosen.statEffect === "goal") {
             nextStats.goals += 1;
@@ -1593,91 +1639,30 @@ export const useTradeStore = create<TradeStoreState>()(
               : "🔄 수비 대형 유지 및 볼 순환"
             : chosen.text;
 
-          const tickImpactPct = Number(
-            (
-              ((nextPrice - safeCurrentPrice) /
-                Math.max(1, safeCurrentPrice)) *
-              100
-            ).toFixed(1)
-          );
-
-          const isMilestoneChartEvent =
-            isSpecialGoalOrAssist ||
-            (Boolean(chosen.chartEventType) &&
-              chosen.chartEventType !== "GOAL" &&
-              chosen.chartEventType !== "ASSIST" &&
-              Math.random() < 0.12 &&
-              ((chosen.chartEventType === "YELLOW_CARD" &&
-                nextPrice < safeCurrentPrice) ||
-                (chosen.chartEventType === "SAVE" &&
-                  nextPrice > safeCurrentPrice)));
-
-          const eventMarker: ChartEventMarker | undefined =
-            isMilestoneChartEvent && chosen.chartEventType
-              ? {
-                  type: chosen.chartEventType,
-                  label: `${chosen.chartEventTitle ?? "⚡ 주요 장면"} (${
-                    tickImpactPct >= 0 ? "+" : ""
-                  }${tickImpactPct.toFixed(1)}%)`,
-                  impactPercent: tickImpactPct,
-                }
-              : undefined;
-
-          const changePercentFromOpen = Number(
-            (
-              ((nextPrice - openPrice) / Math.max(1, openPrice)) *
-              100
-            ).toFixed(2)
-          );
-
-          // Sequential 0~90 minute timeline preservation:
-          // Keep points strictly before currentMinute, always preserving 0' (openPrice) and any event points
-          const priorPoints = player.priceHistory.filter(
-            (pt) => pt.minute < currentMinute
-          );
-          const sameMinuteExisting = player.priceHistory.find(
-            (pt) => pt.minute === currentMinute
-          );
-          const mergedEvent = eventMarker ?? sameMinuteExisting?.event;
-
-          // Keep all milestone/event points + 0', 15', 30', 45' anchors + recent ticks so chart stays clean & detailed
-          const compactedPrior = priorPoints.filter((pt, idx, arr) => {
-            if (pt.minute === 0 || pt.minute === 45 || pt.event) return true;
-            if (pt.minute % 15 === 0) return true;
-            return idx >= arr.length - 12;
-          });
-
-          const nextHistory = normalizePriceHistory(
-            [
-              ...compactedPrior,
-              {
-                minute: currentMinute,
-                timeLabel,
-                price: nextPrice,
-                changePercentFromOpen,
-                ...(mergedEvent ? { event: mergedEvent } : {}),
-              },
-            ],
-            openPrice,
-            basePrice
-          );
-
           nextPlayerPrices[player.id] = {
-            openPrice,
+            openPrice: derived.openPrice,
             closePrice: player.closePrice,
-            currentPrice: nextPrice,
+            currentPrice: derived.currentPrice,
             previousPrice: safeCurrentPrice,
-            priceHistory: nextHistory,
+            highPrice: derived.highPrice,
+            lowPrice: derived.lowPrice,
+            volume: derived.volume,
+            events: derived.events,
+            priceHistory: derived.priceHistory,
           };
 
           return {
             ...player,
             basePrice,
-            openPrice,
+            openPrice: derived.openPrice,
             initialPrice: basePrice,
             previousPrice: safeCurrentPrice,
-            currentPrice: nextPrice,
-            priceHistory: nextHistory,
+            currentPrice: derived.currentPrice,
+            highPrice: derived.highPrice,
+            lowPrice: derived.lowPrice,
+            volume: derived.volume,
+            events: derived.events,
+            priceHistory: derived.priceHistory,
             lastEvent: {
               text: displayEventText,
               sentiment: (
@@ -1721,6 +1706,18 @@ export const useTradeStore = create<TradeStoreState>()(
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
         }
 
+        const basePrice = roundToTen(
+          player.basePrice ?? player.initialPrice ?? player.currentPrice
+        );
+        const capPrice = roundToTen(basePrice * 1.3);
+        const executedPrice = roundToTen(player.currentPrice);
+        if (executedPrice >= capPrice) {
+          return {
+            success: false,
+            message: "상한가 도달 — 추가 매수 불가 (매도만 가능)",
+          };
+        }
+
         // Remaining supply counts shares held by every account, not only the active user
         const availableShares = getAvailableShares(
           player,
@@ -1735,7 +1732,6 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         }
 
-        const executedPrice = roundToTen(player.currentPrice);
         const totalCost = roundToTen(executedPrice * quantity);
         if (totalCost > cash) {
           return {
@@ -2037,11 +2033,6 @@ export const useTradeStore = create<TradeStoreState>()(
           nextPrice = clampToPriceLimit(prevPrice - 200, basePrice);
         }
 
-        const capped =
-          meta.baseRate > 0
-            ? nextPrice >= capPrice && prevPrice >= capPrice
-            : nextPrice <= floorPrice && prevPrice <= floorPrice;
-
         const match =
           matches.find(
             (m) =>
@@ -2055,42 +2046,45 @@ export const useTradeStore = create<TradeStoreState>()(
           92,
           Math.max(1, match?.minute ?? Math.min(90, lastHistoryMin + 2))
         );
-        const timeLabel = formatMinuteLabel(currentMinute);
+
+        const rawImpactPct = Number((scaledRate * 100).toFixed(1));
+        const normalizedType = normalizeMatchEventType(eventType, rawImpactPct);
+        const newEv: MatchEvent = {
+          id: `ev-${target.id}-${currentMinute}-${normalizedType}-${Date.now()}`,
+          playerId: target.id,
+          minute: currentMinute,
+          type: normalizedType,
+          description: cleanEventDescription(meta.feedText, normalizedType),
+          priceImpactPercent: rawImpactPct,
+        };
+
+        const nextEvents = normalizeMatchEvents(
+          [
+            ...(target.events ?? []).filter((e) => e.minute < currentMinute),
+            newEv,
+          ],
+          target.id
+        );
+
+        const derived = derivePlayerMarketData({
+          playerId: target.id,
+          openPrice,
+          basePrice,
+          events: nextEvents,
+          currentMinute,
+          matchStatus: "LIVE",
+        });
+
+        nextPrice = derived.currentPrice;
+        const capped =
+          meta.baseRate > 0
+            ? nextPrice >= capPrice && prevPrice >= capPrice
+            : nextPrice <= floorPrice && prevPrice <= floorPrice;
 
         const ratePct = Number(
           (
             prevPrice > 0 ? ((nextPrice - prevPrice) / prevPrice) * 100 : 0
           ).toFixed(1)
-        );
-        const eventMarker: ChartEventMarker = {
-          type: eventType,
-          label: `${meta.title} (${ratePct >= 0 ? "+" : ""}${ratePct.toFixed(
-            1
-          )}%)`,
-          impactPercent: ratePct,
-        };
-
-        const priorPoints = target.priceHistory.filter(
-          (pt) => pt.minute < currentMinute
-        );
-        const nextHistory = normalizePriceHistory(
-          [
-            ...priorPoints,
-            {
-              minute: currentMinute,
-              timeLabel,
-              price: nextPrice,
-              changePercentFromOpen: Number(
-                (
-                  ((nextPrice - openPrice) / Math.max(1, openPrice)) *
-                  100
-                ).toFixed(2)
-              ),
-              event: eventMarker,
-            },
-          ],
-          openPrice,
-          basePrice
         );
 
         const nextStats = {
@@ -2134,11 +2128,15 @@ export const useTradeStore = create<TradeStoreState>()(
         const updatedPlayer: Player = {
           ...target,
           basePrice,
-          openPrice,
+          openPrice: derived.openPrice,
           initialPrice: basePrice,
           previousPrice: prevPrice,
-          currentPrice: nextPrice,
-          priceHistory: nextHistory,
+          currentPrice: derived.currentPrice,
+          highPrice: derived.highPrice,
+          lowPrice: derived.lowPrice,
+          volume: derived.volume,
+          events: derived.events,
+          priceHistory: derived.priceHistory,
           lastEvent: {
             text: meta.feedText,
             sentiment: meta.sentiment,
@@ -2154,11 +2152,15 @@ export const useTradeStore = create<TradeStoreState>()(
         const nextPlayerPrices: Record<string, PersistedPlayerPrice> = {
           ...playerPrices,
           [updatedPlayer.id]: {
-            openPrice,
+            openPrice: derived.openPrice,
             closePrice: updatedPlayer.closePrice,
-            currentPrice: nextPrice,
+            currentPrice: derived.currentPrice,
             previousPrice: prevPrice,
-            priceHistory: nextHistory,
+            highPrice: derived.highPrice,
+            lowPrice: derived.lowPrice,
+            volume: derived.volume,
+            events: derived.events,
+            priceHistory: derived.priceHistory,
           },
         };
 
@@ -2206,6 +2208,7 @@ export const useTradeStore = create<TradeStoreState>()(
         if (typeof window !== "undefined") {
           window.localStorage.removeItem("pitch-trade-storage-v1");
           window.localStorage.removeItem("fotmob-pitchtrade-storage-v2");
+          window.localStorage.removeItem("fotmob-pitchtrade-storage-v3");
         }
         const nextAccounts = syncActiveUserToAccounts({
           ...state,
@@ -2232,7 +2235,7 @@ export const useTradeStore = create<TradeStoreState>()(
       },
     }),
     {
-      name: "fotmob-pitchtrade-storage-v3",
+      name: "fotmob-pitchtrade-storage-v4",
       storage: createJSONStorage(() => localStorage),
       // Persist only user session, account registry, asset data, watchlist, and lightweight playerPrices map (never master matches/players)
       partialize: (state) => ({

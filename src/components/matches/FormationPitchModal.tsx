@@ -27,6 +27,8 @@ import {
   clampToPriceLimit,
   doesPlayerBelongToTeam,
   isNationalTeamMatch,
+  calculateChangePercentFromOpen,
+  calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import { getTierConfig } from "@/utils/tier";
 
@@ -1429,9 +1431,18 @@ export default function FormationPitchModal({
                       className="flex items-center justify-around gap-1"
                     >
                       {row.map((player) => {
-                        const base = player.basePrice ?? player.initialPrice;
-                        const diff = player.currentPrice - base;
-                        const pct = ((diff / base) * 100).toFixed(1);
+                        const base =
+                          player.openPrice ??
+                          player.basePrice ??
+                          player.initialPrice;
+                        const diff = calculateDiffFromOpen(
+                          player.currentPrice,
+                          base
+                        );
+                        const pct = calculateChangePercentFromOpen(
+                          player.currentPrice,
+                          base
+                        ).toFixed(1);
                         const isUp = diff > 0;
                         const isDown = diff < 0;
                         const holding = holdings[player.id];
@@ -1525,9 +1536,16 @@ export default function FormationPitchModal({
                 {isBenchOpen && (
                   <div className="divide-y divide-gray-100 border-t border-gray-100 px-3 py-1">
                     {benchPlayers.slice(0, 5).map((sub) => {
-                      const base = sub.basePrice ?? sub.initialPrice;
-                      const diff = sub.currentPrice - base;
-                      const pct = ((diff / base) * 100).toFixed(1);
+                      const base =
+                        sub.openPrice ?? sub.basePrice ?? sub.initialPrice;
+                      const diff = calculateDiffFromOpen(
+                        sub.currentPrice,
+                        base
+                      );
+                      const pct = calculateChangePercentFromOpen(
+                        sub.currentPrice,
+                        base
+                      ).toFixed(1);
                       const isUp = diff > 0;
                       const isDown = diff < 0;
                       const holding = holdings[sub.id];

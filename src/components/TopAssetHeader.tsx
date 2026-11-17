@@ -102,6 +102,12 @@ export default function TopAssetHeader({
           <span className="text-[17px] font-extrabold tracking-tight text-gray-900">
             Pitch<span className="text-[#00985f]">Trade</span>
           </span>
+          <span
+            title="시뮬레이션 및 더미 데이터 기반 데모 프로토타입"
+            className="rounded-md bg-amber-100 border border-amber-300/80 px-1.5 py-0.5 font-mono text-[9px] font-black tracking-wider text-amber-800 shrink-0"
+          >
+            DEMO
+          </span>
           <MarketCountdownBadge externalCountdown={countdown} />
         </div>
 

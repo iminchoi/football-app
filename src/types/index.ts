@@ -142,13 +142,23 @@ export interface StoredUserAccount {
   createdAt: string;
 }
 
-export type ChartEventType =
+export type MatchEventType =
   | "GOAL"
   | "ASSIST"
   | "YELLOW_CARD"
   | "RED_CARD"
-  | "SAVE"
-  | "SUB_OUT";
+  | "SAVE";
+
+export type ChartEventType = MatchEventType | "SUB_OUT";
+
+export interface MatchEvent {
+  id: string;
+  playerId: string;
+  minute: number;
+  type: MatchEventType;
+  description: string;
+  priceImpactPercent: number;
+}
 
 export interface ChartEventMarker {
   type: ChartEventType;
@@ -164,11 +174,30 @@ export interface PricePoint {
   event?: ChartEventMarker; // 이벤트가 발생한 분에만 존재
 }
 
+export type CandleTimeframe = "3M" | "1M" | "15M" | "1D";
+
+export interface CandleData {
+  index: number;
+  minute?: number;
+  label: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  event?: ChartEventMarker;
+  matchEvent?: MatchEvent;
+}
+
 export interface PersistedPlayerPrice {
   openPrice?: number;
   closePrice?: number;
   currentPrice: number;
   previousPrice: number;
+  highPrice?: number;
+  lowPrice?: number;
+  volume?: number;
+  events?: MatchEvent[];
   priceHistory: PricePoint[];
 }
 
@@ -193,6 +222,10 @@ export interface Player {
   initialPrice: number;
   currentPrice: number;
   previousPrice: number;
+  highPrice?: number; // 당일 최고가 (SSOT)
+  lowPrice?: number; // 당일 최저가 (SSOT)
+  volume?: number; // 당일 누적 거래량 (SSOT)
+  events?: MatchEvent[]; // 단일 경기 이벤트 배열 (SSOT)
   priceHistory: PricePoint[];
   lastEvent: {
     text: string;

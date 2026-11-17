@@ -11,13 +11,20 @@ import {
   ReferenceLine,
   Tooltip,
 } from "recharts";
-import { Zap, Maximize2 } from "lucide-react";
+import { Maximize2 } from "lucide-react";
 import {
   useTradeStore,
   roundToTen,
   clampToPriceLimit,
   doesPlayerBelongToMatch,
 } from "@/store/useTradeStore";
+import {
+  calculateChangePercentFromOpen,
+  calculateDiffFromOpen,
+  derivePlayerMarketData,
+  extractInitialMatchEvents,
+} from "@/utils/priceEngine";
+import MatchEventTimeline from "@/components/MatchEventTimeline";
 import {
   ChartEventMarker,
   ChartEventType,
@@ -336,97 +343,43 @@ export default function MatchTimelineChart({
   const basePrice = roundToTen(
     player.basePrice ?? player.initialPrice ?? player.currentPrice
   );
-  const openPrice = roundToTen(
+  const rawOpenPrice = roundToTen(
     player.openPrice ?? player.priceHistory[0]?.price ?? basePrice
   );
-  const currentPrice = roundToTen(player.currentPrice);
+
+  // Derive SSOT timeline & metrics from player.events and openPrice
+  const ssotData = useMemo(() => {
+    const events = extractInitialMatchEvents({
+      ...player,
+      openPrice: rawOpenPrice,
+      basePrice,
+    });
+    const endMin =
+      matchStatus === "FT"
+        ? 90
+        : matchStatus === "UPCOMING"
+        ? 0
+        : playerMatch?.minute ?? player.lastEvent?.minute ?? 60;
+    return derivePlayerMarketData({
+      playerId: player.id,
+      openPrice: rawOpenPrice,
+      basePrice,
+      events,
+      currentMinute: endMin,
+      matchStatus,
+    });
+  }, [player, rawOpenPrice, basePrice, matchStatus, playerMatch?.minute]);
+
+  const openPrice = player.openPrice ?? ssotData.openPrice;
   const closePrice =
     matchStatus === "FT"
-      ? roundToTen(player.closePrice ?? currentPrice)
-      : currentPrice;
-
-  // Build normalized 0~90+ minute timeline series
-  const timelineData: PricePoint[] = useMemo(() => {
-    const raw = Array.isArray(player.priceHistory) ? player.priceHistory : [];
-    const byMin = new Map<number, PricePoint>();
-
-    byMin.set(0, {
-      minute: 0,
-      timeLabel: "0'",
-      price: openPrice,
-      changePercentFromOpen: 0,
-    });
-
-    raw.forEach((pt, idx) => {
-      const m =
-        typeof pt.minute === "number" && Number.isFinite(pt.minute)
-          ? Math.max(0, Math.min(96, Math.round(pt.minute)))
-          : Math.min(90, idx * 15);
-      const p = m === 0 ? openPrice : roundToTen(pt.price);
-      const prev = byMin.get(m);
-      byMin.set(m, {
-        minute: m,
-        timeLabel: pt.timeLabel || (m > 90 ? `90+${m - 90}'` : `${m}'`),
-        price: p,
-        changePercentFromOpen: Number(
-          (((p - openPrice) / Math.max(1, openPrice)) * 100).toFixed(2)
-        ),
-        event: pt.event ?? prev?.event,
-      });
-    });
-
-    if (matchStatus === "UPCOMING" && byMin.size <= 2) {
-      return [
-        {
-          minute: 0,
-          timeLabel: "0'",
-          price: openPrice,
-          changePercentFromOpen: 0,
-        },
-      ];
-    }
-
-    const sorted = Array.from(byMin.values()).sort(
-      (a, b) => a.minute - b.minute
-    );
-    const lastPt = sorted[sorted.length - 1];
-    const targetEndMin =
-      matchStatus === "FT"
-        ? Math.max(90, lastPt?.minute ?? 90)
-        : Math.max(
-            lastPt?.minute ?? 45,
-            playerMatch?.minute ?? player.lastEvent?.minute ?? 60
-          );
-
-    if (!lastPt || lastPt.minute < targetEndMin) {
-      sorted.push({
-        minute: targetEndMin,
-        timeLabel:
-          targetEndMin > 90 ? `90+${targetEndMin - 90}'` : `${targetEndMin}'`,
-        price: closePrice,
-        changePercentFromOpen: Number(
-          (((closePrice - openPrice) / Math.max(1, openPrice)) * 100).toFixed(2)
-        ),
-      });
-    } else if (lastPt) {
-      sorted[sorted.length - 1] = {
-        ...lastPt,
-        price: closePrice,
-        changePercentFromOpen: Number(
-          (((closePrice - openPrice) / Math.max(1, openPrice)) * 100).toFixed(2)
-        ),
-      };
-    }
-
-    return sorted;
-  }, [
-    player.priceHistory,
-    player.lastEvent?.minute,
-    openPrice,
-    closePrice,
-    matchStatus,
-    playerMatch?.minute,
-  ]);
+      ? roundToTen(player.closePrice ?? player.currentPrice ?? ssotData.currentPrice)
+      : roundToTen(player.currentPrice ?? ssotData.currentPrice);
+  const highPrice = player.highPrice ?? ssotData.highPrice;
+  const lowPrice = player.lowPrice ?? ssotData.lowPrice;
+  const volume = player.volume ?? ssotData.volume;
+  const timelineData: PricePoint[] = ssotData.priceHistory;
+  const canonicalEvents = player.events ?? ssotData.events;
 
   const eventPoints = useMemo(
     () =>
@@ -446,17 +399,8 @@ export default function MatchTimelineChart({
     return eventPoints[eventPoints.length - 1];
   }, [eventPoints, selectedEventMinute]);
 
-  const { highPrice, lowPrice } = useMemo(() => {
-    const allP = timelineData.map((d) => d.price).concat([openPrice, closePrice]);
-    return {
-      highPrice: Math.max(...allP),
-      lowPrice: Math.min(...allP),
-    };
-  }, [timelineData, openPrice, closePrice]);
-
-  const diffFromOpen = closePrice - openPrice;
-  const pctFromOpen =
-    openPrice > 0 ? Number(((diffFromOpen / openPrice) * 100).toFixed(2)) : 0;
+  const diffFromOpen = calculateDiffFromOpen(closePrice, openPrice);
+  const pctFromOpen = calculateChangePercentFromOpen(closePrice, openPrice);
   const isUpFromOpen = diffFromOpen > 0;
   const isDownFromOpen = diffFromOpen < 0;
 
@@ -515,7 +459,7 @@ export default function MatchTimelineChart({
           className="mb-2.5 flex w-full items-center justify-between rounded-xl border border-[#00A878]/30 bg-[#00A878]/10 px-3 py-2 text-xs font-extrabold text-[#00A878] transition hover:bg-[#00A878] hover:text-white active:scale-[0.99]"
         >
           <span className="flex items-center gap-1.5">
-            <span>📊 실시간 캔들 차트 크게 보기 (OHLC · 줌/팬 지원)</span>
+            <span>📊 캔들 차트 크게 보기</span>
           </span>
           <Maximize2 className="h-3.5 w-3.5 shrink-0" />
         </button>
@@ -558,7 +502,7 @@ export default function MatchTimelineChart({
         </button>
       </div>
 
-      {/* Match Context Banner + Status Badge */}
+      {/* Match Context Banner */}
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-1.5 px-0.5">
         <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-700">
           {playerMatch ? (
@@ -575,91 +519,23 @@ export default function MatchTimelineChart({
               </span>
             </>
           ) : (
-            <span className="text-gray-500">0~90분 매치 타임라인 시세 연동</span>
+            <span className="text-gray-500">매치 타임라인 시세</span>
           )}
-        </div>
-
-        {matchStatus === "FT" ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-slate-200/80 px-2.5 py-0.5 font-mono text-[10px] font-extrabold text-slate-800">
-            시가 {openPrice.toLocaleString()}P ➔ 확정 종가{" "}
-            {closePrice.toLocaleString()}P ({isUpFromOpen ? "+" : ""}
-            {pctFromOpen}%)
-          </span>
-        ) : matchStatus === "LIVE" ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-[#00A878]/10 border border-[#00A878]/30 px-2 py-0.5 font-mono text-[10px] font-extrabold text-[#00A878]">
-            ⚡ 0~90분 이벤트 실시간 반영 중
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 font-mono text-[10px] font-extrabold text-amber-700">
-            킥오프 시점 시가 {openPrice.toLocaleString()}P 기준
-          </span>
-        )}
-      </div>
-
-      {/* 2. 4-Metric Trading Summary Bar: 시가 / 현재가(종가) / 고가 / 저가 */}
-      <div className="mt-2 grid grid-cols-4 gap-1.5 rounded-xl bg-white p-2 border border-gray-100 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
-        <div className="px-1.5 py-0.5">
-          <div className="text-[10px] font-bold text-gray-400">
-            시가 (0&apos; 킥오프)
-          </div>
-          <div className="font-mono text-xs font-black text-gray-800">
-            {openPrice.toLocaleString()}P
-          </div>
-        </div>
-
-        <div className="border-l border-gray-100 px-1.5 py-0.5">
-          <div className="text-[10px] font-bold text-gray-400">
-            {matchStatus === "FT" ? "확정 종가 (90')" : "현재가 (실시간)"}
-          </div>
-          <div
-            className={`font-mono text-xs font-black ${
-              isUpFromOpen
-                ? "text-[#00A878]"
-                : isDownFromOpen
-                ? "text-[#F07868]"
-                : "text-[#A8B2BC]"
-            }`}
-          >
-            {closePrice.toLocaleString()}P{" "}
-            <span className="text-[10px]">
-              ({isUpFromOpen ? "+" : ""}
-              {pctFromOpen}%)
-            </span>
-          </div>
-        </div>
-
-        <div className="border-l border-gray-100 px-1.5 py-0.5">
-          <div className="text-[10px] font-bold text-gray-400">당일 고가</div>
-          <div className="font-mono text-xs font-black text-[#00A878]">
-            {highPrice.toLocaleString()}P
-          </div>
-        </div>
-
-        <div className="border-l border-gray-100 px-1.5 py-0.5">
-          <div className="text-[10px] font-bold text-gray-400">당일 저가</div>
-          <div className="font-mono text-xs font-black text-[#F07868]">
-            {lowPrice.toLocaleString()}P
-          </div>
         </div>
       </div>
 
       {/* 3. Main Chart Area */}
       {viewMode === "MATCH_TIMELINE" ? (
         <>
-          <div className="relative mt-2.5 h-72 w-full rounded-2xl bg-white border border-gray-100 pt-3 pr-2 pb-1 pl-1 shadow-inner">
-            <div className="flex items-center justify-between px-3 pb-1 text-[10px] font-semibold text-gray-400">
-              <div className="flex items-center gap-2.5">
-                <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-0.5 w-3 border-t border-dashed border-[#00A878]" />
-                  현재가 기준선 ({closePrice.toLocaleString()}P)
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-2.5 w-0.5 border-l border-dashed border-amber-500" />
-                  하프타임 (45&apos; HT)
-                </span>
-              </div>
-              <span className="font-mono text-[10px] font-bold text-gray-500">
-                X축: 0&apos; ~ 90&apos; 고정
+          <div className="relative mt-2 h-64 w-full rounded-2xl bg-white border border-gray-100 pt-2.5 pr-2 pb-1 pl-1 shadow-inner">
+            <div className="flex items-center gap-2.5 px-3 pb-1 text-[10px] font-semibold text-gray-400">
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block h-0.5 w-3 border-t border-dashed border-[#00A878]" />
+                현재가 ({closePrice.toLocaleString()}P)
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block h-2.5 w-0.5 border-l border-dashed border-amber-500" />
+                45&apos; HT
               </span>
             </div>
 
@@ -980,93 +856,16 @@ export default function MatchTimelineChart({
             )}
           </div>
 
-          {/* 4. Horizontal Scrollable Match Event Timeline Chips Bar (Read-Only for Regular Users) */}
-          <div className="mt-2.5 rounded-xl bg-white border border-gray-100 p-2.5">
-            <div className="mb-1.5 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                <Zap className="h-3.5 w-3.5 text-[#00A878]" />
-                <span className="text-xs font-extrabold text-gray-800">
-                  경기 이벤트 타임라인 마커 (0&apos;~90&apos;)
-                </span>
-              </div>
-              <span className="text-[10px] font-medium text-gray-400">
-                칩 터치 시 해당 분 시세·변동폭 표시
-              </span>
-            </div>
-
-            {eventPoints.length > 0 ? (
-              <>
-                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
-                  {eventPoints.map((pt) => {
-                    const cfg =
-                      EVENT_PIN_CONFIG[pt.event.type] ?? EVENT_PIN_CONFIG.GOAL;
-                    const isSelected = activeEventPoint?.minute === pt.minute;
-                    const impact = pt.event.impactPercent;
-                    return (
-                      <button
-                        key={`chip-${pt.minute}-${pt.event.type}`}
-                        type="button"
-                        onClick={() => setSelectedEventMinute(pt.minute)}
-                        className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-extrabold transition ${
-                          isSelected
-                            ? "bg-gray-900 text-white border-gray-900 shadow-xs scale-[1.02]"
-                            : `${cfg.chipBg} ${cfg.chipText} ${cfg.chipBorder} hover:opacity-90`
-                        }`}
-                      >
-                        <span className="font-mono text-[10px] opacity-85">
-                          {pt.minute > 90
-                            ? `90+${pt.minute - 90}'`
-                            : `${pt.minute}'`}
-                        </span>
-                        <span>{cfg.icon}</span>
-                        <span>{cfg.shortTitle}</span>
-                        <span
-                          className={`font-mono text-[10px] ${
-                            isSelected
-                              ? impact > 0
-                                ? "text-[#00A878]"
-                                : impact < 0
-                                ? "text-[#F07868]"
-                                : "text-[#A8B2BC]"
-                              : ""
-                          }`}
-                        >
-                          {impact > 0 ? "+" : ""}
-                          {impact.toFixed(1)}%
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {activeEventPoint && (
-                  <div className="mt-2 flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2 border border-gray-200/70 text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="rounded-md bg-gray-900 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-white">
-                        {activeEventPoint.minute > 90
-                          ? `90+${activeEventPoint.minute - 90}'`
-                          : `${activeEventPoint.minute}'`}
-                      </span>
-                      <span className="truncate font-bold text-gray-800">
-                        {activeEventPoint.event.label}
-                      </span>
-                    </div>
-                    <div className="shrink-0 text-right font-mono">
-                      <span className="text-[11px] text-gray-500 mr-1.5">
-                        체결 시세
-                      </span>
-                      <strong className="text-xs font-black text-gray-900">
-                        {activeEventPoint.price.toLocaleString()}P
-                      </strong>
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <p className="py-1 text-[11px] text-gray-400">
-                현재까지 기록된 주요 경기 이벤트 마커가 없습니다.
-              </p>
-            )}
+          {/* 4. Shared SSOT Match Event Timeline Chips (Single Slim Row) */}
+          <div className="mt-2">
+            <MatchEventTimeline
+              events={canonicalEvents}
+              selectedMinute={activeEventPoint?.minute ?? null}
+              onSelectEvent={(ev) => setSelectedEventMinute(ev.minute)}
+              variant="CHIPS"
+              title="경기 이벤트"
+              subtitle=""
+            />
           </div>
         </>
       ) : (

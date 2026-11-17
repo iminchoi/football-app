@@ -11,36 +11,32 @@ import {
   ChevronRight,
   TrendingUp,
   TrendingDown,
-  Zap,
-  MoveHorizontal,
 } from "lucide-react";
 import {
   useTradeStore,
   roundToTen,
-  clampToPriceLimit,
   doesPlayerBelongToMatch,
 } from "@/store/useTradeStore";
 import {
-  ChartEventMarker,
+  calculateChangePercentFromOpen,
+  calculateDiffFromOpen,
+  deriveCandlesFromEvents,
+  derivePlayerMarketData,
+  extractInitialMatchEvents,
+  formatMinuteLabel,
+} from "@/utils/priceEngine";
+import {
+  CandleData,
+  CandleTimeframe,
+  ChartEventType,
   Match,
   Player,
   TradeType,
 } from "@/types";
 import { EVENT_PIN_CONFIG } from "./MatchTimelineChart";
 
-export type CandleTimeframe = "3M" | "1M" | "15M" | "1D";
-
-export interface OhlcCandle {
-  index: number;
-  minute?: number;
-  label: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  event?: ChartEventMarker;
-}
+export type { CandleTimeframe };
+export type OhlcCandle = CandleData;
 
 interface FullScreenCandleChartModalProps {
   player: Player | null;
@@ -49,243 +45,141 @@ interface FullScreenCandleChartModalProps {
   onSelectTrade?: (player: Player, type: TradeType) => void;
 }
 
-// Standardized PitchTrade Global Palette
-const COLOR_UP = "#00A878"; // Emerald Green
-const COLOR_DOWN = "#F07868"; // Coral
-const COLOR_FLAT = "#A8B2BC"; // Cool Gray
-
-function seededNoise(seedStr: string, index: number): number {
-  let h = 2166136261;
-  const str = `${seedStr}-${index}`;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return ((h >>> 0) % 1000) / 1000;
-}
+// Standardized PitchTrade Global Palette (Premium Dark Trading Terminal)
+const COLOR_UP = "#00B386";
+const COLOR_DOWN = "#F07868";
+const COLOR_FLAT = "#64748B";
 
 /**
- * Generates realistic OHLCV candlestick data synchronized with the player's
- * 0~90m match timeline (`openPrice`, `priceHistory`, `event` pins, and `currentPrice`).
+ * Minimal custom SVG vector event badge rendered directly on the candlestick chart.
  */
-function buildCandleSeries(
-  player: Player,
-  timeframe: CandleTimeframe,
-  matchStatus: "LIVE" | "FT" | "UPCOMING",
-  matchMinute: number
-): OhlcCandle[] {
-  const basePrice = roundToTen(
-    player.basePrice ?? player.initialPrice ?? player.currentPrice
-  );
-  const openPrice = roundToTen(
-    player.openPrice ?? player.priceHistory[0]?.price ?? basePrice
-  );
-  const currentPrice = roundToTen(player.currentPrice);
-  const finalClose =
-    matchStatus === "FT"
-      ? roundToTen(player.closePrice ?? currentPrice)
-      : currentPrice;
-
-  // Map known history points and events by minute
-  const historyMap = new Map<number, number>();
-  const eventMap = new Map<number, ChartEventMarker>();
-  historyMap.set(0, openPrice);
-
-  for (const pt of player.priceHistory ?? []) {
-    const m = Math.max(0, Math.min(96, Math.round(pt.minute ?? 0)));
-    historyMap.set(m, m === 0 ? openPrice : roundToTen(pt.price));
-    if (pt.event) {
-      eventMap.set(m, pt.event);
-    }
-  }
-
-  const endMin =
-    matchStatus === "FT"
-      ? 90
-      : matchStatus === "UPCOMING"
-      ? 30
-      : Math.max(
-          48,
-          Math.min(
-            94,
-            matchMinute ||
-              (player.priceHistory[player.priceHistory.length - 1]?.minute ?? 65)
-          )
-        );
-  historyMap.set(endMin, finalClose);
-
-  // Sorted anchor points for smooth interpolation
-  const anchorMinutes = Array.from(historyMap.keys()).sort((a, b) => a - b);
-  const getInterpolatedPrice = (targetMin: number): number => {
-    if (historyMap.has(targetMin)) return historyMap.get(targetMin)!;
-    let leftMin = 0;
-    let rightMin = endMin;
-    for (const m of anchorMinutes) {
-      if (m <= targetMin) leftMin = m;
-      if (m >= targetMin) {
-        rightMin = m;
-        break;
-      }
-    }
-    const leftP = historyMap.get(leftMin) ?? openPrice;
-    const rightP = historyMap.get(rightMin) ?? finalClose;
-    if (rightMin === leftMin) return leftP;
-    const ratio = (targetMin - leftMin) / (rightMin - leftMin);
-    const n = seededNoise(`${player.id}-interp`, targetMin);
-    const microWave = (n - 0.49) * basePrice * 0.014;
-    return clampToPriceLimit(
-      leftP + (rightP - leftP) * ratio + microWave,
-      basePrice
-    );
-  };
-
-  if (timeframe === "1D") {
-    const count = 24;
-    const candles: OhlcCandle[] = [];
-    const now = new Date();
-    let prevClose = clampToPriceLimit(
-      basePrice * (0.91 + seededNoise(player.id, 701) * 0.1),
-      basePrice
-    );
-
-    for (let i = 0; i < count; i++) {
-      const d = new Date(now);
-      d.setDate(now.getDate() - (count - 1 - i));
-      const label = `${d.getMonth() + 1}/${d.getDate()}`;
-      const n1 = seededNoise(`${player.id}-1d-o`, i);
-      const n2 = seededNoise(`${player.id}-1d-h`, i);
-      const n3 = seededNoise(`${player.id}-1d-l`, i);
-
-      const open = prevClose;
-      const close =
-        i === count - 1
-          ? finalClose
-          : clampToPriceLimit(
-              open +
-                ((finalClose - open) / Math.max(1, count - i)) * 0.65 +
-                (n1 - 0.48) * basePrice * 0.042,
-              basePrice
-            );
-
-      const bodyMax = Math.max(open, close);
-      const bodyMin = Math.min(open, close);
-      const wickUp = roundToTen((0.005 + n2 * 0.022) * basePrice);
-      const wickDown = roundToTen((0.005 + n3 * 0.022) * basePrice);
-      const high = clampToPriceLimit(bodyMax + wickUp, basePrice);
-      const low = clampToPriceLimit(bodyMin - wickDown, basePrice);
-      const priceSwing = Math.abs(close - open) + (high - low);
-      const volume = Math.max(
-        45,
-        Math.round(120 + (priceSwing / Math.max(1, basePrice)) * 4200 + n2 * 180)
+function renderVectorEventBadge(type: ChartEventType, isSelected: boolean) {
+  const scale = isSelected ? 1.15 : 1;
+  switch (type) {
+    case "GOAL":
+      return (
+        <g transform={`scale(${scale})`}>
+          <circle
+            cx={0}
+            cy={0}
+            r={8}
+            fill="#111925"
+            stroke="#00B386"
+            strokeWidth={1.5}
+          />
+          {/* Minimal soccer ball */}
+          <circle cx={0} cy={0} r={4.4} fill="#F8FAFC" />
+          <polygon
+            points="0,-2.2 2.1,-0.7 1.3,1.8 -1.3,1.8 -2.1,-0.7"
+            fill="#090E16"
+          />
+          <line x1={0} y1={-2.2} x2={0} y2={-4.3} stroke="#090E16" strokeWidth={0.8} />
+          <line x1={2.1} y1={-0.7} x2={4.1} y2={-1.3} stroke="#090E16" strokeWidth={0.8} />
+          <line x1={-2.1} y1={-0.7} x2={-4.1} y2={-1.3} stroke="#090E16" strokeWidth={0.8} />
+        </g>
       );
-
-      candles.push({
-        index: i,
-        label,
-        open,
-        high,
-        low,
-        close,
-        volume,
-      });
-      prevClose = close;
-    }
-    return candles;
+    case "ASSIST":
+      return (
+        <g transform={`scale(${scale})`}>
+          <circle
+            cx={0}
+            cy={0}
+            r={8.5}
+            fill="#131A26"
+            stroke="#38BDF8"
+            strokeWidth={1.6}
+          />
+          <text
+            x={0}
+            y={3.2}
+            textAnchor="middle"
+            fill="#38BDF8"
+            fontSize={9}
+            fontWeight={700}
+            className="font-sans"
+          >
+            A
+          </text>
+        </g>
+      );
+    case "YELLOW_CARD":
+      return (
+        <g transform={`scale(${scale})`}>
+          <circle
+            cx={0}
+            cy={0}
+            r={8.5}
+            fill="#131A26"
+            stroke="#FACC15"
+            strokeWidth={1.4}
+          />
+          {/* Tilted yellow card */}
+          <rect
+            x={-3}
+            y={-4.5}
+            width={6}
+            height={9}
+            rx={1}
+            fill="#FACC15"
+            transform="rotate(-12)"
+          />
+        </g>
+      );
+    case "RED_CARD":
+      return (
+        <g transform={`scale(${scale})`}>
+          <circle
+            cx={0}
+            cy={0}
+            r={8.5}
+            fill="#131A26"
+            stroke="#F07868"
+            strokeWidth={1.4}
+          />
+          {/* Tilted red card */}
+          <rect
+            x={-3}
+            y={-4.5}
+            width={6}
+            height={9}
+            rx={1}
+            fill="#EF4444"
+            transform="rotate(-12)"
+          />
+        </g>
+      );
+    case "SAVE":
+      return (
+        <g transform={`scale(${scale})`}>
+          <circle
+            cx={0}
+            cy={0}
+            r={8.5}
+            fill="#131A26"
+            stroke="#A78BFA"
+            strokeWidth={1.6}
+          />
+          <path
+            d="M0,-4.5 L3.8,-2.8 L3.2,1.5 C2.8,3.2 0,4.5 0,4.5 C0,4.5 -2.8,3.2 -3.2,1.5 L-3.8,-2.8 Z"
+            fill="#A78BFA"
+          />
+        </g>
+      );
+    default:
+      return (
+        <g transform={`scale(${scale})`}>
+          <circle
+            cx={0}
+            cy={0}
+            r={8}
+            fill="#131A26"
+            stroke="#64748B"
+            strokeWidth={1.5}
+          />
+          <circle cx={0} cy={0} r={3} fill="#94A3B8" />
+        </g>
+      );
   }
-
-  // Match Timeline Candles: 1M (step=2m), 3M (step=3m), 15M (step=6m)
-  const step = timeframe === "1M" ? 2 : timeframe === "3M" ? 3 : 6;
-  const candles: OhlcCandle[] = [];
-  let prevClose = openPrice;
-  let idx = 0;
-
-  for (let m = 0; m <= endMin; m += step) {
-    const bucketEnd = Math.min(endMin, m + step);
-    const open = m === 0 ? openPrice : prevClose;
-
-    // Check if an event occurred inside [m, bucketEnd]
-    let bucketEvent: ChartEventMarker | undefined;
-    let eventMinutePrice: number | undefined;
-    for (let k = m; k <= bucketEnd; k++) {
-      if (eventMap.has(k)) {
-        bucketEvent = eventMap.get(k);
-        eventMinutePrice = historyMap.get(k);
-      }
-    }
-
-    const close =
-      bucketEnd >= endMin
-        ? finalClose
-        : eventMinutePrice !== undefined
-        ? eventMinutePrice
-        : getInterpolatedPrice(bucketEnd);
-
-    const nHigh = seededNoise(`${player.id}-${timeframe}-h`, m);
-    const nLow = seededNoise(`${player.id}-${timeframe}-l`, m);
-    const bodyMax = Math.max(open, close);
-    const bodyMin = Math.min(open, close);
-
-    const wickRange = bucketEvent
-      ? basePrice * (0.014 + nHigh * 0.022)
-      : basePrice * (0.004 + nHigh * 0.014);
-    const wickDownRange = bucketEvent
-      ? basePrice * (0.01 + nLow * 0.018)
-      : basePrice * (0.004 + nLow * 0.014);
-
-    const high =
-      m === 0 && step > 0
-        ? clampToPriceLimit(
-            Math.max(bodyMax, openPrice + roundToTen(wickRange * 0.5)),
-            basePrice
-          )
-        : clampToPriceLimit(bodyMax + roundToTen(wickRange), basePrice);
-
-    const low =
-      m === 0 && step > 0
-        ? clampToPriceLimit(
-            Math.min(bodyMin, openPrice - roundToTen(wickDownRange * 0.5)),
-            basePrice
-          )
-        : clampToPriceLimit(bodyMin - roundToTen(wickDownRange), basePrice);
-
-    const baseVol = bucketEvent ? 680 : 140;
-    const swingBoost = Math.round(
-      (Math.abs(close - open) / Math.max(1, basePrice)) * 6500
-    );
-    const volume = Math.max(
-      30,
-      Math.round(baseVol + swingBoost + nHigh * 160)
-    );
-
-    const displayMin = bucketEnd;
-    const label =
-      displayMin === 0
-        ? "0'"
-        : displayMin === 45
-        ? "45'(HT)"
-        : displayMin === 90
-        ? "90'(FT)"
-        : displayMin > 90
-        ? `90+${displayMin - 90}'`
-        : `${displayMin}'`;
-
-    candles.push({
-      index: idx++,
-      minute: displayMin,
-      label,
-      open,
-      high,
-      low,
-      close,
-      volume,
-      event: bucketEvent,
-    });
-
-    prevClose = close;
-    if (bucketEnd >= endMin) break;
-  }
-
-  return candles;
 }
 
 export default function FullScreenCandleChartModal({
@@ -309,13 +203,18 @@ export default function FullScreenCandleChartModal({
   );
 
   const [timeframe, setTimeframe] = useState<CandleTimeframe>("3M");
-  const [visibleCount, setVisibleCount] = useState<number>(18);
+  const [visibleCount, setVisibleCount] = useState<number>(24);
   const [startIndex, setStartIndex] = useState<number>(0);
   const [selectedCandleIdx, setSelectedCandleIdx] = useState<number | null>(
     null
   );
 
   // Gesture state refs for Mouse Drag & Mobile Pinch-to-Zoom / Pan
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
+  const [chartSize, setChartSize] = useState<{ width: number; height: number }>({
+    width: 420,
+    height: 360,
+  });
   const svgRef = useRef<SVGSVGElement | null>(null);
   const isDraggingRef = useRef<boolean>(false);
   const dragStartXRef = useRef<number>(0);
@@ -356,43 +255,98 @@ export default function FullScreenCandleChartModal({
     return "UPCOMING";
   }, [playerMatch]);
 
+  const ssotMetrics = useMemo(() => {
+    if (!player) return null;
+    const base = roundToTen(
+      player.basePrice ?? player.initialPrice ?? player.currentPrice
+    );
+    const open = roundToTen(
+      player.openPrice ?? player.priceHistory[0]?.price ?? base
+    );
+    const events = extractInitialMatchEvents({
+      ...player,
+      openPrice: open,
+      basePrice: base,
+    });
+    const curMin =
+      matchStatus === "FT"
+        ? 90
+        : matchStatus === "UPCOMING"
+        ? 0
+        : playerMatch?.minute ?? player.lastEvent?.minute ?? 65;
+
+    return derivePlayerMarketData({
+      playerId: player.id,
+      openPrice: open,
+      basePrice: base,
+      events,
+      currentMinute: curMin,
+      matchStatus,
+    });
+  }, [player, matchStatus, playerMatch?.minute]);
+
   const candles = useMemo(() => {
-    if (!player) return [];
-    return buildCandleSeries(
-      player,
+    if (!player || !ssotMetrics) return [];
+    const base = roundToTen(
+      player.basePrice ?? player.initialPrice ?? player.currentPrice
+    );
+    return deriveCandlesFromEvents({
+      playerId: player.id,
+      openPrice: ssotMetrics.openPrice,
+      basePrice: base,
+      events: ssotMetrics.events,
       timeframe,
       matchStatus,
-      playerMatch?.minute ?? player.lastEvent?.minute ?? 65
-    );
-  }, [player, timeframe, matchStatus, playerMatch?.minute]);
+      currentMinute: playerMatch?.minute ?? player.lastEvent?.minute ?? 65,
+    });
+  }, [player, ssotMetrics, timeframe, matchStatus, playerMatch?.minute]);
+
+  // Measure actual chart container size with ResizeObserver so SVG fills 100% height dynamically
+  useEffect(() => {
+    if (!isOpen) return;
+    const el = chartContainerRef.current;
+    if (!el) return;
+
+    const updateSize = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setChartSize({
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        });
+      }
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isOpen]);
 
   // Reset viewport to show the latest candles when timeframe or player changes
   useEffect(() => {
     if (!isOpen || candles.length === 0) return;
-    const defaultVis = Math.min(candles.length, 18);
+    const defaultVis = Math.min(candles.length, 24);
     setVisibleCount(defaultVis);
     setStartIndex(Math.max(0, candles.length - defaultVis));
     setSelectedCandleIdx(candles.length - 1);
   }, [isOpen, player?.id, timeframe, candles.length]);
 
-  if (!isOpen || !player) return null;
+  if (!isOpen || !player || !ssotMetrics) return null;
 
   const isWatched = watchlist.includes(player.id);
   const basePrice = roundToTen(
     player.basePrice ?? player.initialPrice ?? player.currentPrice
   );
-  const openPrice = roundToTen(
-    player.openPrice ?? player.priceHistory[0]?.price ?? basePrice
-  );
-  const currentPrice = roundToTen(player.currentPrice);
+  const openPrice = player.openPrice ?? ssotMetrics.openPrice;
+  const currentPrice = roundToTen(player.currentPrice ?? ssotMetrics.currentPrice);
   const closePrice =
     matchStatus === "FT"
       ? roundToTen(player.closePrice ?? currentPrice)
       : currentPrice;
 
-  const diffFromOpen = closePrice - openPrice;
-  const pctFromOpen =
-    openPrice > 0 ? Number(((diffFromOpen / openPrice) * 100).toFixed(2)) : 0;
+  const diffFromOpen = calculateDiffFromOpen(closePrice, openPrice);
+  const pctFromOpen = calculateChangePercentFromOpen(closePrice, openPrice);
   const isUpOverall = diffFromOpen > 0;
   const isDownOverall = diffFromOpen < 0;
 
@@ -550,15 +504,18 @@ export default function FullScreenCandleChartModal({
     pinchStartDistRef.current = null;
   };
 
-  // Compute SVG geometry for visibleCandles
-  const svgW = 420;
-  const svgH = 340;
-  const padLeft = 10;
+  // Compute dynamic SVG geometry from measured container size (78% Price / 22% Volume)
+  const svgW = Math.max(300, chartSize.width);
+  const svgH = Math.max(220, chartSize.height);
+  const padLeft = 8;
   const padRight = 56;
-  const padTop = 24;
-  const pricePlotH = 210;
-  const volTop = padTop + pricePlotH + 18;
-  const volPlotH = 62;
+  const padTop = 18;
+  const volGap = 10;
+  const padBottom = 18;
+  const activePlotH = Math.max(140, svgH - padTop - volGap - padBottom);
+  const pricePlotH = Math.round(activePlotH * 0.78);
+  const volTop = padTop + pricePlotH + volGap;
+  const volPlotH = Math.max(36, activePlotH - pricePlotH);
   const plotW = svgW - padLeft - padRight;
 
   const visHigh =
@@ -570,8 +527,8 @@ export default function FullScreenCandleChartModal({
       ? Math.min(...visibleCandles.map((c) => c.low), closePrice, openPrice)
       : closePrice - 500;
   const priceSpread = Math.max(visHigh - visLow, roundToTen(basePrice * 0.04), 200);
-  const maxP = roundToTen(visHigh + priceSpread * 0.14);
-  const minP = Math.max(100, roundToTen(visLow - priceSpread * 0.12));
+  const maxP = roundToTen(visHigh + priceSpread * 0.17);
+  const minP = Math.max(100, roundToTen(visLow - priceSpread * 0.17));
   const rangeP = Math.max(100, maxP - minP);
 
   const maxVol =
@@ -585,7 +542,7 @@ export default function FullScreenCandleChartModal({
   const getVolH = (v: number) => Math.max(3, (v / maxVol) * volPlotH);
 
   const slotW = plotW / Math.max(1, visibleCandles.length);
-  const bodyW = Math.max(4, Math.min(18, slotW * 0.64));
+  const bodyW = Math.max(3, Math.min(10, slotW * 0.62));
 
   const currentPriceY = Math.max(
     padTop,
@@ -603,62 +560,76 @@ export default function FullScreenCandleChartModal({
     visibleCandles[visibleCandles.length - 1] ??
     candles[candles.length - 1];
 
-  const allHigh = Math.max(...candles.map((c) => c.high), closePrice);
-  const allLow = Math.min(...candles.map((c) => c.low), closePrice);
-  const totalVol = candles.reduce((acc, c) => acc + c.volume, 0);
+  const activeCandlePctFromOpen = activeCandle
+    ? calculateChangePercentFromOpen(activeCandle.close, openPrice)
+    : pctFromOpen;
 
-  const eventCandles = candles.filter((c) => Boolean(c.event));
+  const allHigh = player.highPrice ?? ssotMetrics.highPrice;
+  const allLow = player.lowPrice ?? ssotMetrics.lowPrice;
+  const totalVol = player.volume ?? ssotMetrics.volume;
+  const canonicalEvents = player.events ?? ssotMetrics.events;
+
+  const currentPriceColor = isUpOverall
+    ? COLOR_UP
+    : isDownOverall
+    ? COLOR_DOWN
+    : COLOR_FLAT;
+
+  const sortedEventsAsc = [...canonicalEvents].sort(
+    (a, b) => a.minute - b.minute
+  );
 
   return (
-    <div className="fixed inset-0 z-[85] flex flex-col bg-white animate-fade-in">
-      {/* Centered Mobile/Desktop Container */}
-      <div className="mx-auto flex h-full w-full max-w-[480px] flex-col bg-white shadow-2xl border-x border-gray-200/80 overflow-hidden">
-        {/* 1. Top Bar: Player Info + Watchlist Star + Close Button */}
-        <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
-          <div className="flex items-center gap-2.5 min-w-0">
+    <div className="fixed inset-0 z-[85] flex flex-col bg-[#090E16] animate-fade-in">
+      {/* Centered Mobile/Desktop Terminal Container */}
+      <div className="mx-auto flex h-full w-full max-w-[480px] flex-col bg-[#090E16] text-slate-100 overflow-hidden">
+        {/* 1. Top Bar: Player Identity + Watchlist + Close */}
+        <div className="flex shrink-0 items-center justify-between px-4 pt-3.5 pb-2.5">
+          <div className="flex items-center gap-3 min-w-0">
             <div
               style={{ backgroundColor: player.teamColor }}
-              className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-xl text-white font-mono shadow-xs"
+              className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-xl text-white font-sans tabular-nums"
             >
-              <span className="text-[8px] font-bold opacity-85 leading-none">
+              <span className="text-[8px] font-semibold opacity-85 leading-none">
                 {player.teamShort}
               </span>
-              <span className="text-xs font-black">{player.backNumber}</span>
+              <span className="text-xs font-bold mt-0.5">
+                {player.backNumber}
+              </span>
             </div>
 
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <h2 className="truncate text-base font-black text-gray-900">
+                <h2 className="truncate text-base font-bold tracking-tight text-white">
                   {player.name}
                 </h2>
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-extrabold text-gray-700">
+                <span className="rounded-md bg-[#182331] px-1.5 py-0.5 text-[10px] font-semibold text-[#8291A5]">
                   {player.position}
                 </span>
-                <span className="rounded bg-[#00A878]/10 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-[#00A878]">
+                <span className="rounded-md bg-[#00B386]/15 px-1.5 py-0.5 font-sans tabular-nums text-[10px] font-semibold text-[#00B386]">
                   ★ {player.stats.rating.toFixed(1)}
                 </span>
               </div>
-              <p className="truncate text-[11px] text-gray-400">
+              <p className="mt-0.5 truncate text-[11px] font-medium text-[#8291A5]">
                 {player.teamName} ·{" "}
                 {matchStatus === "LIVE"
-                  ? `🔴 실시간 경기 (${playerMatch?.minute ?? 65}')`
+                  ? `LIVE ${playerMatch?.minute ?? 65}'`
                   : matchStatus === "FT"
-                  ? "🏁 경기 종료 (FT)"
-                  : "🕒 경기 예정"}
+                  ? "경기 종료"
+                  : "경기 예정"}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
-            {/* Watchlist Star Toggle */}
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => toggleWatchlist(player.id)}
               title={isWatched ? "관심선수 해제" : "관심선수 등록"}
-              className={`flex h-9 w-9 items-center justify-center rounded-full border transition active:scale-90 ${
+              className={`flex h-9 w-9 items-center justify-center rounded-full transition active:scale-90 ${
                 isWatched
-                  ? "border-amber-300 bg-amber-50 text-amber-500"
-                  : "border-gray-200 bg-gray-50 text-gray-400 hover:text-gray-700"
+                  ? "bg-amber-400/15 text-amber-400"
+                  : "bg-[#182331] text-[#8291A5] hover:text-white"
               }`}
             >
               <Star
@@ -670,36 +641,37 @@ export default function FullScreenCandleChartModal({
               type="button"
               onClick={onClose}
               aria-label="풀스크린 차트 닫기"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100 text-gray-600 transition hover:bg-gray-200 hover:text-gray-900"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-[#182331] text-[#8291A5] transition hover:text-white"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
         </div>
 
-        {/* 2. Exchange-Style OHLC + Volume Summary Header */}
-        <div className="shrink-0 border-b border-gray-100 bg-[#f8f9fa] px-4 py-2.5">
-          <div className="flex items-center justify-between gap-2">
+        {/* 2. Price Hero + Compact 2x2 Summary Metrics (Borderless Hierarchy) */}
+        <div className="shrink-0 px-4 pt-1 pb-3">
+          <div className="flex items-end justify-between gap-3">
             <div>
-              <div className="flex items-baseline gap-2">
+              <div className="flex items-baseline gap-2.5">
                 <span
-                  className={`font-mono text-2xl font-black tracking-tight ${
+                  className={`font-sans tabular-nums text-[28px] font-extrabold leading-none tracking-tight ${
                     isUpOverall
-                      ? "text-[#00A878]"
+                      ? "text-[#00B386]"
                       : isDownOverall
                       ? "text-[#F07868]"
-                      : "text-[#A8B2BC]"
+                      : "text-white"
                   }`}
                 >
-                  {closePrice.toLocaleString()} P
+                  {closePrice.toLocaleString()}
+                  <span className="ml-1 text-base font-bold opacity-85">P</span>
                 </span>
                 <span
-                  className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 font-mono text-xs font-extrabold ${
+                  className={`inline-flex items-center gap-0.5 rounded-md px-2 py-0.5 font-sans tabular-nums text-xs font-bold ${
                     isUpOverall
-                      ? "bg-[#00A878]/10 text-[#00A878]"
+                      ? "bg-[#00B386]/15 text-[#00B386]"
                       : isDownOverall
-                      ? "bg-[#F07868]/10 text-[#F07868]"
-                      : "bg-[#A8B2BC]/15 text-[#A8B2BC]"
+                      ? "bg-[#F07868]/15 text-[#F07868]"
+                      : "bg-[#182331] text-[#8291A5]"
                   }`}
                 >
                   {isUpOverall ? (
@@ -711,52 +683,60 @@ export default function FullScreenCandleChartModal({
                   {pctFromOpen.toFixed(2)}%
                 </span>
               </div>
-              <p className="mt-0.5 font-mono text-[10px] text-gray-500">
-                시가(0&apos;) {openPrice.toLocaleString()}P 대비{" "}
-                {diffFromOpen >= 0 ? "+" : ""}
-                {diffFromOpen.toLocaleString()}P
+              <p className="mt-1.5 font-sans tabular-nums text-xs font-medium text-[#8291A5]">
+                시가 {openPrice.toLocaleString()}P 대비{" "}
+                <span
+                  className={
+                    diffFromOpen > 0
+                      ? "text-[#00B386]"
+                      : diffFromOpen < 0
+                      ? "text-[#F07868]"
+                      : "text-slate-300"
+                  }
+                >
+                  {diffFromOpen >= 0 ? "+" : ""}
+                  {diffFromOpen.toLocaleString()}P
+                </span>
               </p>
             </div>
 
-            {/* 4-Metric Mini Grid: 고가 / 저가 / 시가 / 거래량 */}
-            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-right font-mono text-[10px]">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-right font-sans tabular-nums text-[11px]">
               <div className="flex items-center justify-end gap-1.5">
-                <span className="font-sans text-gray-400">고가</span>
-                <strong className="text-[#00A878]">
+                <span className="text-[#8291A5]">고가</span>
+                <span className="font-semibold text-[#00B386]">
                   {allHigh.toLocaleString()}
-                </strong>
+                </span>
               </div>
               <div className="flex items-center justify-end gap-1.5">
-                <span className="font-sans text-gray-400">시가</span>
-                <strong className="text-gray-800">
+                <span className="text-[#8291A5]">시가</span>
+                <span className="font-semibold text-slate-200">
                   {openPrice.toLocaleString()}
-                </strong>
+                </span>
               </div>
               <div className="flex items-center justify-end gap-1.5">
-                <span className="font-sans text-gray-400">저가</span>
-                <strong className="text-[#F07868]">
+                <span className="text-[#8291A5]">저가</span>
+                <span className="font-semibold text-[#F07868]">
                   {allLow.toLocaleString()}
-                </strong>
+                </span>
               </div>
               <div className="flex items-center justify-end gap-1.5">
-                <span className="font-sans text-gray-400">거래량</span>
-                <strong className="text-gray-700">
+                <span className="text-[#8291A5]">거래량</span>
+                <span className="font-semibold text-slate-200">
                   {totalVol.toLocaleString()}주
-                </strong>
+                </span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* 3. Timeframe Selector & Zoom/Pan Controls Bar */}
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-gray-100 bg-white px-4 py-2">
-          {/* Timeframe Pills */}
-          <div className="inline-flex rounded-xl bg-gray-100 p-0.5 text-[11px] font-extrabold">
+        {/* 3. Minimal Segmented Timeframe Control + Uniform Zoom/Pan Bar */}
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-[#263343]/60 px-4 py-2">
+          <div className="inline-flex rounded-lg bg-[#182331] p-0.5 text-[11px] font-semibold">
             {(
               [
-                { key: "3M", label: "⚡ 3분봉(0~90')" },
-                { key: "1M", label: "1분봉" },
-                { key: "15M", label: "15분봉" },
+                { key: "3M", label: "3분" },
+                { key: "1M", label: "1분" },
+                { key: "15M", label: "15분" },
                 { key: "1D", label: "일봉" },
               ] as { key: CandleTimeframe; label: string }[]
             ).map((tf) => (
@@ -764,10 +744,10 @@ export default function FullScreenCandleChartModal({
                 key={tf.key}
                 type="button"
                 onClick={() => setTimeframe(tf.key)}
-                className={`rounded-lg px-2.5 py-1 transition ${
+                className={`rounded-md px-2.5 py-1 transition ${
                   timeframe === tf.key
-                    ? "bg-gray-900 text-white shadow-xs"
-                    : "text-gray-500 hover:text-gray-900"
+                    ? "bg-[#263343] text-white"
+                    : "text-[#8291A5] hover:text-slate-200"
                 }`}
               >
                 {tf.label}
@@ -775,14 +755,13 @@ export default function FullScreenCandleChartModal({
             ))}
           </div>
 
-          {/* Zoom & Pan Buttons */}
           <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={() => applyPan(-4)}
               disabled={safeStartIdx <= 0}
               title="이전 구간 이동"
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600 transition hover:bg-gray-100 disabled:opacity-35"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#182331] text-slate-300 transition hover:bg-[#263343] disabled:opacity-30"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </button>
@@ -791,7 +770,7 @@ export default function FullScreenCandleChartModal({
               onClick={() => applyPan(4)}
               disabled={safeStartIdx + safeVisCount >= candles.length}
               title="다음 구간 이동"
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600 transition hover:bg-gray-100 disabled:opacity-35"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#182331] text-slate-300 transition hover:bg-[#263343] disabled:opacity-30"
             >
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
@@ -800,7 +779,7 @@ export default function FullScreenCandleChartModal({
               onClick={() => applyZoom(safeVisCount - 4)}
               disabled={safeVisCount <= minVis}
               title="차트 확대 (Zoom In)"
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-700 transition hover:bg-gray-100 disabled:opacity-35"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#182331] text-slate-300 transition hover:bg-[#263343] disabled:opacity-30"
             >
               <ZoomIn className="h-3.5 w-3.5" />
             </button>
@@ -809,7 +788,7 @@ export default function FullScreenCandleChartModal({
               onClick={() => applyZoom(safeVisCount + 4)}
               disabled={safeVisCount >= maxVis}
               title="차트 축소 (Zoom Out)"
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-700 transition hover:bg-gray-100 disabled:opacity-35"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#182331] text-slate-300 transition hover:bg-[#263343] disabled:opacity-30"
             >
               <ZoomOut className="h-3.5 w-3.5" />
             </button>
@@ -820,7 +799,7 @@ export default function FullScreenCandleChartModal({
                 setStartIndex(0);
               }}
               title="전체 0~90' 한눈에 보기"
-              className="flex h-7 items-center gap-0.5 rounded-lg border border-gray-200 bg-gray-50 px-2 text-[10px] font-bold text-gray-600 transition hover:bg-gray-100"
+              className="flex h-7 items-center gap-1 rounded-lg bg-[#182331] px-2 text-[11px] font-medium text-slate-300 transition hover:bg-[#263343]"
             >
               <RotateCcw className="h-3 w-3" />
               <span>전체</span>
@@ -828,369 +807,426 @@ export default function FullScreenCandleChartModal({
           </div>
         </div>
 
-        {/* 4. Selected Candle OHLCV HUD Bar */}
+        {/* 4. Seamless OHLCV HUD Strip + Event Impact Line */}
         {activeCandle && (
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-1 bg-slate-900 px-4 py-1.5 font-mono text-[10px] text-slate-300">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="rounded bg-white/15 px-1.5 py-0.5 font-bold text-white">
-                {activeCandle.label}
-              </span>
-              <span>
-                시 <strong className="text-white">{activeCandle.open.toLocaleString()}</strong>
-              </span>
-              <span>
-                고 <strong className="text-[#00A878]">{activeCandle.high.toLocaleString()}</strong>
-              </span>
-              <span>
-                저 <strong className="text-[#F07868]">{activeCandle.low.toLocaleString()}</strong>
-              </span>
-              <span>
-                종{" "}
-                <strong
-                  className={
-                    activeCandle.close > activeCandle.open
-                      ? "text-[#00A878]"
-                      : activeCandle.close < activeCandle.open
-                      ? "text-[#F07868]"
-                      : "text-[#A8B2BC]"
-                  }
-                >
-                  {activeCandle.close.toLocaleString()}
-                </strong>
-              </span>
-              <span>
-                거래량 <strong className="text-white">{activeCandle.volume}</strong>
+          <div className="shrink-0 bg-[#111925] px-4 pt-2.5 pb-1 font-sans tabular-nums text-[11px] font-medium text-[#8291A5] space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-1.5">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <span className="rounded bg-[#182331] px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  {activeCandle.label}
+                </span>
+                <span>
+                  시{" "}
+                  <strong className="font-semibold text-slate-200">
+                    {activeCandle.open.toLocaleString()}
+                  </strong>
+                </span>
+                <span>
+                  고{" "}
+                  <strong className="font-semibold text-[#00B386]">
+                    {activeCandle.high.toLocaleString()}
+                  </strong>
+                </span>
+                <span>
+                  저{" "}
+                  <strong className="font-semibold text-[#F07868]">
+                    {activeCandle.low.toLocaleString()}
+                  </strong>
+                </span>
+                <span>
+                  종{" "}
+                  <strong
+                    className={`font-semibold ${
+                      activeCandle.close > activeCandle.open
+                        ? "text-[#00B386]"
+                        : activeCandle.close < activeCandle.open
+                        ? "text-[#F07868]"
+                        : "text-slate-300"
+                    }`}
+                  >
+                    {activeCandle.close.toLocaleString()}
+                  </strong>
+                </span>
+                <span>
+                  량{" "}
+                  <strong className="font-semibold text-slate-200">
+                    {activeCandle.volume.toLocaleString()}
+                  </strong>
+                </span>
+              </div>
+
+              <span
+                className={`text-[11px] font-semibold ${
+                  activeCandlePctFromOpen > 0
+                    ? "text-[#00B386]"
+                    : activeCandlePctFromOpen < 0
+                    ? "text-[#F07868]"
+                    : "text-[#8291A5]"
+                }`}
+              >
+                {activeCandlePctFromOpen > 0 ? "+" : ""}
+                {activeCandlePctFromOpen.toFixed(2)}%
               </span>
             </div>
 
-            {activeCandle.event && (
-              <span className="rounded bg-amber-400/20 px-1.5 py-0.5 font-sans text-[10px] font-extrabold text-amber-300">
-                {activeCandle.event.label}
-              </span>
+            {activeCandle.matchEvent && (
+              <div className="flex items-center justify-between rounded-lg bg-[#182331] px-2.5 py-1 text-[11px] font-medium text-amber-300">
+                <span className="truncate">
+                  {activeCandle.matchEvent.minute}&apos;{" "}
+                  {EVENT_PIN_CONFIG[activeCandle.matchEvent.type]?.icon ?? "⚽"}{" "}
+                  {activeCandle.matchEvent.description}
+                </span>
+                <span className="shrink-0 ml-2 font-sans tabular-nums text-slate-200">
+                  {activeCandle.open.toLocaleString()}P →{" "}
+                  <strong
+                    className={
+                      activeCandle.matchEvent.priceImpactPercent >= 0
+                        ? "text-[#00B386]"
+                        : "text-[#F07868]"
+                    }
+                  >
+                    {activeCandle.close.toLocaleString()}P (
+                    {activeCandle.matchEvent.priceImpactPercent >= 0 ? "+" : ""}
+                    {activeCandle.matchEvent.priceImpactPercent.toFixed(1)}%)
+                  </strong>
+                </span>
+              </div>
             )}
           </div>
         )}
 
-        {/* 5. Main Interactive Candlestick + Volume Chart Area */}
-        <div className="relative flex-1 overflow-y-auto px-3 py-2 flex flex-col justify-between">
-          <div className="relative flex-1 min-h-[320px] w-full rounded-2xl border border-gray-200 bg-white p-1 shadow-inner select-none touch-none">
-            {/* Gesture Guide Pill */}
-            <div className="pointer-events-none absolute left-3 top-2 z-10 inline-flex items-center gap-1 rounded-full bg-gray-900/5 px-2.5 py-0.5 text-[10px] font-semibold text-gray-500">
-              <MoveHorizontal className="h-3 w-3 text-[#00A878]" />
-              <span>마우스 휠·핀치 줌 확대/축소 · 좌우 드래그 이동</span>
-            </div>
+        {/* 5. Seamless Full-Bleed Candlestick (78%) + Volume (22%) Canvas */}
+        <div
+          ref={chartContainerRef}
+          className="relative flex-1 min-h-0 w-full bg-[#111925] select-none touch-none overflow-hidden"
+        >
+          <svg
+            ref={svgRef}
+            viewBox={`0 0 ${svgW} ${svgH}`}
+            className="block h-full w-full cursor-grab active:cursor-grabbing overflow-visible"
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUpOrLeave}
+            onMouseLeave={handleMouseUpOrLeave}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
+            {/* Price Horizontal Grid Lines + Right Y-Axis Labels */}
+            {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
+              const y = padTop + pricePlotH * ratio;
+              const val = roundToTen(maxP - rangeP * ratio);
+              return (
+                <g key={`grid-${idx}`}>
+                  <line
+                    x1={padLeft}
+                    x2={padLeft + plotW}
+                    y1={y}
+                    y2={y}
+                    stroke="#263343"
+                    strokeOpacity={0.55}
+                    strokeDasharray="3 3"
+                    strokeWidth="1"
+                  />
+                  <text
+                    x={padLeft + plotW + 6}
+                    y={y + 3}
+                    className="fill-[#8291A5] font-sans tabular-nums text-[9.5px] font-medium"
+                  >
+                    {val.toLocaleString()}
+                  </text>
+                </g>
+              );
+            })}
 
-            <svg
-              ref={svgRef}
-              viewBox={`0 0 ${svgW} ${svgH}`}
-              className="h-full w-full cursor-grab active:cursor-grabbing overflow-visible"
-              onWheel={handleWheel}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUpOrLeave}
-              onMouseLeave={handleMouseUpOrLeave}
-              onTouchStart={handleTouchStart}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd}
+            {/* Subtle Divider between 75% Price Pane and 25% Volume Pane */}
+            <line
+              x1={padLeft}
+              x2={padLeft + plotW}
+              y1={volTop - 7}
+              y2={volTop - 7}
+              stroke="#263343"
+              strokeWidth="1"
+            />
+            <text
+              x={padLeft + 2}
+              y={volTop + 4}
+              className="fill-[#8291A5] font-sans text-[8.5px] font-medium opacity-75"
             >
-              {/* Price Horizontal Grid Lines + Right Y-Axis Labels */}
-              {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
-                const y = padTop + pricePlotH * ratio;
-                const val = roundToTen(maxP - rangeP * ratio);
-                return (
-                  <g key={`grid-${idx}`}>
-                    <line
-                      x1={padLeft}
-                      x2={padLeft + plotW}
-                      y1={y}
-                      y2={y}
-                      stroke="#f1f5f9"
-                      strokeWidth="1"
-                    />
-                    <text
-                      x={padLeft + plotW + 6}
-                      y={y + 3}
-                      className="fill-slate-400 font-mono text-[9.5px] font-semibold"
-                    >
-                      {val.toLocaleString()}
-                    </text>
-                  </g>
-                );
-              })}
+              VOL
+            </text>
 
-              {/* Divider between Price Pane and Volume Pane */}
-              <line
-                x1={padLeft}
-                x2={padLeft + plotW}
-                y1={volTop - 8}
-                y2={volTop - 8}
-                stroke="#e2e8f0"
-                strokeWidth="1"
+            {/* Open Price (시가) Horizontal Reference Line */}
+            <line
+              x1={padLeft}
+              x2={padLeft + plotW}
+              y1={openPriceY}
+              y2={openPriceY}
+              stroke="#475569"
+              strokeOpacity={0.7}
+              strokeDasharray="4 3"
+              strokeWidth="1"
+            />
+
+            {/* Current Price Horizontal Dashed Line + Pointed TradingView-Style Price Tag */}
+            <line
+              x1={padLeft}
+              x2={padLeft + plotW}
+              y1={currentPriceY}
+              y2={currentPriceY}
+              stroke={currentPriceColor}
+              strokeDasharray="3 3"
+              strokeWidth="1.2"
+            />
+            <g
+              transform={`translate(${padLeft + plotW}, ${
+                currentPriceY - 8.5
+              })`}
+            >
+              <polygon
+                points="0,8.5 6,0 56,0 56,17 6,17"
+                fill={currentPriceColor}
               />
               <text
-                x={padLeft + 4}
-                y={volTop + 4}
-                className="fill-slate-400 font-mono text-[9px] font-bold"
+                x="31"
+                y="11.5"
+                textAnchor="middle"
+                className="fill-white font-sans tabular-nums text-[9px] font-semibold"
               >
-                거래량 (VOL)
+                {closePrice.toLocaleString()}
               </text>
+            </g>
 
-              {/* Open Price (시가) Horizontal Reference Line */}
-              <line
-                x1={padLeft}
-                x2={padLeft + plotW}
-                y1={openPriceY}
-                y2={openPriceY}
-                stroke="#94a3b8"
-                strokeDasharray="4 3"
-                strokeWidth="1.1"
-              />
+            {/* Candlesticks & Volume Bars */}
+            {visibleCandles.map((c, localIdx) => {
+              const cx = padLeft + (localIdx + 0.5) * slotW;
+              const isUp = c.close > c.open;
+              const isDown = c.close < c.open;
+              const isFlat = c.close === c.open;
+              const candleColor = isUp
+                ? COLOR_UP
+                : isDown
+                ? COLOR_DOWN
+                : COLOR_FLAT;
 
-              {/* Current Price Brand Green (#00A878) Horizontal Dashed Line + Axis Pill */}
-              <line
-                x1={padLeft}
-                x2={padLeft + plotW}
-                y1={currentPriceY}
-                y2={currentPriceY}
-                stroke={COLOR_UP}
-                strokeDasharray="4 3"
-                strokeWidth="1.4"
-              />
-              <g
-                transform={`translate(${padLeft + plotW + 2}, ${
-                  currentPriceY - 8
-                })`}
-              >
-                <rect
-                  width="52"
-                  height="16"
-                  rx="4"
-                  fill={COLOR_UP}
-                />
-                <text
-                  x="26"
-                  y="11"
-                  textAnchor="middle"
-                  className="fill-white font-mono text-[9px] font-extrabold"
+              const highY = getPriceY(c.high);
+              const lowY = getPriceY(c.low);
+              const openY = getPriceY(c.open);
+              const closeY = getPriceY(c.close);
+
+              const bodyTop = Math.min(openY, closeY);
+              const bodyHeight = isFlat
+                ? 1.5
+                : Math.max(2, Math.abs(closeY - openY));
+
+              const vH = getVolH(c.volume);
+              const vY = volTop + volPlotH - vH;
+
+              const isSelected = activeCandle?.index === c.index;
+              const isHT = c.minute === 45;
+              const showXLabel =
+                localIdx === 0 ||
+                localIdx === visibleCandles.length - 1 ||
+                isHT ||
+                localIdx % Math.max(2, Math.floor(visibleCandles.length / 5)) ===
+                  0;
+
+              return (
+                <g
+                  key={`candle-${c.index}`}
+                  onClick={() => setSelectedCandleIdx(c.index)}
+                  className="cursor-pointer"
                 >
-                  {closePrice.toLocaleString()}
-                </text>
-              </g>
-
-              {/* Candlesticks & Volume Bars */}
-              {visibleCandles.map((c, localIdx) => {
-                const cx = padLeft + (localIdx + 0.5) * slotW;
-                const isUp = c.close > c.open;
-                const isDown = c.close < c.open;
-                const candleColor = isUp
-                  ? COLOR_UP
-                  : isDown
-                  ? COLOR_DOWN
-                  : COLOR_FLAT;
-
-                const highY = getPriceY(c.high);
-                const lowY = getPriceY(c.low);
-                const openY = getPriceY(c.open);
-                const closeY = getPriceY(c.close);
-
-                const bodyTop = Math.min(openY, closeY);
-                const bodyHeight = Math.max(2.5, Math.abs(closeY - openY));
-
-                const vH = getVolH(c.volume);
-                const vY = volTop + volPlotH - vH;
-
-                const isSelected = activeCandle?.index === c.index;
-                const isHT = c.minute === 45;
-                const showXLabel =
-                  localIdx === 0 ||
-                  localIdx === visibleCandles.length - 1 ||
-                  isHT ||
-                  localIdx % Math.max(2, Math.floor(visibleCandles.length / 5)) ===
-                    0;
-
-                return (
-                  <g
-                    key={`candle-${c.index}`}
-                    onClick={() => setSelectedCandleIdx(c.index)}
-                    className="cursor-pointer"
-                  >
-                    {/* Half-Time 45' Vertical Dashed Line */}
-                    {isHT && (
-                      <line
-                        x1={cx}
-                        x2={cx}
-                        y1={padTop}
-                        y2={volTop + volPlotH}
-                        stroke="#f59e0b"
-                        strokeDasharray="3 3"
-                        strokeWidth="1.1"
-                      />
-                    )}
-
-                    {/* Selected Crosshair Vertical Guide */}
-                    {isSelected && (
-                      <line
-                        x1={cx}
-                        x2={cx}
-                        y1={padTop}
-                        y2={volTop + volPlotH}
-                        stroke="#64748b"
-                        strokeDasharray="2 2"
-                        strokeWidth="1"
-                      />
-                    )}
-
-                    {/* High-Low Wick (same color as candle body) */}
+                  {/* Half-Time 45' Vertical Dashed Line */}
+                  {isHT && (
                     <line
                       x1={cx}
                       x2={cx}
-                      y1={highY}
-                      y2={lowY}
-                      stroke={candleColor}
-                      strokeWidth={isSelected ? 2 : 1.5}
-                      strokeLinecap="round"
+                      y1={padTop}
+                      y2={volTop + volPlotH}
+                      stroke="#F59E0B"
+                      strokeOpacity={0.45}
+                      strokeDasharray="3 3"
+                      strokeWidth="1"
                     />
+                  )}
 
-                    {/* Open-Close Candle Body */}
+                  {/* Selected Crosshair Vertical Guide */}
+                  {isSelected && (
+                    <>
+                      <rect
+                        x={cx - slotW / 2}
+                        y={padTop}
+                        width={slotW}
+                        height={volTop + volPlotH - padTop}
+                        fill="rgba(255, 255, 255, 0.035)"
+                      />
+                      <line
+                        x1={cx}
+                        x2={cx}
+                        y1={padTop}
+                        y2={volTop + volPlotH}
+                        stroke="#64748B"
+                        strokeDasharray="2 2"
+                        strokeWidth="1"
+                      />
+                    </>
+                  )}
+
+                  {/* High-Low Wick (Sharp 1.5px centered vertical wick) */}
+                  <line
+                    x1={cx}
+                    x2={cx}
+                    y1={highY}
+                    y2={lowY}
+                    stroke={candleColor}
+                    strokeWidth={isSelected ? 1.9 : 1.5}
+                    strokeLinecap="round"
+                  />
+
+                  {/* Open-Close Candle Body */}
+                  {isFlat ? (
+                    <line
+                      x1={cx - bodyW / 2}
+                      x2={cx + bodyW / 2}
+                      y1={openY}
+                      y2={openY}
+                      stroke={COLOR_FLAT}
+                      strokeWidth={1.5}
+                    />
+                  ) : (
                     <rect
                       x={cx - bodyW / 2}
                       y={bodyTop}
                       width={bodyW}
                       height={bodyHeight}
-                      rx={1.2}
+                      rx={1.5}
                       fill={candleColor}
+                      stroke={isSelected ? "#FFFFFF" : "none"}
+                      strokeOpacity={isSelected ? 0.65 : 0}
+                      strokeWidth={isSelected ? 1 : 0}
                     />
+                  )}
 
-                    {/* Volume Bar (50% opacity of candle color) */}
-                    <rect
-                      x={cx - bodyW / 2}
-                      y={vY}
-                      width={bodyW}
-                      height={vH}
-                      rx={1}
-                      fill={candleColor}
-                      fillOpacity={0.5}
-                    />
+                  {/* Volume Bar (35% default, 90% when selected) */}
+                  <rect
+                    x={cx - bodyW / 2}
+                    y={vY}
+                    width={bodyW}
+                    height={vH}
+                    rx={1}
+                    fill={candleColor}
+                    fillOpacity={isSelected ? 0.9 : 0.35}
+                  />
 
-                    {/* Match Event Badge Above/Below Candle */}
-                    {c.event && (
-                      <g
-                        transform={`translate(${cx}, ${Math.max(
-                          12,
-                          highY - 13
-                        )})`}
-                      >
-                        <circle
-                          cx={0}
-                          cy={0}
-                          r={8.5}
-                          fill={
-                            EVENT_PIN_CONFIG[c.event.type]?.fill ?? COLOR_UP
-                          }
-                          stroke="#ffffff"
-                          strokeWidth={1.5}
-                        />
-                        <text
-                          x={0}
-                          y={3}
-                          textAnchor="middle"
-                          fontSize={9}
-                        >
-                          {EVENT_PIN_CONFIG[c.event.type]?.icon ?? "⚽"}
-                        </text>
-                      </g>
-                    )}
-
-                    {/* X-Axis Time/Minute Tick Label */}
-                    {showXLabel && (
-                      <text
-                        x={cx}
-                        y={svgH - 4}
-                        textAnchor="middle"
-                        className="fill-slate-500 font-mono text-[9.5px] font-bold"
-                      >
-                        {c.label}
-                      </text>
-                    )}
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
-
-          {/* 6. Event Marker Chips Bar below Candle Chart */}
-          {eventCandles.length > 0 && (
-            <div className="mt-2 rounded-xl border border-gray-200 bg-[#f8f9fa] p-2.5 shrink-0">
-              <div className="mb-1.5 flex items-center justify-between text-[11px]">
-                <span className="flex items-center gap-1 font-extrabold text-gray-800">
-                  <Zap className="h-3.5 w-3.5 text-[#00A878]" />
-                  <span>캔들 이벤트 마커 ({eventCandles.length}건)</span>
-                </span>
-                <span className="text-[10px] text-gray-400">
-                  터치 시 해당 캔들로 포커스 이동
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                {eventCandles.map((ec) => {
-                  if (!ec.event) return null;
-                  const cfg =
-                    EVENT_PIN_CONFIG[ec.event.type] ?? EVENT_PIN_CONFIG.GOAL;
-                  const active = activeCandle?.index === ec.index;
-                  const impact = ec.event.impactPercent;
-                  return (
-                    <button
-                      key={`ev-candle-${ec.index}`}
-                      type="button"
-                      onClick={() => {
-                        setSelectedCandleIdx(ec.index);
-                        if (
-                          ec.index < safeStartIdx ||
-                          ec.index >= safeStartIdx + safeVisCount
-                        ) {
-                          setStartIndex(
-                            Math.max(
-                              0,
-                              Math.min(
-                                candles.length - safeVisCount,
-                                ec.index - Math.floor(safeVisCount / 2)
-                              )
-                            )
-                          );
-                        }
+                  {/* Custom Vector Match Event Badge */}
+                  {c.event && (
+                    <g
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedCandleIdx(c.index);
                       }}
-                      className={`flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-extrabold transition ${
-                        active
-                          ? "border-gray-900 bg-gray-900 text-white"
-                          : "border-gray-200 bg-white text-gray-800 hover:bg-gray-100"
-                      }`}
+                      transform={`translate(${cx}, ${
+                        (c.matchEvent?.priceImpactPercent ?? 0) < 0
+                          ? Math.min(padTop + pricePlotH - 12, lowY + 13)
+                          : Math.max(13, highY - 13)
+                      })`}
                     >
-                      <span className="font-mono text-[10px] opacity-80">
-                        {ec.label}
-                      </span>
-                      <span>{cfg.icon}</span>
-                      <span>{cfg.shortTitle}</span>
-                      <span
-                        className={`font-mono text-[10px] ${
-                          impact > 0
-                            ? "text-[#00A878]"
-                            : impact < 0
-                            ? "text-[#F07868]"
-                            : "text-[#A8B2BC]"
-                        }`}
-                      >
-                        {impact > 0 ? "+" : ""}
-                        {impact.toFixed(1)}%
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+                      {renderVectorEventBadge(c.event.type, isSelected)}
+                    </g>
+                  )}
+
+                  {/* X-Axis Time/Minute Tick Label */}
+                  {showXLabel && (
+                    <text
+                      x={cx}
+                      y={svgH - 4}
+                      textAnchor="middle"
+                      className="fill-[#8291A5] font-sans tabular-nums text-[9.5px] font-medium"
+                    >
+                      {c.label}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
         </div>
 
+        {/* 6. Slim Borderless Horizontal Event Chips Strip */}
+        {sortedEventsAsc.length > 0 && (
+          <div className="shrink-0 bg-[#090E16] border-t border-[#263343]/60 px-4 py-2">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+              <span className="shrink-0 text-[10px] font-semibold text-[#8291A5] mr-1">
+                이벤트
+              </span>
+              {sortedEventsAsc.map((ev) => {
+                const cfg = EVENT_PIN_CONFIG[ev.type] ?? EVENT_PIN_CONFIG.GOAL;
+                const isSelected =
+                  (activeCandle?.matchEvent?.minute ?? activeCandle?.minute) ===
+                  ev.minute;
+                const impact = ev.priceImpactPercent;
+
+                return (
+                  <button
+                    key={ev.id}
+                    type="button"
+                    onClick={() => {
+                      const targetCandle = candles.find(
+                        (c) =>
+                          c.matchEvent?.minute === ev.minute ||
+                          c.minute === ev.minute
+                      );
+                      if (!targetCandle) return;
+                      setSelectedCandleIdx(targetCandle.index);
+                      if (
+                        targetCandle.index < safeStartIdx ||
+                        targetCandle.index >= safeStartIdx + safeVisCount
+                      ) {
+                        setStartIndex(
+                          Math.max(
+                            0,
+                            Math.min(
+                              candles.length - safeVisCount,
+                              targetCandle.index - Math.floor(safeVisCount / 2)
+                            )
+                          )
+                        );
+                      }
+                    }}
+                    className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
+                      isSelected
+                        ? "bg-[#263343] text-white"
+                        : "bg-[#182331] text-slate-300 hover:bg-[#263343]/80"
+                    }`}
+                  >
+                    <span className="font-sans tabular-nums text-[10px] text-[#8291A5]">
+                      {formatMinuteLabel(ev.minute)}
+                    </span>
+                    <span>{cfg.icon}</span>
+                    <span>{cfg.shortTitle}</span>
+                    <span
+                      className={`font-sans tabular-nums text-[10px] font-semibold ${
+                        impact > 0
+                          ? "text-[#00B386]"
+                          : impact < 0
+                          ? "text-[#F07868]"
+                          : "text-[#8291A5]"
+                      }`}
+                    >
+                      {impact > 0 ? "+" : ""}
+                      {impact.toFixed(1)}%
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* 7. Bottom Safe-Area Action Bar: Direct Buy / Sell Trigger */}
-        <div className="shrink-0 border-t border-gray-200 bg-white px-4 pt-3 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+        <div className="shrink-0 bg-[#090E16] px-4 pt-2 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
           <div className="grid grid-cols-2 gap-2.5">
             <button
               type="button"
@@ -1198,7 +1234,7 @@ export default function FullScreenCandleChartModal({
                 onClose();
                 if (onSelectTrade) onSelectTrade(player, "BUY");
               }}
-              className="flex items-center justify-center gap-1.5 rounded-2xl bg-[#00A878] py-3 text-sm font-extrabold text-white shadow-sm transition hover:opacity-95 active:scale-95"
+              className="flex h-12 items-center justify-center gap-1.5 rounded-xl bg-[#00B386] text-sm font-semibold text-white transition hover:bg-[#00B386]/90 active:scale-[0.98]"
             >
               <TrendingUp className="h-4 w-4" />
               <span>매수 주문하기</span>
@@ -1209,7 +1245,7 @@ export default function FullScreenCandleChartModal({
                 onClose();
                 if (onSelectTrade) onSelectTrade(player, "SELL");
               }}
-              className="flex items-center justify-center gap-1.5 rounded-2xl bg-[#F07868] py-3 text-sm font-extrabold text-white shadow-sm transition hover:opacity-95 active:scale-95"
+              className="flex h-12 items-center justify-center gap-1.5 rounded-xl bg-[#F07868] text-sm font-semibold text-white transition hover:bg-[#F07868]/90 active:scale-[0.98]"
             >
               <TrendingDown className="h-4 w-4" />
               <span>매도 주문하기</span>

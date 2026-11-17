@@ -16,6 +16,8 @@ import {
   doesPlayerBelongToTeam,
   isNationalTeamMatch,
   normalizeAccountKey,
+  calculateChangePercentFromOpen,
+  calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import { getAvailableShares } from "@/utils/tier";
 import { buildTeamLineupForMatch } from "./FormationPitchModal";
@@ -298,8 +300,11 @@ export default function MatchAccordionCard({
               <div className="space-y-1.5">
                 {activeKeyPlayers.slice(0, 3).map((player) => {
                   const base = player.openPrice ?? player.basePrice ?? player.initialPrice;
-                  const diff = player.currentPrice - base;
-                  const changePct = ((diff / Math.max(1, base)) * 100).toFixed(2);
+                  const diff = calculateDiffFromOpen(player.currentPrice, base);
+                  const changePct = calculateChangePercentFromOpen(
+                    player.currentPrice,
+                    base
+                  ).toFixed(2);
                   const isUp = diff > 0;
                   const isDown = diff < 0;
                   const holding = holdings[player.id];

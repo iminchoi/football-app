@@ -19,6 +19,8 @@ import {
   roundToTen,
   doesPlayerBelongToMatch,
   isNationalTeamMatch,
+  calculateChangePercentFromOpen,
+  calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import {
   Player,
@@ -306,7 +308,7 @@ export default function MarketChartTabView({
 
       // 4) Investment Criteria: Price Change %
       const openP = p.openPrice ?? p.initialPrice;
-      const pct = ((p.currentPrice - openP) / Math.max(1, openP)) * 100;
+      const pct = calculateChangePercentFromOpen(p.currentPrice, openP);
       if (changeFilter === "SURGE_5" && pct < 5) {
         return false;
       }
@@ -338,8 +340,8 @@ export default function MarketChartTabView({
     const sorted = [...filtered].sort((a, b) => {
       const openA = a.openPrice ?? a.initialPrice;
       const openB = b.openPrice ?? b.initialPrice;
-      const rateA = (a.currentPrice - openA) / Math.max(1, openA);
-      const rateB = (b.currentPrice - openB) / Math.max(1, openB);
+      const rateA = calculateChangePercentFromOpen(a.currentPrice, openA);
+      const rateB = calculateChangePercentFromOpen(b.currentPrice, openB);
 
       if (rankFilter === "GAINERS") return rateB - rateA;
       if (rankFilter === "LOSERS") return rateA - rateB;
@@ -375,9 +377,13 @@ export default function MarketChartTabView({
       activePlayer.priceHistory[0]?.price ??
       activePlayer.initialPrice
   );
-  const activeDiff = activePlayer.currentPrice - openPrice;
-  const activePct = Number(
-    ((activeDiff / Math.max(1, openPrice)) * 100).toFixed(2)
+  const activeHigh = activePlayer.highPrice ?? activePlayer.currentPrice;
+  const activeLow = activePlayer.lowPrice ?? openPrice;
+  const activeVolume = activePlayer.volume ?? 0;
+  const activeDiff = calculateDiffFromOpen(activePlayer.currentPrice, openPrice);
+  const activePct = calculateChangePercentFromOpen(
+    activePlayer.currentPrice,
+    openPrice
   );
   const isActiveUp = activeDiff > 0;
   const isActiveDown = activeDiff < 0;
@@ -465,8 +471,16 @@ export default function MarketChartTabView({
                   />
                 </button>
               </div>
-              <p className="truncate text-[11px] text-gray-400">
-                {activePlayer.teamName} · 시가 {openPrice.toLocaleString()}P
+              <p className="truncate text-[11px] text-gray-400 font-mono">
+                {activePlayer.teamName} · 시가 {openPrice.toLocaleString()}P · 고가{" "}
+                <span className="text-[#00A878]">
+                  {activeHigh.toLocaleString()}P
+                </span>{" "}
+                · 저가{" "}
+                <span className="text-[#F07868]">
+                  {activeLow.toLocaleString()}P
+                </span>{" "}
+                · 거래량 {activeVolume.toLocaleString()}주
               </p>
             </div>
           </div>
@@ -884,8 +898,11 @@ export default function MarketChartTabView({
           <div className="divide-y divide-gray-100">
             {top15Players.map((player, index) => {
               const pOpen = player.openPrice ?? player.initialPrice;
-              const diff = player.currentPrice - pOpen;
-              const pct = Number(((diff / Math.max(1, pOpen)) * 100).toFixed(2));
+              const diff = calculateDiffFromOpen(player.currentPrice, pOpen);
+              const pct = calculateChangePercentFromOpen(
+                player.currentPrice,
+                pOpen
+              );
               const isUp = diff > 0;
               const isDown = diff < 0;
               const holding = user ? holdings[player.id] : undefined;
