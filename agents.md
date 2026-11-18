@@ -78,5 +78,16 @@ Covers code, identifiers, log/error messages, comments, docs, examples, and comm
 
 
 
- 8. Project Status Tracking ([`STATUS.md`](http://STATUS.md)) - **Auto-Update After Every Task:** Whenever a code modification task is completed, create or update [`STATUS.md`](http://STATUS.md) in the project root (`football-app/[STATUS.md](http://STATUS.md)`). - **Keep It Current & Concise:** Overwrite outdated entries with the latest snapshot (max \~30 lines) using neutral English documentation style (no conversational filler): - `## Current State`: Summary of working features and latest `tsc` / build verification status. - `## Recent Changes`: Bullet list of files modified in the last completed task and what changed. - `## Known Issues & Next Steps`: Remaining bugs, unverified items, or logical next tasks. - **Read First on New Sessions:** At the start of any new session, read [`STATUS.md`](http://STATUS.md) alongside [`AGENTS.md`](http://AGENTS.md) to restore project context immediately.
+8. Project Status Tracking ([`STATUS.md`](http://STATUS.md)) - **Auto-Update After Every Task:** Whenever a code modification task is completed, create or update [`STATUS.md`](http://STATUS.md) in the project root (`football-app/[STATUS.md](http://STATUS.md)`). - **Keep It Current & Concise:** Overwrite outdated entries with the latest snapshot (max ~30 lines) using neutral English documentation style (no conversational filler): - `## Current State`: Summary of working features and latest `tsc` / build verification status. - `## Recent Changes`: Bullet list of files modified in the last completed task and what changed. - `## Known Issues & Next Steps`: Remaining bugs, unverified items, or logical next tasks. - **Read First on New Sessions:** At the start of any new session, read [`STATUS.md`](http://STATUS.md) alongside [`AGENTS.md`](http://AGENTS.md) to restore project context immediately.
 
+
+
+9. Visual & UI Design System (PitchTrade Aesthetic)
+
+- **Surface & Depth**: Use true obsidian black (`#060709`) as base canvas and subtle charcoal (`#0F1115`) for elevated surfaces. Avoid heavy borders; separate sections with negative space and hairline `1px solid rgba(255,255,255,0.07)`.
+
+- **No AI Clichés**: Never use cheesy grass stripe patterns, loud gradient banners, bubbly cartoon pins, or generic card boxes.
+
+- **Color Restraint**: Keep 90% of the UI monochrome (pure white `#FFFFFF` primary text, `#71717A` muted zinc labels). Use electric mint/lime (`#10B981` / `#A3E635`) and coral (`#F43F5E`) strictly for price action and primary CTAs.
+
+- **Sports Typography**: Treat jersey numbers, match minutes (`71'`), and scores as bold editorial typography (large `tabular-nums`, tight tracking `-0.03em`) inspired by modern sports broadcast graphics.

@@ -9,8 +9,6 @@ import {
   RotateCcw,
   ChevronLeft,
   ChevronRight,
-  TrendingUp,
-  TrendingDown,
 } from "lucide-react";
 import {
   useTradeStore,
@@ -45,141 +43,67 @@ interface FullScreenCandleChartModalProps {
   onSelectTrade?: (player: Player, type: TradeType) => void;
 }
 
-// Standardized PitchTrade Global Palette (Premium Dark Trading Terminal)
-const COLOR_UP = "#00B386";
-const COLOR_DOWN = "#F07868";
-const COLOR_FLAT = "#64748B";
+// Standardized PitchTrade Obsidian Editorial Palette
+const COLOR_UP = "#10B981";
+const COLOR_DOWN = "#F43F5E";
+const COLOR_FLAT = "#71717A";
 
 /**
- * Minimal custom SVG vector event badge rendered directly on the candlestick chart.
+ * Minimal hairline-stem pinpoint event marker rendered directly above or below candle tips.
  */
-function renderVectorEventBadge(type: ChartEventType, isSelected: boolean) {
-  const scale = isSelected ? 1.15 : 1;
-  switch (type) {
-    case "GOAL":
-      return (
-        <g transform={`scale(${scale})`}>
-          <circle
-            cx={0}
-            cy={0}
-            r={8}
-            fill="#111925"
-            stroke="#00B386"
-            strokeWidth={1.5}
-          />
-          {/* Minimal soccer ball */}
-          <circle cx={0} cy={0} r={4.4} fill="#F8FAFC" />
-          <polygon
-            points="0,-2.2 2.1,-0.7 1.3,1.8 -1.3,1.8 -2.1,-0.7"
-            fill="#090E16"
-          />
-          <line x1={0} y1={-2.2} x2={0} y2={-4.3} stroke="#090E16" strokeWidth={0.8} />
-          <line x1={2.1} y1={-0.7} x2={4.1} y2={-1.3} stroke="#090E16" strokeWidth={0.8} />
-          <line x1={-2.1} y1={-0.7} x2={-4.1} y2={-1.3} stroke="#090E16" strokeWidth={0.8} />
-        </g>
-      );
-    case "ASSIST":
-      return (
-        <g transform={`scale(${scale})`}>
-          <circle
-            cx={0}
-            cy={0}
-            r={8.5}
-            fill="#131A26"
-            stroke="#38BDF8"
-            strokeWidth={1.6}
-          />
-          <text
-            x={0}
-            y={3.2}
-            textAnchor="middle"
-            fill="#38BDF8"
-            fontSize={9}
-            fontWeight={700}
-            className="font-sans"
-          >
-            A
-          </text>
-        </g>
-      );
-    case "YELLOW_CARD":
-      return (
-        <g transform={`scale(${scale})`}>
-          <circle
-            cx={0}
-            cy={0}
-            r={8.5}
-            fill="#131A26"
-            stroke="#FACC15"
-            strokeWidth={1.4}
-          />
-          {/* Tilted yellow card */}
-          <rect
-            x={-3}
-            y={-4.5}
-            width={6}
-            height={9}
-            rx={1}
-            fill="#FACC15"
-            transform="rotate(-12)"
-          />
-        </g>
-      );
-    case "RED_CARD":
-      return (
-        <g transform={`scale(${scale})`}>
-          <circle
-            cx={0}
-            cy={0}
-            r={8.5}
-            fill="#131A26"
-            stroke="#F07868"
-            strokeWidth={1.4}
-          />
-          {/* Tilted red card */}
-          <rect
-            x={-3}
-            y={-4.5}
-            width={6}
-            height={9}
-            rx={1}
-            fill="#EF4444"
-            transform="rotate(-12)"
-          />
-        </g>
-      );
-    case "SAVE":
-      return (
-        <g transform={`scale(${scale})`}>
-          <circle
-            cx={0}
-            cy={0}
-            r={8.5}
-            fill="#131A26"
-            stroke="#A78BFA"
-            strokeWidth={1.6}
-          />
-          <path
-            d="M0,-4.5 L3.8,-2.8 L3.2,1.5 C2.8,3.2 0,4.5 0,4.5 C0,4.5 -2.8,3.2 -3.2,1.5 L-3.8,-2.8 Z"
-            fill="#A78BFA"
-          />
-        </g>
-      );
-    default:
-      return (
-        <g transform={`scale(${scale})`}>
-          <circle
-            cx={0}
-            cy={0}
-            r={8}
-            fill="#131A26"
-            stroke="#64748B"
-            strokeWidth={1.5}
-          />
-          <circle cx={0} cy={0} r={3} fill="#94A3B8" />
-        </g>
-      );
-  }
+function renderVectorEventBadge(
+  type: ChartEventType,
+  minute: number,
+  isNegative: boolean,
+  isSelected: boolean
+) {
+  const dir = isNegative ? 1 : -1;
+  const stemLen = 10;
+  const badgeY = dir * (stemLen + 8);
+  const labelMap: Record<ChartEventType, string> = {
+    GOAL: `⚽ ${minute}'`,
+    ASSIST: `AST ${minute}'`,
+    YELLOW_CARD: `🟨 ${minute}'`,
+    RED_CARD: `🟥 ${minute}'`,
+    SAVE: `SV ${minute}'`,
+    SUB_OUT: `SUB ${minute}'`,
+  };
+  const label = labelMap[type] ?? `• ${minute}'`;
+  const badgeW = Math.max(36, label.length * 5.6 + 10);
+
+  return (
+    <g>
+      <line
+        x1={0}
+        y1={dir * 2}
+        x2={0}
+        y2={dir * stemLen}
+        stroke={isSelected ? "#FFFFFF" : "rgba(255,255,255,0.28)"}
+        strokeWidth={isSelected ? 1.2 : 0.9}
+      />
+      <rect
+        x={-badgeW / 2}
+        y={badgeY - 8}
+        width={badgeW}
+        height={16}
+        rx={4}
+        fill={isSelected ? "#181B22" : "#0E1015"}
+        stroke={isSelected ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.12)"}
+        strokeWidth={isSelected ? 1 : 0.75}
+      />
+      <text
+        x={0}
+        y={badgeY + 3}
+        textAnchor="middle"
+        fill={isSelected ? "#FFFFFF" : "#E4E4E7"}
+        fontSize={8.5}
+        fontWeight={600}
+        className="font-sans tabular-nums"
+      >
+        {label}
+      </text>
+    </g>
+  );
 }
 
 export default function FullScreenCandleChartModal({
@@ -580,60 +504,66 @@ export default function FullScreenCandleChartModal({
   );
 
   return (
-    <div className="fixed inset-0 z-[85] flex flex-col bg-[#090E16] animate-fade-in">
+    <div className="fixed inset-0 z-[85] flex flex-col bg-[#060709] animate-fade-in">
       {/* Centered Mobile/Desktop Terminal Container */}
-      <div className="mx-auto flex h-full w-full max-w-[480px] flex-col bg-[#090E16] text-slate-100 overflow-hidden">
-        {/* 1. Top Bar: Player Identity + Watchlist + Close */}
+      <div className="mx-auto flex h-full w-full max-w-[480px] flex-col bg-[#060709] text-white overflow-hidden">
+        {/* 1. Top Bar: Editorial Player Identity + Scoreline + Actions */}
         <div className="flex shrink-0 items-center justify-between px-4 pt-3.5 pb-2.5">
-          <div className="flex items-center gap-3 min-w-0">
-            <div
-              style={{ backgroundColor: player.teamColor }}
-              className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-xl text-white font-sans tabular-nums"
-            >
-              <span className="text-[8px] font-semibold opacity-85 leading-none">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="flex shrink-0 flex-col items-center justify-center pb-0.5 border-b-2" style={{ borderColor: player.teamColor }}>
+              <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-[#71717A] leading-none">
                 {player.teamShort}
               </span>
-              <span className="text-xs font-bold mt-0.5">
+              <span className="mt-0.5 font-sans tabular-nums text-lg font-extrabold tracking-[-0.03em] text-white leading-none">
                 {player.backNumber}
               </span>
             </div>
 
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <h2 className="truncate text-base font-bold tracking-tight text-white">
+              <div className="flex items-baseline gap-2">
+                <h2 className="truncate text-base font-bold tracking-[-0.02em] text-white">
                   {player.name}
                 </h2>
-                <span className="rounded-md bg-[#182331] px-1.5 py-0.5 text-[10px] font-semibold text-[#8291A5]">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[#71717A]">
                   {player.position}
                 </span>
-                <span className="rounded-md bg-[#00B386]/15 px-1.5 py-0.5 font-sans tabular-nums text-[10px] font-semibold text-[#00B386]">
-                  ★ {player.stats.rating.toFixed(1)}
+                <span className="font-sans tabular-nums text-[11px] font-semibold tracking-[-0.02em] text-white/80">
+                  {player.stats.rating.toFixed(1)}
                 </span>
               </div>
-              <p className="mt-0.5 truncate text-[11px] font-medium text-[#8291A5]">
-                {player.teamName} ·{" "}
-                {matchStatus === "LIVE"
-                  ? `LIVE ${playerMatch?.minute ?? 65}'`
-                  : matchStatus === "FT"
-                  ? "경기 종료"
-                  : "경기 예정"}
-              </p>
+              <div className="mt-0.5 flex items-center gap-2 truncate text-[11px] font-medium text-[#71717A]">
+                {playerMatch ? (
+                  <span className="font-sans tabular-nums tracking-[-0.02em] text-white/85 font-semibold">
+                    {playerMatch.homeTeam.shortName} {playerMatch.homeTeam.score ?? 0} · {playerMatch.awayTeam.score ?? 0} {playerMatch.awayTeam.shortName}
+                  </span>
+                ) : (
+                  <span className="truncate">{player.teamName}</span>
+                )}
+                <span className="text-white/20">/</span>
+                <span className="font-sans tabular-nums tracking-[-0.02em]">
+                  {matchStatus === "LIVE"
+                    ? `${playerMatch?.minute ?? 65}'`
+                    : matchStatus === "FT"
+                    ? "90' FT"
+                    : "PRE"}
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
               onClick={() => toggleWatchlist(player.id)}
               title={isWatched ? "관심선수 해제" : "관심선수 등록"}
               className={`flex h-9 w-9 items-center justify-center rounded-full transition active:scale-90 ${
                 isWatched
-                  ? "bg-amber-400/15 text-amber-400"
-                  : "bg-[#182331] text-[#8291A5] hover:text-white"
+                  ? "bg-white/[0.08] text-white"
+                  : "bg-[#0E1015] text-[#71717A] hover:text-white"
               }`}
             >
               <Star
-                className={`h-4 w-4 ${isWatched ? "fill-amber-400" : ""}`}
+                className={`h-4 w-4 ${isWatched ? "fill-white text-white" : ""}`}
               />
             </button>
 
@@ -641,57 +571,52 @@ export default function FullScreenCandleChartModal({
               type="button"
               onClick={onClose}
               aria-label="풀스크린 차트 닫기"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-[#182331] text-[#8291A5] transition hover:text-white"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-[#0E1015] text-[#71717A] transition hover:text-white"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
         </div>
 
-        {/* 2. Price Hero + Compact 2x2 Summary Metrics (Borderless Hierarchy) */}
+        {/* 2. Price Hero + Quiet Monochrome 2x2 Summary Metrics */}
         <div className="shrink-0 px-4 pt-1 pb-3">
           <div className="flex items-end justify-between gap-3">
             <div>
               <div className="flex items-baseline gap-2.5">
                 <span
-                  className={`font-sans tabular-nums text-[28px] font-extrabold leading-none tracking-tight ${
+                  className={`font-sans tabular-nums text-[30px] font-extrabold leading-none tracking-[-0.03em] ${
                     isUpOverall
-                      ? "text-[#00B386]"
+                      ? "text-[#10B981]"
                       : isDownOverall
-                      ? "text-[#F07868]"
+                      ? "text-[#F43F5E]"
                       : "text-white"
                   }`}
                 >
                   {closePrice.toLocaleString()}
-                  <span className="ml-1 text-base font-bold opacity-85">P</span>
+                  <span className="ml-0.5 text-sm font-semibold text-[#71717A]">P</span>
                 </span>
                 <span
-                  className={`inline-flex items-center gap-0.5 rounded-md px-2 py-0.5 font-sans tabular-nums text-xs font-bold ${
+                  className={`font-sans tabular-nums text-xs font-bold tracking-[-0.02em] ${
                     isUpOverall
-                      ? "bg-[#00B386]/15 text-[#00B386]"
+                      ? "text-[#10B981]"
                       : isDownOverall
-                      ? "bg-[#F07868]/15 text-[#F07868]"
-                      : "bg-[#182331] text-[#8291A5]"
+                      ? "text-[#F43F5E]"
+                      : "text-[#71717A]"
                   }`}
                 >
-                  {isUpOverall ? (
-                    <TrendingUp className="h-3 w-3" />
-                  ) : isDownOverall ? (
-                    <TrendingDown className="h-3 w-3" />
-                  ) : null}
                   {isUpOverall ? "+" : ""}
                   {pctFromOpen.toFixed(2)}%
                 </span>
               </div>
-              <p className="mt-1.5 font-sans tabular-nums text-xs font-medium text-[#8291A5]">
+              <p className="mt-1.5 font-sans tabular-nums text-[11px] font-medium text-[#71717A]">
                 시가 {openPrice.toLocaleString()}P 대비{" "}
                 <span
                   className={
                     diffFromOpen > 0
-                      ? "text-[#00B386]"
+                      ? "text-[#10B981]"
                       : diffFromOpen < 0
-                      ? "text-[#F07868]"
-                      : "text-slate-300"
+                      ? "text-[#F43F5E]"
+                      : "text-white"
                   }
                 >
                   {diffFromOpen >= 0 ? "+" : ""}
@@ -702,26 +627,26 @@ export default function FullScreenCandleChartModal({
 
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-right font-sans tabular-nums text-[11px]">
               <div className="flex items-center justify-end gap-1.5">
-                <span className="text-[#8291A5]">고가</span>
-                <span className="font-semibold text-[#00B386]">
+                <span className="text-[#71717A]">고가</span>
+                <span className="font-semibold text-white">
                   {allHigh.toLocaleString()}
                 </span>
               </div>
               <div className="flex items-center justify-end gap-1.5">
-                <span className="text-[#8291A5]">시가</span>
-                <span className="font-semibold text-slate-200">
+                <span className="text-[#71717A]">시가</span>
+                <span className="font-semibold text-white">
                   {openPrice.toLocaleString()}
                 </span>
               </div>
               <div className="flex items-center justify-end gap-1.5">
-                <span className="text-[#8291A5]">저가</span>
-                <span className="font-semibold text-[#F07868]">
+                <span className="text-[#71717A]">저가</span>
+                <span className="font-semibold text-white">
                   {allLow.toLocaleString()}
                 </span>
               </div>
               <div className="flex items-center justify-end gap-1.5">
-                <span className="text-[#8291A5]">거래량</span>
-                <span className="font-semibold text-slate-200">
+                <span className="text-[#71717A]">거래량</span>
+                <span className="font-semibold text-white">
                   {totalVol.toLocaleString()}주
                 </span>
               </div>
@@ -730,8 +655,8 @@ export default function FullScreenCandleChartModal({
         </div>
 
         {/* 3. Minimal Segmented Timeframe Control + Uniform Zoom/Pan Bar */}
-        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-[#263343]/60 px-4 py-2">
-          <div className="inline-flex rounded-lg bg-[#182331] p-0.5 text-[11px] font-semibold">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-white/[0.06] px-4 py-2">
+          <div className="inline-flex rounded-lg bg-[#0E1015] p-0.5 text-[11px] font-semibold">
             {(
               [
                 { key: "3M", label: "3분" },
@@ -746,8 +671,8 @@ export default function FullScreenCandleChartModal({
                 onClick={() => setTimeframe(tf.key)}
                 className={`rounded-md px-2.5 py-1 transition ${
                   timeframe === tf.key
-                    ? "bg-[#263343] text-white"
-                    : "text-[#8291A5] hover:text-slate-200"
+                    ? "bg-white/[0.1] text-white"
+                    : "text-[#71717A] hover:text-white"
                 }`}
               >
                 {tf.label}
@@ -761,7 +686,7 @@ export default function FullScreenCandleChartModal({
               onClick={() => applyPan(-4)}
               disabled={safeStartIdx <= 0}
               title="이전 구간 이동"
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#182331] text-slate-300 transition hover:bg-[#263343] disabled:opacity-30"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#0E1015] text-[#71717A] transition hover:text-white disabled:opacity-30"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </button>
@@ -770,7 +695,7 @@ export default function FullScreenCandleChartModal({
               onClick={() => applyPan(4)}
               disabled={safeStartIdx + safeVisCount >= candles.length}
               title="다음 구간 이동"
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#182331] text-slate-300 transition hover:bg-[#263343] disabled:opacity-30"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#0E1015] text-[#71717A] transition hover:text-white disabled:opacity-30"
             >
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
@@ -779,7 +704,7 @@ export default function FullScreenCandleChartModal({
               onClick={() => applyZoom(safeVisCount - 4)}
               disabled={safeVisCount <= minVis}
               title="차트 확대 (Zoom In)"
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#182331] text-slate-300 transition hover:bg-[#263343] disabled:opacity-30"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#0E1015] text-[#71717A] transition hover:text-white disabled:opacity-30"
             >
               <ZoomIn className="h-3.5 w-3.5" />
             </button>
@@ -788,7 +713,7 @@ export default function FullScreenCandleChartModal({
               onClick={() => applyZoom(safeVisCount + 4)}
               disabled={safeVisCount >= maxVis}
               title="차트 축소 (Zoom Out)"
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#182331] text-slate-300 transition hover:bg-[#263343] disabled:opacity-30"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#0E1015] text-[#71717A] transition hover:text-white disabled:opacity-30"
             >
               <ZoomOut className="h-3.5 w-3.5" />
             </button>
@@ -799,7 +724,7 @@ export default function FullScreenCandleChartModal({
                 setStartIndex(0);
               }}
               title="전체 0~90' 한눈에 보기"
-              className="flex h-7 items-center gap-1 rounded-lg bg-[#182331] px-2 text-[11px] font-medium text-slate-300 transition hover:bg-[#263343]"
+              className="flex h-7 items-center gap-1 rounded-lg bg-[#0E1015] px-2 text-[11px] font-medium text-[#71717A] transition hover:text-white"
             >
               <RotateCcw className="h-3 w-3" />
               <span>전체</span>
@@ -807,29 +732,29 @@ export default function FullScreenCandleChartModal({
           </div>
         </div>
 
-        {/* 4. Seamless OHLCV HUD Strip + Event Impact Line */}
+        {/* 4. Seamless OHLCV HUD Strip + Quiet Inline Event Pill */}
         {activeCandle && (
-          <div className="shrink-0 bg-[#111925] px-4 pt-2.5 pb-1 font-sans tabular-nums text-[11px] font-medium text-[#8291A5] space-y-1.5">
+          <div className="shrink-0 bg-[#0E1015] border-t border-white/[0.06] px-4 pt-2.5 pb-1.5 font-sans tabular-nums text-[11px] font-medium text-[#71717A] space-y-1.5">
             <div className="flex flex-wrap items-center justify-between gap-1.5">
               <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="rounded bg-[#182331] px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                <span className="border-b border-white/25 pb-0.5 text-[10px] font-bold tracking-[-0.02em] text-white">
                   {activeCandle.label}
                 </span>
                 <span>
                   시{" "}
-                  <strong className="font-semibold text-slate-200">
+                  <strong className="font-semibold text-white">
                     {activeCandle.open.toLocaleString()}
                   </strong>
                 </span>
                 <span>
                   고{" "}
-                  <strong className="font-semibold text-[#00B386]">
+                  <strong className="font-semibold text-white">
                     {activeCandle.high.toLocaleString()}
                   </strong>
                 </span>
                 <span>
                   저{" "}
-                  <strong className="font-semibold text-[#F07868]">
+                  <strong className="font-semibold text-white">
                     {activeCandle.low.toLocaleString()}
                   </strong>
                 </span>
@@ -838,10 +763,10 @@ export default function FullScreenCandleChartModal({
                   <strong
                     className={`font-semibold ${
                       activeCandle.close > activeCandle.open
-                        ? "text-[#00B386]"
+                        ? "text-[#10B981]"
                         : activeCandle.close < activeCandle.open
-                        ? "text-[#F07868]"
-                        : "text-slate-300"
+                        ? "text-[#F43F5E]"
+                        : "text-white"
                     }`}
                   >
                     {activeCandle.close.toLocaleString()}
@@ -849,7 +774,7 @@ export default function FullScreenCandleChartModal({
                 </span>
                 <span>
                   량{" "}
-                  <strong className="font-semibold text-slate-200">
+                  <strong className="font-semibold text-white">
                     {activeCandle.volume.toLocaleString()}
                   </strong>
                 </span>
@@ -858,10 +783,10 @@ export default function FullScreenCandleChartModal({
               <span
                 className={`text-[11px] font-semibold ${
                   activeCandlePctFromOpen > 0
-                    ? "text-[#00B386]"
+                    ? "text-[#10B981]"
                     : activeCandlePctFromOpen < 0
-                    ? "text-[#F07868]"
-                    : "text-[#8291A5]"
+                    ? "text-[#F43F5E]"
+                    : "text-[#71717A]"
                 }`}
               >
                 {activeCandlePctFromOpen > 0 ? "+" : ""}
@@ -870,25 +795,24 @@ export default function FullScreenCandleChartModal({
             </div>
 
             {activeCandle.matchEvent && (
-              <div className="flex items-center justify-between rounded-lg bg-[#182331] px-2.5 py-1 text-[11px] font-medium text-amber-300">
+              <div className="inline-flex max-w-full items-center gap-2 rounded-full bg-white/[0.04] border border-white/10 px-2.5 py-0.5 text-[11px] font-medium text-white/90">
                 <span className="truncate">
-                  {activeCandle.matchEvent.minute}&apos;{" "}
                   {EVENT_PIN_CONFIG[activeCandle.matchEvent.type]?.icon ?? "⚽"}{" "}
+                  <span className="font-sans tabular-nums text-[#71717A]">
+                    {activeCandle.matchEvent.minute}&apos;
+                  </span>{" "}
                   {activeCandle.matchEvent.description}
                 </span>
-                <span className="shrink-0 ml-2 font-sans tabular-nums text-slate-200">
-                  {activeCandle.open.toLocaleString()}P →{" "}
-                  <strong
-                    className={
-                      activeCandle.matchEvent.priceImpactPercent >= 0
-                        ? "text-[#00B386]"
-                        : "text-[#F07868]"
-                    }
-                  >
-                    {activeCandle.close.toLocaleString()}P (
-                    {activeCandle.matchEvent.priceImpactPercent >= 0 ? "+" : ""}
-                    {activeCandle.matchEvent.priceImpactPercent.toFixed(1)}%)
-                  </strong>
+                <span className="text-white/20">·</span>
+                <span
+                  className={`shrink-0 font-sans tabular-nums font-semibold ${
+                    activeCandle.matchEvent.priceImpactPercent >= 0
+                      ? "text-[#10B981]"
+                      : "text-[#F43F5E]"
+                  }`}
+                >
+                  {activeCandle.matchEvent.priceImpactPercent >= 0 ? "+" : ""}
+                  {activeCandle.matchEvent.priceImpactPercent.toFixed(1)}%
                 </span>
               </div>
             )}
@@ -898,7 +822,7 @@ export default function FullScreenCandleChartModal({
         {/* 5. Seamless Full-Bleed Candlestick (78%) + Volume (22%) Canvas */}
         <div
           ref={chartContainerRef}
-          className="relative flex-1 min-h-0 w-full bg-[#111925] select-none touch-none overflow-hidden"
+          className="relative flex-1 min-h-0 w-full bg-[#0E1015] select-none touch-none overflow-hidden"
         >
           <svg
             ref={svgRef}
@@ -924,15 +848,14 @@ export default function FullScreenCandleChartModal({
                     x2={padLeft + plotW}
                     y1={y}
                     y2={y}
-                    stroke="#263343"
-                    strokeOpacity={0.55}
+                    stroke="rgba(255,255,255,0.06)"
                     strokeDasharray="3 3"
                     strokeWidth="1"
                   />
                   <text
                     x={padLeft + plotW + 6}
                     y={y + 3}
-                    className="fill-[#8291A5] font-sans tabular-nums text-[9.5px] font-medium"
+                    className="fill-[#71717A] font-sans tabular-nums text-[9.5px] font-medium"
                   >
                     {val.toLocaleString()}
                   </text>
@@ -940,19 +863,19 @@ export default function FullScreenCandleChartModal({
               );
             })}
 
-            {/* Subtle Divider between 75% Price Pane and 25% Volume Pane */}
+            {/* Subtle Divider between 78% Price Pane and 22% Volume Pane */}
             <line
               x1={padLeft}
               x2={padLeft + plotW}
               y1={volTop - 7}
               y2={volTop - 7}
-              stroke="#263343"
+              stroke="rgba(255,255,255,0.06)"
               strokeWidth="1"
             />
             <text
               x={padLeft + 2}
               y={volTop + 4}
-              className="fill-[#8291A5] font-sans text-[8.5px] font-medium opacity-75"
+              className="fill-[#71717A] font-sans text-[8.5px] font-medium opacity-75"
             >
               VOL
             </text>
@@ -963,8 +886,8 @@ export default function FullScreenCandleChartModal({
               x2={padLeft + plotW}
               y1={openPriceY}
               y2={openPriceY}
-              stroke="#475569"
-              strokeOpacity={0.7}
+              stroke="#71717A"
+              strokeOpacity={0.5}
               strokeDasharray="4 3"
               strokeWidth="1"
             />
@@ -1120,7 +1043,7 @@ export default function FullScreenCandleChartModal({
                     fillOpacity={isSelected ? 0.9 : 0.35}
                   />
 
-                  {/* Custom Vector Match Event Badge */}
+                  {/* Pinpoint Hairline-Stem Event Marker */}
                   {c.event && (
                     <g
                       onClick={(e) => {
@@ -1129,11 +1052,16 @@ export default function FullScreenCandleChartModal({
                       }}
                       transform={`translate(${cx}, ${
                         (c.matchEvent?.priceImpactPercent ?? 0) < 0
-                          ? Math.min(padTop + pricePlotH - 12, lowY + 13)
-                          : Math.max(13, highY - 13)
+                          ? Math.min(padTop + pricePlotH - 18, lowY)
+                          : Math.max(padTop + 18, highY)
                       })`}
                     >
-                      {renderVectorEventBadge(c.event.type, isSelected)}
+                      {renderVectorEventBadge(
+                        c.event.type,
+                        c.matchEvent?.minute ?? c.minute ?? 0,
+                        (c.matchEvent?.priceImpactPercent ?? 0) < 0,
+                        isSelected
+                      )}
                     </g>
                   )}
 
@@ -1143,7 +1071,7 @@ export default function FullScreenCandleChartModal({
                       x={cx}
                       y={svgH - 4}
                       textAnchor="middle"
-                      className="fill-[#8291A5] font-sans tabular-nums text-[9.5px] font-medium"
+                      className="fill-[#71717A] font-sans tabular-nums text-[9.5px] font-medium"
                     >
                       {c.label}
                     </text>
@@ -1156,9 +1084,9 @@ export default function FullScreenCandleChartModal({
 
         {/* 6. Slim Borderless Horizontal Event Chips Strip */}
         {sortedEventsAsc.length > 0 && (
-          <div className="shrink-0 bg-[#090E16] border-t border-[#263343]/60 px-4 py-2">
+          <div className="shrink-0 bg-[#060709] border-t border-white/[0.06] px-4 py-2">
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-              <span className="shrink-0 text-[10px] font-semibold text-[#8291A5] mr-1">
+              <span className="shrink-0 text-[10px] font-semibold text-[#71717A] mr-1">
                 이벤트
               </span>
               {sortedEventsAsc.map((ev) => {
@@ -1197,11 +1125,11 @@ export default function FullScreenCandleChartModal({
                     }}
                     className={`flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
                       isSelected
-                        ? "bg-[#263343] text-white"
-                        : "bg-[#182331] text-slate-300 hover:bg-[#263343]/80"
+                        ? "bg-white/[0.1] text-white"
+                        : "bg-[#0E1015] text-white/75 hover:text-white"
                     }`}
                   >
-                    <span className="font-sans tabular-nums text-[10px] text-[#8291A5]">
+                    <span className="font-sans tabular-nums text-[10px] text-[#71717A]">
                       {formatMinuteLabel(ev.minute)}
                     </span>
                     <span>{cfg.icon}</span>
@@ -1209,10 +1137,10 @@ export default function FullScreenCandleChartModal({
                     <span
                       className={`font-sans tabular-nums text-[10px] font-semibold ${
                         impact > 0
-                          ? "text-[#00B386]"
+                          ? "text-[#10B981]"
                           : impact < 0
-                          ? "text-[#F07868]"
-                          : "text-[#8291A5]"
+                          ? "text-[#F43F5E]"
+                          : "text-[#71717A]"
                       }`}
                     >
                       {impact > 0 ? "+" : ""}
@@ -1226,7 +1154,7 @@ export default function FullScreenCandleChartModal({
         )}
 
         {/* 7. Bottom Safe-Area Action Bar: Direct Buy / Sell Trigger */}
-        <div className="shrink-0 bg-[#090E16] px-4 pt-2 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+        <div className="shrink-0 bg-[#060709] px-4 pt-2 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
           <div className="grid grid-cols-2 gap-2.5">
             <button
               type="button"
@@ -1234,10 +1162,9 @@ export default function FullScreenCandleChartModal({
                 onClose();
                 if (onSelectTrade) onSelectTrade(player, "BUY");
               }}
-              className="flex h-12 items-center justify-center gap-1.5 rounded-xl bg-[#00B386] text-sm font-semibold text-white transition hover:bg-[#00B386]/90 active:scale-[0.98]"
+              className="flex h-12 items-center justify-center rounded-xl bg-[#10B981] text-sm font-semibold text-white transition hover:bg-[#10B981]/90 active:scale-[0.98]"
             >
-              <TrendingUp className="h-4 w-4" />
-              <span>매수 주문하기</span>
+              매수 주문하기
             </button>
             <button
               type="button"
@@ -1245,10 +1172,9 @@ export default function FullScreenCandleChartModal({
                 onClose();
                 if (onSelectTrade) onSelectTrade(player, "SELL");
               }}
-              className="flex h-12 items-center justify-center gap-1.5 rounded-xl bg-[#F07868] text-sm font-semibold text-white transition hover:bg-[#F07868]/90 active:scale-[0.98]"
+              className="flex h-12 items-center justify-center rounded-xl bg-[#F43F5E] text-sm font-semibold text-white transition hover:bg-[#F43F5E]/90 active:scale-[0.98]"
             >
-              <TrendingDown className="h-4 w-4" />
-              <span>매도 주문하기</span>
+              매도 주문하기
             </button>
           </div>
         </div>
