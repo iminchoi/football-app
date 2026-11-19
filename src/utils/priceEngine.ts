@@ -13,6 +13,29 @@ import {
   getPositionLine,
 } from "@/types";
 import { getTierConfig } from "@/utils/tier";
+export {
+  CIRCUIT_BREAKER_MS,
+  RETURN_CLAMP_MIN,
+  RETURN_CLAMP_MAX,
+  eventDelta,
+  calculateCumulativeReturn,
+  deriveStatsFromEvents,
+  fanOutTeamEventsToPlayers,
+  buildPriceSeries,
+  isCircuitBreakerActive,
+  getCircuitBreakerRemainingSec,
+} from "@/lib/priceEngine";
+export type {
+  GoalContext,
+  PlayerEventType,
+  PlayerEvent,
+  PlayerContext,
+  MatchParticipant,
+  TeamMatchRawEvent,
+  DerivedCumulativeReturn,
+  DerivedPlayerStats,
+  PriceSeriesResult,
+} from "@/lib/priceEngine";
 
 export const EVENT_TYPE_META: Record<
   MatchEventType,
@@ -512,9 +535,8 @@ function buildMinuteBarsFromEvents(params: {
         close = clampToPriceLimit(prevClose - 20, basePrice);
       }
     } else if (m % 2 === 0) {
-      // Gentle deterministic micro-movement so candles form natural bodies
-      const microRate =
-        (noise - 0.495) * 0.005 * tierCfg.volatilityMultiplier;
+      // Quiet-interval micro-noise reduced to 1/3 (±0.15% max) so event jumps stand out clearly
+      const microRate = (noise - 0.5) * 0.0025;
       close = clampToPriceLimit(prevClose * (1 + microRate), basePrice);
     }
 

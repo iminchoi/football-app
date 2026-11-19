@@ -28,6 +28,7 @@ import {
   resolvePlayerMatchContext,
 } from "@/utils/priceEngine";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
+import { getCircuitBreakerRemainingSec } from "@/utils/priceEngine";
 import { Player, TradeType, getPositionLine } from "@/types";
 import PlayerDetailModal from "@/components/PlayerDetailModal";
 import MatchTimelineChart from "@/components/market/MatchTimelineChart";
@@ -562,7 +563,7 @@ export default function TradeBottomSheet({
     user ? normalizeAccountKey(user.id) : undefined
   );
   const playerTier = player.tier ?? tierCfg.tier;
-  const isSoldOut = availableShares === 0;
+  const isSoldOut = false; // v2.0: Share supply limit removed; free execution within cash points
   const remainPct =
     totalShares > 0
       ? Math.min(
@@ -570,7 +571,9 @@ export default function TradeBottomSheet({
           Math.max(0, Math.round((availableShares / totalShares) * 100))
         )
       : 0;
-  const isLowStock = !isSoldOut && remainPct <= 15;
+  const isLowStock = false;
+  const cbRemainingSec = getCircuitBreakerRemainingSec(player.lastMajorEventAt);
+  const isCircuitLocked = cbRemainingSec > 0;
 
   // Unrealized PnL for owned holdings
   const unrealizedPnL =
@@ -597,9 +600,9 @@ export default function TradeBottomSheet({
   // 7-Row FotMob Gauge Stats
   const fotMobStats = buildFotMobStats(player);
 
-  // Max purchasable or sellable quantity (capped by availableShares on BUY)
-  const affordableQty = user ? Math.max(0, Math.floor(cash / currentPrice)) : availableShares;
-  const maxBuyQty = Math.min(availableShares, affordableQty);
+  // Max purchasable or sellable quantity (bounded by cash points on BUY)
+  const affordableQty = user ? Math.max(0, Math.floor(cash / currentPrice)) : 9999;
+  const maxBuyQty = affordableQty;
   const maxSellQty = ownedQty;
   const maxQty = tradeType === "BUY" ? maxBuyQty : maxSellQty;
 
@@ -618,12 +621,10 @@ export default function TradeBottomSheet({
   // When unauthenticated (user === null), button is always clickable to open AuthModal immediately
   const canExecute = !user
     ? true
-    : isBuyBlockedByCap || isBuySoldOut
+    : isCircuitLocked || isBuyBlockedByCap || isBuySoldOut
     ? false
     : quantity >= 1 &&
-      (tradeType === "BUY"
-        ? totalAmount <= cash && quantity <= availableShares
-        : quantity <= ownedQty);
+      (tradeType === "BUY" ? totalAmount <= cash : quantity <= ownedQty);
 
   const handleAdjust = (delta: number) => {
     setFeedback(null);
@@ -1213,6 +1214,13 @@ export default function TradeBottomSheet({
               </span>
             </div>
           </div>
+
+          {/* 30s Circuit Breaker Banner */}
+          {isCircuitLocked && (
+            <div className="flex items-center justify-between rounded-xl bg-amber-50 border border-amber-200 px-3 py-1.5 text-[11px] font-extrabold text-amber-800">
+              <span>⚡ 서킷 브레이커 작동 중 ({cbRemainingSec}초 후 주문 가능)</span>
+            </div>
+          )}
 
           {/* Upper (+30%) / Lower (-30%) Price Limit Notice Banner */}
           {isAtUpperLimit && (

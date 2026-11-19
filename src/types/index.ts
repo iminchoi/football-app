@@ -169,6 +169,7 @@ export interface MatchEvent {
   type: MatchEventType;
   description: string;
   priceImpactPercent: number;
+  triggeredAt?: number; // Epoch ms when major event occurred (for 30s circuit breaker)
 }
 
 export interface ChartEventMarker {
@@ -182,6 +183,8 @@ export interface PricePoint {
   timeLabel?: string; // 예: "0'", "45'", "67'", "90+"
   price: number;
   changePercentFromOpen?: number; // 시가(openPrice) 대비 등락률(%)
+  rawReturn?: number; // 클램프 전 누적 수익률 비율 (-1..+1)
+  clampedReturn?: number; // [-0.30, +0.30] 클램프 적용 수익률 비율
   event?: ChartEventMarker; // 이벤트가 발생한 분에만 존재
 }
 
@@ -238,6 +241,9 @@ export interface Player {
   volume?: number; // 당일 누적 거래량 (SSOT)
   events?: MatchEvent[]; // 단일 경기 이벤트 배열 (SSOT)
   priceHistory: PricePoint[];
+  lastMajorEventAt?: number; // Epoch ms for 30s circuit breaker (GOAL, RED_CARD, PENALTY)
+  rawReturnPercent?: number; // Unclamped cumulative return (%)
+  clampedReturnPercent?: number; // [-30, +30] clamped return (%)
   lastEvent: {
     text: string;
     sentiment: EventSentiment;

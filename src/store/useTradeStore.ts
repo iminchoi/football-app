@@ -42,6 +42,7 @@ import {
   resolvePlayerMatchContext,
   sanitizeEventTypeForPosition,
   isNegativeEventType,
+  getCircuitBreakerRemainingSec,
 } from "@/utils/priceEngine";
 
 export {
@@ -1765,6 +1766,14 @@ export const useTradeStore = create<TradeStoreState>()(
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
         }
 
+        const cbSec = getCircuitBreakerRemainingSec(player.lastMajorEventAt);
+        if (cbSec > 0) {
+          return {
+            success: false,
+            message: `서킷 브레이커 작동 중입니다. (${cbSec}초 후 주문 가능)`,
+          };
+        }
+
         const basePrice = roundToTen(
           player.basePrice ?? player.initialPrice ?? player.currentPrice
         );
@@ -1774,20 +1783,6 @@ export const useTradeStore = create<TradeStoreState>()(
           return {
             success: false,
             message: "상한가 도달 — 추가 매수 불가 (매도만 가능)",
-          };
-        }
-
-        // Remaining supply counts shares held by every account, not only the active user
-        const availableShares = getAvailableShares(
-          player,
-          holdings,
-          accounts,
-          normalizeAccountKey(user.id)
-        );
-        if (availableShares <= 0 || quantity > availableShares) {
-          return {
-            success: false,
-            message: `시장에 남은 수량이 부족합니다 (잔여: ${availableShares.toLocaleString()}주)`,
           };
         }
 
@@ -1876,6 +1871,14 @@ export const useTradeStore = create<TradeStoreState>()(
         const player = players.find((p) => p.id === playerId);
         if (!player) {
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
+        }
+
+        const cbSec = getCircuitBreakerRemainingSec(player.lastMajorEventAt);
+        if (cbSec > 0) {
+          return {
+            success: false,
+            message: `서킷 브레이커 작동 중입니다. (${cbSec}초 후 주문 가능)`,
+          };
         }
 
         const prev = holdings[playerId];
@@ -2241,6 +2244,10 @@ export const useTradeStore = create<TradeStoreState>()(
           volume: derived.volume,
           events: derived.events,
           priceHistory: derived.priceHistory,
+          lastMajorEventAt:
+            normalizedType === "GOAL" || normalizedType === "RED_CARD"
+              ? Date.now()
+              : target.lastMajorEventAt,
           lastEvent: {
             text: meta.feedText,
             sentiment: meta.sentiment,

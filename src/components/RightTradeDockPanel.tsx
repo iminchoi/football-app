@@ -16,9 +16,8 @@ import {
   roundToTen,
   calculateChangePercentFromOpen,
   calculateDiffFromOpen,
-  getAvailableShares,
-  normalizeAccountKey,
 } from "@/store/useTradeStore";
+import { getCircuitBreakerRemainingSec } from "@/utils/priceEngine";
 import { TradeType } from "@/types";
 import { getTierConfig } from "@/utils/tier";
 import MatchTimelineChart from "@/components/market/MatchTimelineChart";
@@ -45,7 +44,6 @@ export default function RightTradeDockPanel({
   const cash = useTradeStore((s) => s.cash);
   const players = useTradeStore((s) => s.players);
   const holdings = useTradeStore((s) => s.holdings);
-  const accounts = useTradeStore((s) => s.accounts);
   const watchlist = useTradeStore((s) => s.watchlist);
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
   const buyPlayer = useTradeStore((s) => s.buyPlayer);
@@ -58,6 +56,7 @@ export default function RightTradeDockPanel({
   } | null>(null);
   const [isCandleModalOpen, setIsCandleModalOpen] = useState<boolean>(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState<boolean>(false);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   useEffect(() => {
     setQuantity(1);
@@ -68,6 +67,24 @@ export default function RightTradeDockPanel({
   const player = playerId
     ? players.find((p) => p.id === playerId) ?? null
     : null;
+
+  const cbRemainingSec = getCircuitBreakerRemainingSec(
+    player?.lastMajorEventAt,
+    nowMs
+  );
+
+  useEffect(() => {
+    if (!player?.lastMajorEventAt) return;
+    if (getCircuitBreakerRemainingSec(player.lastMajorEventAt) <= 0) return;
+    const timer = setInterval(() => {
+      const current = Date.now();
+      setNowMs(current);
+      if (getCircuitBreakerRemainingSec(player.lastMajorEventAt, current) <= 0) {
+        clearInterval(timer);
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [player?.lastMajorEventAt]);
 
   if (!player) return null;
 
@@ -89,22 +106,14 @@ export default function RightTradeDockPanel({
   const isWatched = watchlist.includes(player.id);
 
   const tierCfg = getTierConfig(basePrice);
-  const availableShares = getAvailableShares(
-    player,
-    holdings,
-    accounts,
-    user ? normalizeAccountKey(user.id) : undefined
-  );
   const holdingQty = user ? holdings[player.id]?.quantity ?? 0 : 0;
 
   const maxBuyQty = user
-    ? Math.min(
-        availableShares,
-        Math.floor(cash / Math.max(1, player.currentPrice))
-      )
+    ? Math.floor(cash / Math.max(1, player.currentPrice))
     : 0;
   const maxQty = tradeType === "BUY" ? maxBuyQty : holdingQty;
   const totalAmount = roundToTen(player.currentPrice * quantity);
+  const isCircuitLocked = cbRemainingSec > 0;
 
   const handleSubmitOrder = () => {
     if (!user) {
@@ -260,6 +269,16 @@ export default function RightTradeDockPanel({
               </button>
             </div>
 
+            {/* 30s Circuit Breaker Guard Notice */}
+            {isCircuitLocked && (
+              <div className="flex items-center gap-1.5 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] font-bold text-amber-800">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span>
+                  주요 이벤트 발생 · 서킷 브레이커 ({cbRemainingSec}초 후 주문 가능)
+                </span>
+              </div>
+            )}
+
             {/* Price Cap / Floor Guard Notice */}
             {((tradeType === "BUY" && isAtUpperLimit) ||
               (tradeType === "SELL" && isAtLowerLimit)) && (
@@ -343,9 +362,9 @@ export default function RightTradeDockPanel({
                 </span>
               </div>
               <div className="flex justify-between">
-                <span>시장 잔여 유통량</span>
+                <span>주문 방식</span>
                 <span className="font-mono font-bold text-gray-800">
-                  {availableShares.toLocaleString()}주
+                  보유 포인트 한도 내 자유 체결
                 </span>
               </div>
               <div className="flex justify-between border-t border-gray-200/80 pt-1.5 text-xs font-extrabold text-gray-900">
@@ -375,8 +394,8 @@ export default function RightTradeDockPanel({
               <button
                 type="button"
                 disabled={
-                  (tradeType === "BUY" &&
-                    (isAtUpperLimit || availableShares <= 0)) ||
+                  isCircuitLocked ||
+                  (tradeType === "BUY" && isAtUpperLimit) ||
                   (tradeType === "SELL" &&
                     (isAtLowerLimit || holdingQty <= 0))
                 }
