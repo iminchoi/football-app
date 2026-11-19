@@ -22,6 +22,7 @@ import {
   buildTeamLineupForMatch,
   FormationPitchContent,
 } from "./FormationPitchModal";
+import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface MatchAccordionCardProps {
   match: Match;
@@ -342,12 +343,7 @@ export default function MatchAccordionCard({
                           />
                         </button>
 
-                        <span
-                          style={{ backgroundColor: player.teamColor }}
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-mono text-[11px] font-black text-white shadow-sm"
-                        >
-                          {player.backNumber}
-                        </span>
+                        <PlayerAvatar player={player} size={30} />
 
                         <span className="truncate text-xs font-extrabold text-gray-900">
                           {player.name}

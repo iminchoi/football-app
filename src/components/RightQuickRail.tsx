@@ -8,6 +8,7 @@ import {
   calculateChangePercentFromOpen,
 } from "@/store/useTradeStore";
 import { Player } from "@/types";
+import PlayerAvatar from "@/components/PlayerAvatar";
 
 type QuickRailTab = "INVEST" | "WATCHLIST" | "RECENT" | null;
 
@@ -95,12 +96,7 @@ export default function RightQuickRail({
         className="flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-left transition hover:bg-[#F7F9F8]"
       >
         <div className="flex items-center gap-2 min-w-0">
-          <span
-            style={{ backgroundColor: player.teamColor }}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg font-mono text-[10px] font-black text-white"
-          >
-            {player.backNumber}
-          </span>
+          <PlayerAvatar player={player} size={30} />
           <div className="min-w-0">
             <p className="truncate text-xs font-extrabold text-gray-900">
               {player.name}

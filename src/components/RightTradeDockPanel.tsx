@@ -24,6 +24,7 @@ import { getTierConfig } from "@/utils/tier";
 import MatchTimelineChart from "@/components/market/MatchTimelineChart";
 import FullScreenCandleChartModal from "@/components/market/FullScreenCandleChartModal";
 import PlayerDetailModal from "@/components/PlayerDetailModal";
+import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface RightTradeDockPanelProps {
   playerId: string | null;
@@ -149,15 +150,7 @@ export default function RightTradeDockPanel({
         {/* Docked Panel Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div
-              style={{ backgroundColor: player.teamColor }}
-              className="flex h-9 w-9 shrink-0 flex-col items-center justify-center rounded-xl text-white font-mono"
-            >
-              <span className="text-[8px] font-semibold opacity-85 leading-none">
-                {player.teamShort}
-              </span>
-              <span className="text-xs font-black">{player.backNumber}</span>
-            </div>
+            <PlayerAvatar player={player} size={42} />
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <h3 className="truncate text-sm font-extrabold text-gray-900">
@@ -171,7 +164,7 @@ export default function RightTradeDockPanel({
                 </span>
               </div>
               <p className="truncate text-[11px] text-gray-500">
-                {player.teamName} · 평점 {player.stats.rating.toFixed(1)}
+                #{player.backNumber} · {player.teamName} · 평점 {player.stats.rating.toFixed(1)}
               </p>
             </div>
           </div>

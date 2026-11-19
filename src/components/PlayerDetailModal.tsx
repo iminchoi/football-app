@@ -28,6 +28,7 @@ import {
   PlayerDetailedProfile,
   CareerSeasonRow,
 } from "@/data/dummyData";
+import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface PlayerDetailModalProps {
   player: Player | null;
@@ -469,17 +470,11 @@ export default function PlayerDetailModal({
               {/* Left: Player Avatar + Name + Team Badge */}
               <div className="flex items-center gap-3 min-w-0">
                 <div className="relative shrink-0">
-                  <div
-                    style={{ backgroundColor: player.teamColor }}
-                    className="flex h-16 w-16 flex-col items-center justify-center rounded-2xl border-2 border-white text-white shadow-md"
-                  >
-                    <span className="font-mono text-[10px] font-bold opacity-85">
-                      {player.teamShort}
-                    </span>
-                    <span className="font-mono text-xl font-black leading-tight">
-                      #{player.backNumber}
-                    </span>
-                  </div>
+                  <PlayerAvatar
+                    player={player}
+                    size={64}
+                    className="border-2 border-white shadow-md"
+                  />
                   <span className="absolute -bottom-1 -right-1 rounded-md bg-gray-900 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-white shadow">
                     {profile.primaryRoleLabel}
                   </span>

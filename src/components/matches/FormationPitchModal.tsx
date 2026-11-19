@@ -29,6 +29,7 @@ import {
   calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import { getTierConfig } from "@/utils/tier";
+import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface FormationPitchModalProps {
   match: Match | null;
@@ -1198,16 +1199,19 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
         {player.stats.rating.toFixed(1)}
       </span>
 
-      {/* White Jersey Capsule with Team Color Border Accent */}
-      <div className="flex items-center gap-1">
+      {/* Player Vector Avatar + Position Tag */}
+      <div className="relative flex flex-col items-center">
+        <PlayerAvatar
+          player={player}
+          teamColorOverride={teamColor}
+          size={36}
+          className="border-2 border-white shadow-xs"
+        />
         <span
           style={{ borderColor: teamColor, color: teamColor }}
-          className="flex h-6 w-6 items-center justify-center rounded-lg border-2 bg-[#F7F9F8] font-mono text-[10px] font-black"
+          className="-mt-2 rounded-full border bg-white px-1.5 py-0.2 font-mono text-[8.5px] font-black leading-none shadow-2xs"
         >
-          {player.backNumber}
-        </span>
-        <span className="font-mono text-[9px] font-bold text-gray-400">
-          {player.position}
+          #{player.backNumber} {player.position}
         </span>
       </div>
 
@@ -1263,12 +1267,11 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
       className="flex cursor-pointer items-center justify-between py-2.5 px-1 transition hover:bg-gray-50"
     >
       <div className="flex items-center gap-2.5 min-w-0">
-        <span
-          style={{ backgroundColor: teamColor }}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-mono text-[11px] font-black text-white"
-        >
-          {sub.backNumber}
-        </span>
+        <PlayerAvatar
+          player={sub}
+          teamColorOverride={teamColor}
+          size={32}
+        />
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-bold text-gray-900 truncate">

@@ -24,6 +24,7 @@ import {
   TradeType,
   getPositionLine,
 } from "@/types";
+import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface MarketChartTabViewProps {
   searchQuery: string;
@@ -316,13 +317,16 @@ export default function MarketChartTabView({
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2 w-full">
-                    <div className="min-w-0">
-                      <p className="truncate text-xs font-extrabold text-gray-900">
-                        {p.name}
-                      </p>
-                      <span className="text-[10px] font-semibold text-gray-400">
-                        {p.position} · {p.teamShort}
-                      </span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <PlayerAvatar player={p} size={32} />
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-extrabold text-gray-900">
+                          {p.name}
+                        </p>
+                        <span className="text-[10px] font-semibold text-gray-400">
+                          {p.position} · {p.teamShort}
+                        </span>
+                      </div>
                     </div>
                     <svg
                       width="56"
@@ -601,12 +605,7 @@ export default function MarketChartTabView({
                       />
                     </button>
 
-                    <span
-                      style={{ backgroundColor: p.teamColor }}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl font-mono text-[11px] font-black text-white"
-                    >
-                      {p.backNumber}
-                    </span>
+                    <PlayerAvatar player={p} size={36} />
 
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
