@@ -8,7 +8,9 @@ import {
   MatchEventType,
   MatchStatus,
   Player,
+  PositionLine,
   PricePoint,
+  getPositionLine,
 } from "@/types";
 import { getTierConfig } from "@/utils/tier";
 
@@ -87,7 +89,130 @@ export const EVENT_TYPE_META: Record<
     chipBorder: "border-[#F07868]/30",
     badgeStyle: "bg-[#F07868]/10 text-[#F07868] border border-[#F07868]/25",
   },
+  CONCEDED: {
+    icon: "🥅",
+    shortTitle: "실점",
+    defaultDescription: "상대 슈팅 실점 허용",
+    fill: "#F07868",
+    stroke: "#fecdd3",
+    ring: "rgba(240, 120, 104, 0.28)",
+    chipBg: "bg-[#F07868]/10",
+    chipText: "text-[#F07868]",
+    chipBorder: "border-[#F07868]/30",
+    badgeStyle: "bg-[#F07868]/10 text-[#F07868] border border-[#F07868]/25",
+  },
+  DEFENSIVE_ACTION: {
+    icon: "🛡️",
+    shortTitle: "수비",
+    defaultDescription: "결정적 태클로 실점 위기 차단",
+    fill: "#0f766e",
+    stroke: "#99f6e4",
+    ring: "rgba(15, 118, 110, 0.25)",
+    chipBg: "bg-teal-50",
+    chipText: "text-teal-700",
+    chipBorder: "border-teal-300",
+    badgeStyle: "bg-teal-50 text-teal-700 border border-teal-200",
+  },
+  KEY_PLAY: {
+    icon: "🎯",
+    shortTitle: "기회 창출",
+    defaultDescription: "골문을 위협한 유효슈팅",
+    fill: "#0284c7",
+    stroke: "#bae6fd",
+    ring: "rgba(2, 132, 199, 0.25)",
+    chipBg: "bg-sky-50",
+    chipText: "text-sky-700",
+    chipBorder: "border-sky-300",
+    badgeStyle: "bg-sky-50 text-sky-700 border border-sky-200",
+  },
+  BIG_CHANCE_MISS: {
+    icon: "😣",
+    shortTitle: "찬스 미스",
+    defaultDescription: "결정적 빅찬스 슈팅 무산",
+    fill: "#d97706",
+    stroke: "#fde68a",
+    ring: "rgba(245, 158, 11, 0.25)",
+    chipBg: "bg-amber-50",
+    chipText: "text-amber-800",
+    chipBorder: "border-amber-300",
+    badgeStyle: "bg-amber-50 text-amber-800 border border-amber-200",
+  },
 };
+
+/**
+ * Event kinds each position line may receive. Goalkeeper-only kinds (`SAVE`,
+ * `CONCEDED`) never reach outfield players; `DEFENSIVE_ACTION` is defender-only.
+ */
+export const POSITION_EVENT_WHITELIST: Record<PositionLine, MatchEventType[]> = {
+  GK: ["SAVE", "CONCEDED"],
+  DF: ["DEFENSIVE_ACTION", "GOAL", "ASSIST", "YELLOW_CARD", "RED_CARD"],
+  MF: ["GOAL", "ASSIST", "KEY_PLAY", "YELLOW_CARD", "RED_CARD"],
+  FW: ["GOAL", "ASSIST", "KEY_PLAY", "BIG_CHANCE_MISS", "YELLOW_CARD", "RED_CARD"],
+};
+
+const NEGATIVE_EVENT_TYPES: ReadonlySet<MatchEventType> = new Set([
+  "YELLOW_CARD",
+  "RED_CARD",
+  "CONCEDED",
+  "BIG_CHANCE_MISS",
+]);
+
+export function isNegativeEventType(type: MatchEventType): boolean {
+  return NEGATIVE_EVENT_TYPES.has(type);
+}
+
+/** Position-accurate default descriptions used when an event kind is remapped. */
+const POSITION_EVENT_DESCRIPTIONS: Record<
+  PositionLine,
+  Partial<Record<MatchEventType, string>>
+> = {
+  GK: { SAVE: "1대1 결정적 슈팅 선방", CONCEDED: "상대 슈팅 실점 허용" },
+  DF: {
+    DEFENSIVE_ACTION: "박스 안 결정적 태클로 슈팅 차단",
+    GOAL: "세트피스 헤더 득점",
+  },
+  MF: { KEY_PLAY: "수비 라인을 허무는 결정적 킬패스" },
+  FW: { KEY_PLAY: "골문 구석을 노린 유효슈팅", BIG_CHANCE_MISS: "골키퍼와 1대1 빅찬스 미스" },
+};
+
+/**
+ * Map an event kind onto the position whitelist. Disallowed kinds fall back to the
+ * line's primary positive or negative kind, matching the sign of the price impact.
+ */
+export function sanitizeEventTypeForPosition(
+  type: MatchEventType,
+  position: string | undefined,
+  impactPercent = 0
+): MatchEventType {
+  const line = getPositionLine(position);
+  if (POSITION_EVENT_WHITELIST[line].includes(type)) return type;
+  const negative = impactPercent < 0 || isNegativeEventType(type);
+  if (line === "GK") return negative ? "CONCEDED" : "SAVE";
+  if (line === "DF") return negative ? "YELLOW_CARD" : "DEFENSIVE_ACTION";
+  if (line === "FW") return negative ? "BIG_CHANCE_MISS" : "KEY_PLAY";
+  return negative ? "YELLOW_CARD" : "KEY_PLAY";
+}
+
+/**
+ * Enforce `POSITION_EVENT_WHITELIST` on one event, replacing the description with a
+ * position-accurate one whenever the kind changes.
+ */
+export function sanitizeEventForPosition(
+  ev: MatchEvent,
+  position: string | undefined
+): MatchEvent {
+  const type = sanitizeEventTypeForPosition(ev.type, position, ev.priceImpactPercent);
+  if (type === ev.type) return ev;
+  const line = getPositionLine(position);
+  return {
+    ...ev,
+    id: ev.id.replace(ev.type, type),
+    type,
+    description:
+      POSITION_EVENT_DESCRIPTIONS[line][type] ??
+      EVENT_TYPE_META[type].defaultDescription,
+  };
+}
 
 /**
  * Round any price or point value to the nearest 10 integer unit.
@@ -151,22 +276,33 @@ export function seededNoise(seedStr: string, index: number): number {
 }
 
 /**
- * Normalize any ChartEventType or raw string into strict MatchEventType.
+ * Normalize any ChartEventType or raw string into strict MatchEventType,
+ * optionally enforcing the player's position whitelist.
  */
 export function normalizeMatchEventType(
   rawType?: ChartEventType | string,
-  impactPercent = 0
+  impactPercent = 0,
+  position?: string
 ): MatchEventType {
+  let resolved: MatchEventType;
   if (
     rawType === "GOAL" ||
     rawType === "ASSIST" ||
     rawType === "YELLOW_CARD" ||
     rawType === "RED_CARD" ||
-    rawType === "SAVE"
+    rawType === "SAVE" ||
+    rawType === "CONCEDED" ||
+    rawType === "DEFENSIVE_ACTION" ||
+    rawType === "KEY_PLAY" ||
+    rawType === "BIG_CHANCE_MISS"
   ) {
-    return rawType;
+    resolved = rawType;
+  } else {
+    resolved = impactPercent < 0 ? "YELLOW_CARD" : "ASSIST";
   }
-  return impactPercent < 0 ? "YELLOW_CARD" : "ASSIST";
+  return position
+    ? sanitizeEventTypeForPosition(resolved, position, impactPercent)
+    : resolved;
 }
 
 /**
@@ -200,27 +336,30 @@ export function toChartEventMarker(ev: MatchEvent): ChartEventMarker {
 
 /**
  * Sort and deduplicate MatchEvent[] by minute ascending (keeping latest event per minute).
+ * When `position` is supplied, every event is strictly sanitized against POSITION_EVENT_WHITELIST.
  */
 export function normalizeMatchEvents(
   events: MatchEvent[],
-  playerId: string
+  playerId: string,
+  position?: string
 ): MatchEvent[] {
   if (!Array.isArray(events) || events.length === 0) return [];
   const byMinute = new Map<number, MatchEvent>();
   for (const ev of events) {
     if (!ev || typeof ev.minute !== "number" || ev.minute <= 0) continue;
     const min = Math.max(1, Math.min(95, Math.round(ev.minute)));
-    const type = normalizeMatchEventType(ev.type, ev.priceImpactPercent);
+    const type = normalizeMatchEventType(ev.type, ev.priceImpactPercent, position);
     const impact = Number((ev.priceImpactPercent ?? 0).toFixed(1));
     const desc = cleanEventDescription(ev.description, type);
-    byMinute.set(min, {
+    const normalized: MatchEvent = {
       id: ev.id || `ev-${playerId}-${min}-${type}`,
       playerId,
       minute: min,
       type,
       description: desc,
       priceImpactPercent: impact,
-    });
+    };
+    byMinute.set(min, position ? sanitizeEventForPosition(normalized, position) : normalized);
   }
   return Array.from(byMinute.values()).sort((a, b) => a.minute - b.minute);
 }
@@ -247,7 +386,7 @@ export function extractInitialMatchEvents(
     return [];
   }
   if (Array.isArray(player.events) && player.events.length > 0) {
-    return normalizeMatchEvents(player.events, player.id);
+    return normalizeMatchEvents(player.events, player.id, player.position);
   }
 
   const extracted: MatchEvent[] = [];
@@ -260,7 +399,8 @@ export function extractInitialMatchEvents(
       const min = Math.max(1, Math.min(95, Math.round(pt.minute)));
       const type = normalizeMatchEventType(
         pt.event.type,
-        pt.event.impactPercent
+        pt.event.impactPercent,
+        player.position
       );
       extracted.push({
         id: `ev-${player.id}-${min}-${type}`,
@@ -286,15 +426,14 @@ export function extractInitialMatchEvents(
       player.currentPrice,
       openPrice
     );
-    const type: MatchEventType =
-      rawImpact < 0
-        ? "YELLOW_CARD"
-        : player.position === "GK" ||
-          player.position === "CB" ||
-          player.position === "LB" ||
-          player.position === "RB"
-        ? "SAVE"
-        : "ASSIST";
+    const line = getPositionLine(player.position);
+    const fallbackPositive: MatchEventType =
+      line === "GK" ? "SAVE" : line === "DF" ? "DEFENSIVE_ACTION" : "ASSIST";
+    const type = sanitizeEventTypeForPosition(
+      rawImpact < 0 ? "YELLOW_CARD" : fallbackPositive,
+      player.position,
+      rawImpact
+    );
     extracted.push({
       id: `ev-${player.id}-${min}-${type}`,
       playerId: player.id,
@@ -305,7 +444,7 @@ export function extractInitialMatchEvents(
     });
   }
 
-  return normalizeMatchEvents(extracted, player.id);
+  return normalizeMatchEvents(extracted, player.id, player.position);
 }
 
 interface MinuteBar {
@@ -857,83 +996,150 @@ export function resolveLastMatchReview(
     basePrice
   );
 
-  const isDefensive =
-    player.position === "GK" ||
-    player.position === "CB" ||
-    player.position === "LB" ||
-    player.position === "RB";
+  const line = getPositionLine(player.position);
 
   const min1 = 18 + Math.floor(seededNoise(`${player.id}-lm1`, 11) * 18);
   const min2 = 46 + Math.floor(seededNoise(`${player.id}-lm2`, 12) * 16);
   const min3 = 68 + Math.floor(seededNoise(`${player.id}-lm3`, 13) * 16);
 
-  const rawEvents: MatchEvent[] = isDefensive
-    ? [
-        {
-          id: `ft-${player.id}-${min1}-SAVE`,
-          playerId: player.id,
-          minute: min1,
-          type: "SAVE",
-          description: "결정적 실점 위기 슈퍼세이브",
-          priceImpactPercent: Number(
-            (3.8 + seededNoise(`${player.id}-li1`, 21) * 2.5).toFixed(1)
-          ),
-        },
-        {
-          id: `ft-${player.id}-${min2}-YC`,
-          playerId: player.id,
-          minute: min2,
-          type: "YELLOW_CARD",
-          description: "역습 저지 반칙으로 옐로카드",
-          priceImpactPercent: Number(
-            (-(2.2 + seededNoise(`${player.id}-li2`, 22) * 1.5)).toFixed(1)
-          ),
-        },
-        {
-          id: `ft-${player.id}-${min3}-SAVE`,
-          playerId: player.id,
-          minute: min3,
-          type: "SAVE",
-          description: "후반 막판 골문 앞 클리어링 선방",
-          priceImpactPercent: Number(
-            (4.2 + seededNoise(`${player.id}-li3`, 23) * 2.8).toFixed(1)
-          ),
-        },
-      ]
-    : [
-        {
-          id: `ft-${player.id}-${min1}-GOAL`,
-          playerId: player.id,
-          minute: min1,
-          type: "GOAL",
-          description: "박스 안 침착한 오른발 슈팅 득점",
-          priceImpactPercent: Number(
-            (7.2 + seededNoise(`${player.id}-li1`, 31) * 3.8).toFixed(1)
-          ),
-        },
-        {
-          id: `ft-${player.id}-${min2}-YC`,
-          playerId: player.id,
-          minute: min2,
-          type: "YELLOW_CARD",
-          description: "중원 경합 중 거친 태클 경고",
-          priceImpactPercent: Number(
-            (-(2.4 + seededNoise(`${player.id}-li2`, 32) * 1.4)).toFixed(1)
-          ),
-        },
-        {
-          id: `ft-${player.id}-${min3}-ASSIST`,
-          playerId: player.id,
-          minute: min3,
-          type: "ASSIST",
-          description: "측면 돌파 후 정확한 컷백 어시스트",
-          priceImpactPercent: Number(
-            (4.6 + seededNoise(`${player.id}-li3`, 33) * 2.6).toFixed(1)
-          ),
-        },
-      ];
+  const rawEvents: MatchEvent[] =
+    line === "GK"
+      ? [
+          {
+            id: `ft-${player.id}-${min1}-SAVE`,
+            playerId: player.id,
+            minute: min1,
+            type: "SAVE",
+            description: "1대1 결정적 실점 위기 슈퍼세이브",
+            priceImpactPercent: Number(
+              (3.8 + seededNoise(`${player.id}-li1`, 21) * 2.5).toFixed(1)
+            ),
+          },
+          {
+            id: `ft-${player.id}-${min2}-CONCEDED`,
+            playerId: player.id,
+            minute: min2,
+            type: "CONCEDED",
+            description: "박스 안 근거리 슈팅 실점 허용",
+            priceImpactPercent: Number(
+              (-(2.2 + seededNoise(`${player.id}-li2`, 22) * 1.5)).toFixed(1)
+            ),
+          },
+          {
+            id: `ft-${player.id}-${min3}-SAVE`,
+            playerId: player.id,
+            minute: min3,
+            type: "SAVE",
+            description: "후반 막판 결정적 공중볼 처리 및 선방",
+            priceImpactPercent: Number(
+              (4.2 + seededNoise(`${player.id}-li3`, 23) * 2.8).toFixed(1)
+            ),
+          },
+        ]
+      : line === "DF"
+      ? [
+          {
+            id: `ft-${player.id}-${min1}-DEFENSIVE_ACTION`,
+            playerId: player.id,
+            minute: min1,
+            type: "DEFENSIVE_ACTION",
+            description: "상대 에이스 1대1 돌파 저지 및 태클",
+            priceImpactPercent: Number(
+              (3.6 + seededNoise(`${player.id}-li1`, 21) * 2.4).toFixed(1)
+            ),
+          },
+          {
+            id: `ft-${player.id}-${min2}-YC`,
+            playerId: player.id,
+            minute: min2,
+            type: "YELLOW_CARD",
+            description: "역습 저지 반칙으로 옐로카드",
+            priceImpactPercent: Number(
+              (-(2.2 + seededNoise(`${player.id}-li2`, 22) * 1.5)).toFixed(1)
+            ),
+          },
+          {
+            id: `ft-${player.id}-${min3}-DEFENSIVE_ACTION`,
+            playerId: player.id,
+            minute: min3,
+            type: "DEFENSIVE_ACTION",
+            description: "후반 막판 골라인 앞 결정적 클리어",
+            priceImpactPercent: Number(
+              (4.0 + seededNoise(`${player.id}-li3`, 23) * 2.6).toFixed(1)
+            ),
+          },
+        ]
+      : line === "FW"
+      ? [
+          {
+            id: `ft-${player.id}-${min1}-GOAL`,
+            playerId: player.id,
+            minute: min1,
+            type: "GOAL",
+            description: "박스 안 침착한 오른발 슈팅 득점",
+            priceImpactPercent: Number(
+              (7.2 + seededNoise(`${player.id}-li1`, 31) * 3.8).toFixed(1)
+            ),
+          },
+          {
+            id: `ft-${player.id}-${min2}-BIG_CHANCE_MISS`,
+            playerId: player.id,
+            minute: min2,
+            type: "BIG_CHANCE_MISS",
+            description: "골키퍼와 1대1 빅찬스 슈팅 무산",
+            priceImpactPercent: Number(
+              (-(2.1 + seededNoise(`${player.id}-li2`, 32) * 1.4)).toFixed(1)
+            ),
+          },
+          {
+            id: `ft-${player.id}-${min3}-ASSIST`,
+            playerId: player.id,
+            minute: min3,
+            type: "ASSIST",
+            description: "측면 돌파 후 정확한 컷백 어시스트",
+            priceImpactPercent: Number(
+              (4.6 + seededNoise(`${player.id}-li3`, 33) * 2.6).toFixed(1)
+            ),
+          },
+        ]
+      : [
+          {
+            id: `ft-${player.id}-${min1}-GOAL`,
+            playerId: player.id,
+            minute: min1,
+            type: "GOAL",
+            description: "아크 정면 날카로운 중거리 슈팅 득점",
+            priceImpactPercent: Number(
+              (6.8 + seededNoise(`${player.id}-li1`, 31) * 3.5).toFixed(1)
+            ),
+          },
+          {
+            id: `ft-${player.id}-${min2}-YC`,
+            playerId: player.id,
+            minute: min2,
+            type: "YELLOW_CARD",
+            description: "중원 경합 중 거친 태클 경고",
+            priceImpactPercent: Number(
+              (-(2.4 + seededNoise(`${player.id}-li2`, 32) * 1.4)).toFixed(1)
+            ),
+          },
+          {
+            id: `ft-${player.id}-${min3}-KEY_PLAY`,
+            playerId: player.id,
+            minute: min3,
+            type: "KEY_PLAY",
+            description: "수비 라인을 허무는 결정적 킬패스",
+            priceImpactPercent: Number(
+              (4.1 + seededNoise(`${player.id}-li3`, 33) * 2.4).toFixed(1)
+            ),
+          },
+        ];
 
-  const events = normalizeMatchEvents(rawEvents, `${player.id}-last-ft`);
+  const events = normalizeMatchEvents(
+    rawEvents,
+    `${player.id}-last-ft`,
+    player.position
+  );
   const marketData = derivePlayerMarketData({
     playerId: `${player.id}-last-ft`,
     openPrice,

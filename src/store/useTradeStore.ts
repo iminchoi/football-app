@@ -40,6 +40,8 @@ import {
   normalizeMatchEventType,
   cleanEventDescription,
   resolvePlayerMatchContext,
+  sanitizeEventTypeForPosition,
+  isNegativeEventType,
 } from "@/utils/priceEngine";
 
 export {
@@ -517,7 +519,7 @@ function applyPersistedPrices(
 
     const savedEvents =
       Array.isArray(saved.events) && saved.events.length > 0
-        ? normalizeMatchEvents(saved.events, player.id)
+        ? normalizeMatchEvents(saved.events, player.id, player.position)
         : extractInitialMatchEvents({
             ...player,
             openPrice,
@@ -536,8 +538,10 @@ function applyPersistedPrices(
     for (const ev of savedEvents) {
       mergedEventMap.set(ev.minute, ev);
     }
-    const events = Array.from(mergedEventMap.values()).sort(
-      (a, b) => a.minute - b.minute
+    const events = normalizeMatchEvents(
+      Array.from(mergedEventMap.values()),
+      player.id,
+      player.position
     );
 
     const ctx = resolvePlayerMatchContext({ ...player, events }, matches);
@@ -1162,7 +1166,7 @@ export const useTradeStore = create<TradeStoreState>()(
               );
               const initialEvents =
                 savedPrice?.events && savedPrice.events.length > 0
-                  ? normalizeMatchEvents(savedPrice.events, newId)
+                  ? normalizeMatchEvents(savedPrice.events, newId, position)
                   : [];
 
               const derived = derivePlayerMarketData({
@@ -1268,7 +1272,11 @@ export const useTradeStore = create<TradeStoreState>()(
 
               const target = nextPlayers[targetIdx];
               const minute = Math.min(90, Math.max(1, ev.minute));
-              const normalizedType = normalizeMatchEventType(ev.type);
+              const normalizedType = normalizeMatchEventType(
+                ev.type,
+                0,
+                target.position
+              );
               const existingEvents = target.events ?? [];
               const alreadyApplied = existingEvents.some(
                 (e) => e.minute === minute && e.type === normalizedType
@@ -1311,6 +1319,30 @@ export const useTradeStore = create<TradeStoreState>()(
                   description: "실경기 결정적 슈퍼세이브",
                   bannerText: `🧤 ${minute}' 실경기 결정적 선방!`,
                 },
+                CONCEDED: {
+                  baseRate: -0.03,
+                  sentiment: "negative",
+                  description: "실경기 실점 허용",
+                  bannerText: `🥅 ${minute}' 실경기 실점 반영`,
+                },
+                DEFENSIVE_ACTION: {
+                  baseRate: 0.038,
+                  sentiment: "positive",
+                  description: "실경기 결정적 수비 차단",
+                  bannerText: `🛡️ ${minute}' 실경기 결정적 수비!`,
+                },
+                KEY_PLAY: {
+                  baseRate: 0.035,
+                  sentiment: "positive",
+                  description: "실경기 결정적 기회 창출",
+                  bannerText: `🎯 ${minute}' 실경기 기회 창출!`,
+                },
+                BIG_CHANCE_MISS: {
+                  baseRate: -0.028,
+                  sentiment: "negative",
+                  description: "실경기 빅찬스 미스",
+                  bannerText: `😣 ${minute}' 실경기 빅찬스 미스`,
+                },
                 YELLOW_CARD: {
                   baseRate: -0.03,
                   sentiment: "negative",
@@ -1331,7 +1363,7 @@ export const useTradeStore = create<TradeStoreState>()(
                 },
               };
 
-              const spec = eventSpec[ev.type] ?? eventSpec.GOAL;
+              const spec = eventSpec[normalizedType] ?? eventSpec.GOAL;
               const impactPct = Number(
                 (spec.baseRate * tierCfg.volatilityMultiplier * 100).toFixed(1)
               );
@@ -1347,7 +1379,8 @@ export const useTradeStore = create<TradeStoreState>()(
 
               const nextEvents = normalizeMatchEvents(
                 [...existingEvents, newMatchEvent],
-                target.id
+                target.id,
+                target.position
               );
               const derived = derivePlayerMarketData({
                 playerId: target.id,
@@ -1576,16 +1609,22 @@ export const useTradeStore = create<TradeStoreState>()(
             (Boolean(chosen.chartEventType) &&
               chosen.chartEventType !== "GOAL" &&
               chosen.chartEventType !== "ASSIST" &&
-              Math.random() < 0.12 &&
-              ((chosen.chartEventType === "YELLOW_CARD" &&
+              Math.random() < 0.14 &&
+              (((chosen.chartEventType === "YELLOW_CARD" ||
+                chosen.chartEventType === "CONCEDED" ||
+                chosen.chartEventType === "BIG_CHANCE_MISS") &&
                 tickImpactPct < 0) ||
-                (chosen.chartEventType === "SAVE" && tickImpactPct > 0)));
+                ((chosen.chartEventType === "SAVE" ||
+                  chosen.chartEventType === "DEFENSIVE_ACTION" ||
+                  chosen.chartEventType === "KEY_PLAY") &&
+                  tickImpactPct > 0)));
 
           let nextEvents = player.events ?? [];
           if (isMilestoneChartEvent && chosen.chartEventType && tickImpactPct !== 0) {
             const evType = normalizeMatchEventType(
               chosen.chartEventType,
-              tickImpactPct
+              tickImpactPct,
+              player.position
             );
             const newEv: MatchEvent = {
               id: `ev-${player.id}-${currentMinute}-${evType}`,
@@ -1603,7 +1642,8 @@ export const useTradeStore = create<TradeStoreState>()(
                 ...nextEvents.filter((e) => e.minute < currentMinute),
                 newEv,
               ],
-              player.id
+              player.id,
+              player.position
             );
           }
 
@@ -2015,6 +2055,30 @@ export const useTradeStore = create<TradeStoreState>()(
             feedText: "🧤 [SAVE] 1대1 결정적 실점 위기를 막아내는 슈퍼 세이브!",
             sentiment: "positive",
           },
+          CONCEDED: {
+            baseRate: -(0.025 + Math.random() * 0.012),
+            title: "🥅 실점",
+            feedText: "🥅 [CONCEDED] 상대 유효슈팅에 아쉬운 실점 허용",
+            sentiment: "negative",
+          },
+          DEFENSIVE_ACTION: {
+            baseRate: 0.032 + Math.random() * 0.014,
+            title: "🛡️ 결정적 수비",
+            feedText: "🛡️ [DEFENSIVE] 1대1 돌파 저지 및 결정적 태클!",
+            sentiment: "positive",
+          },
+          KEY_PLAY: {
+            baseRate: 0.028 + Math.random() * 0.012,
+            title: "🎯 기회 창출",
+            feedText: "🎯 [KEY PLAY] 수비 라인을 허무는 결정적 킬패스!",
+            sentiment: "positive",
+          },
+          BIG_CHANCE_MISS: {
+            baseRate: -(0.024 + Math.random() * 0.012),
+            title: "😣 빅찬스 미스",
+            feedText: "😣 [MISS] 골키퍼와 1대1 빅찬스 슈팅 무산",
+            sentiment: "negative",
+          },
           YELLOW_CARD: {
             baseRate: -(0.025 + Math.random() * 0.012),
             title: "🟨 경고",
@@ -2035,7 +2099,20 @@ export const useTradeStore = create<TradeStoreState>()(
           },
         };
 
-        const meta = eventMetaMap[eventType] ?? eventMetaMap.GOAL;
+        const sanitizedTriggerType: ChartEventType =
+          eventType === "SUB_OUT"
+            ? "SUB_OUT"
+            : sanitizeEventTypeForPosition(
+                eventType,
+                target.position,
+                eventType === "YELLOW_CARD" ||
+                  eventType === "RED_CARD" ||
+                  eventType === "CONCEDED" ||
+                  eventType === "BIG_CHANCE_MISS"
+                  ? -1
+                  : 1
+              );
+        const meta = eventMetaMap[sanitizedTriggerType] ?? eventMetaMap.GOAL;
         const scaledRate = meta.baseRate * tierCfg.volatilityMultiplier;
         let nextPrice = clampToPriceLimit(
           Math.round(prevPrice * (1 + scaledRate)),
@@ -2067,7 +2144,11 @@ export const useTradeStore = create<TradeStoreState>()(
         );
 
         const rawImpactPct = Number((scaledRate * 100).toFixed(1));
-        const normalizedType = normalizeMatchEventType(eventType, rawImpactPct);
+        const normalizedType = normalizeMatchEventType(
+          sanitizedTriggerType,
+          rawImpactPct,
+          target.position
+        );
         const newEv: MatchEvent = {
           id: `ev-${target.id}-${currentMinute}-${normalizedType}-${Date.now()}`,
           playerId: target.id,
@@ -2082,7 +2163,8 @@ export const useTradeStore = create<TradeStoreState>()(
             ...(target.events ?? []).filter((e) => e.minute < currentMinute),
             newEv,
           ],
-          target.id
+          target.id,
+          target.position
         );
 
         const derived = derivePlayerMarketData({
@@ -2130,13 +2212,16 @@ export const useTradeStore = create<TradeStoreState>()(
               Math.max(
                 5.0,
                 (target.stats?.rating ?? 7.5) +
-                  (eventType === "GOAL"
+                  (normalizedType === "GOAL"
                     ? 0.4
-                    : eventType === "ASSIST" || eventType === "SAVE"
+                    : normalizedType === "ASSIST" ||
+                      normalizedType === "SAVE" ||
+                      normalizedType === "DEFENSIVE_ACTION" ||
+                      normalizedType === "KEY_PLAY"
                     ? 0.3
-                    : eventType === "RED_CARD"
+                    : normalizedType === "RED_CARD"
                     ? -0.8
-                    : eventType === "YELLOW_CARD"
+                    : isNegativeEventType(normalizedType)
                     ? -0.2
                     : 0)
               )

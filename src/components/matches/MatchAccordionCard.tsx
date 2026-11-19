@@ -6,8 +6,6 @@ import {
   ChevronUp,
   Users,
   ArrowRight,
-  Clock,
-  Eye,
   Star,
 } from "lucide-react";
 import { Match, Player, Holding, TradeType } from "@/types";
@@ -48,7 +46,6 @@ export default function MatchAccordionCard({
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
   const [selectedSide, setSelectedSide] = useState<"HOME" | "AWAY">("HOME");
   const [activeKeyPlayers, setActiveKeyPlayers] = useState<Player[]>([]);
-  const [showUpcomingPreview, setShowUpcomingPreview] = useState<boolean>(false);
 
   const isUpcoming =
     match.status === "UPCOMING" ||
@@ -113,7 +110,7 @@ export default function MatchAccordionCard({
     <div className="overflow-hidden rounded-2xl border border-gray-200/90 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.03)] transition-all">
       {/* Clickable Match Summary Row (FotMob Clean Style) */}
       <div
-        onClick={onToggleExpand}
+        onClick={isUpcoming ? () => onOpenPitchView(match) : onToggleExpand}
         className="cursor-pointer px-4 py-3.5 transition-colors hover:bg-gray-50/80 active:bg-gray-100/70"
       >
         {/* Top Row: Single Clean Status Pill ONLY + Lineup Toggle */}
@@ -126,7 +123,7 @@ export default function MatchAccordionCard({
               </span>
             ) : match.status === "FT" ? (
               <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-bold text-gray-600">
-                종료 (FT)
+                경기 종료 (FT)
               </span>
             ) : (
               <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-bold text-gray-600 font-mono">
@@ -138,7 +135,7 @@ export default function MatchAccordionCard({
           <div className="flex items-center gap-1 text-[11px] font-bold text-[#00985f]">
             <Users className="h-3.5 w-3.5" />
             <span>라인업/시세</span>
-            {isExpanded ? (
+            {!isUpcoming && isExpanded ? (
               <ChevronUp className="h-4 w-4 text-gray-400" />
             ) : (
               <ChevronDown className="h-4 w-4 text-gray-400" />
@@ -217,53 +214,9 @@ export default function MatchAccordionCard({
         </div>
       </div>
 
-      {/* Stage 1 Expanded View */}
-      {isExpanded && (
+      {/* Stage 1 Expanded View (pre-kickoff matches open the pitch view directly) */}
+      {isExpanded && !isUpcoming && (
         <div className="border-t border-gray-100 bg-[#f8f9fa] px-3.5 py-3">
-          {/* Status Branch: If TIMED / SCHEDULED (Before Kickoff) */}
-          {isUpcoming && !showUpcomingPreview ? (
-            <div className="rounded-2xl border border-gray-200/90 bg-white p-4 text-center">
-              <div className="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-amber-50 text-amber-600 border border-amber-200/70">
-                <Clock className="h-4 w-4" />
-              </div>
-              <p className="text-xs font-bold text-gray-800 leading-relaxed">
-                경기 시작 전입니다. 공식 라인업은 킥오프 약 45분 전에 발표됩니다.
-              </p>
-              <div className="mt-3 flex flex-col sm:flex-row items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => onOpenPitchView(match)}
-                  className="inline-flex w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl bg-[#00985f] px-4 py-2 text-xs font-extrabold text-white shadow-sm transition hover:bg-[#007f4f] active:scale-95"
-                >
-                  <Eye className="h-3.5 w-3.5" />
-                  <span>예상 라인업 미리보기 (피치 뷰)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowUpcomingPreview(true)}
-                  className="inline-flex w-full sm:w-auto items-center justify-center gap-1 rounded-xl border border-gray-200 bg-[#f8f9fa] px-3.5 py-2 text-xs font-bold text-gray-700 transition hover:bg-gray-100"
-                >
-                  <span>주요 선수 시세 요약 보기</span>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {isUpcoming && (
-                <div className="mb-2.5 flex items-center justify-between rounded-xl bg-amber-50/90 border border-amber-200/70 px-3 py-1.5 text-[11px] text-amber-900">
-                  <span className="font-semibold">
-                    🕒 공식 라인업 발표 전 · 예상 선발 기준 시세
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowUpcomingPreview(false)}
-                    className="font-bold text-amber-700 underline"
-                  >
-                    접기
-                  </button>
-                </div>
-              )}
-
               {/* Home / Away Key Players Tab Header */}
               <div className="mb-2.5 flex items-center justify-between">
                 <div className="grid grid-cols-2 rounded-xl bg-gray-200/75 p-0.5 text-[11px] font-bold">
@@ -421,15 +374,9 @@ export default function MatchAccordionCard({
                 onClick={() => onOpenPitchView(match)}
                 className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50/80 py-2.5 text-xs font-extrabold text-[#00985f] transition hover:bg-[#00985f] hover:text-white active:scale-[0.99]"
               >
-                <span>
-                  {isUpcoming
-                    ? "예상 라인업 포메이션 피치 뷰 보기"
-                    : "전체 라인업 및 포메이션 보기"}
-                </span>
+                <span>전체 라인업 및 포메이션 보기</span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
-            </>
-          )}
         </div>
       )}
     </div>

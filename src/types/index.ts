@@ -24,6 +24,9 @@ export function getPositionLine(pos?: DetailedPosition | string): PositionLine {
     upper === "LB" ||
     upper === "CB" ||
     upper === "RB" ||
+    upper === "WB" ||
+    upper === "LWB" ||
+    upper === "RWB" ||
     upper === "DF" ||
     upper === "LCB" ||
     upper === "RCB" ||
@@ -142,12 +145,20 @@ export interface StoredUserAccount {
   createdAt: string;
 }
 
+/**
+ * Canonical match event kinds. Each position line may only receive the kinds listed in
+ * `POSITION_EVENT_WHITELIST` (src/utils/priceEngine.ts); `SAVE` is goalkeeper-only.
+ */
 export type MatchEventType =
   | "GOAL"
   | "ASSIST"
   | "YELLOW_CARD"
   | "RED_CARD"
-  | "SAVE";
+  | "SAVE" // GK: save, penalty save, decisive aerial claim
+  | "CONCEDED" // GK: goal conceded
+  | "DEFENSIVE_ACTION" // DF: 1v1 stop, decisive tackle, goal-line clearance
+  | "KEY_PLAY" // MF/FW: killer pass, shot on target
+  | "BIG_CHANCE_MISS"; // FW: big chance missed
 
 export type ChartEventType = MatchEventType | "SUB_OUT";
 

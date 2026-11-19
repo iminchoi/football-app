@@ -8,8 +8,6 @@ import {
   Users,
   Sparkles,
   ShoppingBag,
-  Clock,
-  Eye,
 } from "lucide-react";
 import {
   Match,
@@ -1175,7 +1173,6 @@ export default function FormationPitchModal({
   const [benchPlayers, setBenchPlayers] = useState<Player[]>([]);
   const [formationLabel, setFormationLabel] = useState<string>("4-3-3");
   const [isBenchOpen, setIsBenchOpen] = useState<boolean>(false);
-  const [previewConfirmed, setPreviewConfirmed] = useState<boolean>(false);
 
   const activeTeam =
     selectedSide === "HOME" ? match?.homeTeam : match?.awayTeam;
@@ -1199,7 +1196,6 @@ export default function FormationPitchModal({
 
   // Reset to HOME team when switching to a different match
   useEffect(() => {
-    setPreviewConfirmed(false);
     setSelectedSide("HOME");
     setIsBenchOpen(false);
   }, [match?.id]);
@@ -1283,7 +1279,7 @@ export default function FormationPitchModal({
           <div>
             <div className="flex items-center gap-1.5">
               <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-extrabold text-[#00985f] border border-emerald-200">
-                {isUpcoming ? "예상 라인업 프리뷰" : "포메이션 피치 뷰"}
+                포메이션 피치 뷰
               </span>
               <span className="text-xs font-bold text-gray-500">
                 {match.leagueName}
@@ -1356,40 +1352,11 @@ export default function FormationPitchModal({
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto px-4 py-3.5 space-y-4">
-          {/* Status Branch: Before Kickoff (TIMED / SCHEDULED) */}
-          {isUpcoming && !previewConfirmed ? (
-            <div className="rounded-3xl border border-gray-200 bg-white p-6 text-center shadow-sm my-4">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-50 text-amber-600 border border-amber-200">
-                <Clock className="h-6 w-6" />
-              </div>
-              <h3 className="text-sm font-extrabold text-gray-900">
-                경기 시작 전입니다.
-              </h3>
-              <p className="mt-1 text-xs font-medium text-gray-500 leading-relaxed">
-                공식 라인업은 킥오프 약 45분 전에 발표됩니다.
-                <br />
-                아래 버튼을 눌러 양 팀 대표 선발 예상 11명을 피치 뷰로 미리 확인하고 선점 매수할 수 있습니다.
-              </p>
-
-              <button
-                type="button"
-                onClick={() => setPreviewConfirmed(true)}
-                className="mt-5 inline-flex items-center justify-center gap-1.5 rounded-2xl bg-[#00985f] px-5 py-3 text-xs font-extrabold text-white shadow-md transition hover:bg-[#007f4f] active:scale-95"
-              >
-                <Eye className="h-4 w-4" />
-                <span>예상 라인업 미리보기</span>
-              </button>
-            </div>
-          ) : (
-            <>
+          {/* Pre-kickoff: single slim status chip, pitch renders immediately */}
+          <>
               {isUpcoming && (
-                <div className="flex items-center justify-between rounded-xl bg-amber-50 border border-amber-200/80 px-3.5 py-2 text-xs text-amber-900">
-                  <span className="font-bold">
-                    🕒 공식 라인업 발표 전 · 예상 선발 11명 미리보기 모드
-                  </span>
-                  <span className="font-mono text-[10px] font-bold text-amber-700">
-                    사전 거래 가능
-                  </span>
+                <div className="flex items-center rounded-full bg-amber-50 border border-amber-200/80 px-3 py-1 text-[11px] font-bold text-amber-900">
+                  예상 선발 · 킥오프 45분 전 공식 라인업 확정
                 </div>
               )}
 
@@ -1616,8 +1583,7 @@ export default function FormationPitchModal({
                   </div>
                 )}
               </div>
-            </>
-          )}
+          </>
         </div>
       </div>
     </div>

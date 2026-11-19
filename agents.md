@@ -2,6 +2,22 @@
 
 Think and work in English. Reply in Korean.
 
+## Git Commit Automation Rule
+
+- Whenever you finish modifying or creating code files, automatically stage (`git add -A`) and commit (`git commit`) the changes without waiting for an extra prompt.
+
+- Write the commit message in **Korean**, limited to **1 to 2 short lines**.
+
+- Explain **what was changed and why** in plain, everyday language—avoid difficult developer jargon, English buzzwords, or vague phrases like "코드 리팩토링" or "버그 수정".
+
+  - Good example:
+
+    `과거 날짜 경기가 라이브로 뜨던 오류 수정 및 김민재 수비수 이벤트에서 골키퍼 선방이 나오던 문제 해결`
+
+  - Bad example:
+
+    `fix: refactor priceEngine event whitelist and normalize match status`
+
 ---
 
 ## 1. Repo Text & Documentation (Absolute)
@@ -79,15 +95,9 @@ Covers code, identifiers, log/error messages, comments, docs, examples, and comm
 
 
 8. Project Status Tracking ([`STATUS.md`](http://STATUS.md)) - **Auto-Update After Every Task:** Whenever a code modification task is completed, create or update [`STATUS.md`](http://STATUS.md) in the project root (`football-app/[STATUS.md](http://STATUS.md)`). - **Keep It Current & Concise:** Overwrite outdated entries with the latest snapshot (max ~30 lines) using neutral English documentation style (no conversational filler): - `## Current State`: Summary of working features and latest `tsc` / build verification status. - `## Recent Changes`: Bullet list of files modified in the last completed task and what changed. - `## Known Issues & Next Steps`: Remaining bugs, unverified items, or logical next tasks. - **Read First on New Sessions:** At the start of any new session, read [`STATUS.md`](http://STATUS.md) alongside [`AGENTS.md`](http://AGENTS.md) to restore project context immediately.
-
-
-
 9. Visual & UI Design System (PitchTrade Aesthetic)
 
 - **Surface & Depth**: Use true obsidian black (`#060709`) as base canvas and subtle charcoal (`#0F1115`) for elevated surfaces. Avoid heavy borders; separate sections with negative space and hairline `1px solid rgba(255,255,255,0.07)`.
-
 - **No AI Clichés**: Never use cheesy grass stripe patterns, loud gradient banners, bubbly cartoon pins, or generic card boxes.
-
 - **Color Restraint**: Keep 90% of the UI monochrome (pure white `#FFFFFF` primary text, `#71717A` muted zinc labels). Use electric mint/lime (`#10B981` / `#A3E635`) and coral (`#F43F5E`) strictly for price action and primary CTAs.
-
 - **Sports Typography**: Treat jersey numbers, match minutes (`71'`), and scores as bold editorial typography (large `tabular-nums`, tight tracking `-0.03em`) inspired by modern sports broadcast graphics.

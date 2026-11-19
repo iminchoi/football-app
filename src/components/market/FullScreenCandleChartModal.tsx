@@ -79,6 +79,10 @@ function getEventMarkerText(type: ChartEventType, minute: number): string {
     YELLOW_CARD: `🟨 ${minute}'`,
     RED_CARD: `🟥 ${minute}'`,
     SAVE: `🧤 ${minute}'`,
+    CONCEDED: `🥅 ${minute}'`,
+    DEFENSIVE_ACTION: `🛡️ ${minute}'`,
+    KEY_PLAY: `🎯 ${minute}'`,
+    BIG_CHANCE_MISS: `😣 ${minute}'`,
     SUB_OUT: `🔄 ${minute}'`,
   };
   return labelMap[type] ?? `• ${minute}'`;
@@ -91,6 +95,10 @@ function getEventChipLabel(type: ChartEventType): string {
     YELLOW_CARD: "CARD",
     RED_CARD: "RED",
     SAVE: "SAVE",
+    CONCEDED: "GOAL AG",
+    DEFENSIVE_ACTION: "DEF",
+    KEY_PLAY: "KEY",
+    BIG_CHANCE_MISS: "MISS",
     SUB_OUT: "SUB",
   };
   return map[type] ?? EVENT_PIN_CONFIG[type]?.shortTitle ?? type;

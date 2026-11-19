@@ -1,0 +1,18 @@
+* [31mdfb35cd[m -[33m (HEAD -> main, origin/main, origin/HEAD)[m feat(fix): 확대 캔들 차트 리디자인 [32m(43 seconds ago) [1;34m<iminchoi>[m
+* [31m7bcf792[m -[33m[m style: redesign full-screen candle chart with obsidian editorial dark UI [32m(24 hours ago) [1;34m<iminchoi>[m
+* [31mdffd223[m -[33m[m feat: add ResizeObserver full-height dark candlestick and slim down TradeBottomSheet [32m(2 days ago) [1;34m<iminchoi>[m
+* [31mc8d53c4[m -[33m[m feat: 실시간 경기 이벤트 선수 시세 연동 및 잔여 물량 배지 동기화 [32m(6 days ago) [1;34m<iminchoi>[m
+* [31me3b43a6[m -[33m[m fix: 전체 계정 합산 주식 유통량 계산 적용 및 매치 API 타입 안정화, 계정별 관심선수 격리·전체 보유량 합산, 차트/API 타입 에러 및 8초 타임아웃 처리 [32m(6 days ago) [1;34m<iminchoi>[m
+* [31mf57f514[m -[33m[m feat(add): 풀스크린 OHLC 캔들 차트(줌/팬 지원), 전역 등락 컬러 표준화, 관리자 이벤트   권한 격리 및 축구·투자 이원화 필터 구현 [32m(6 days ago) [1;34m<iminchoi>[m
+* [31mfdc2051[m -[33m[m feat(add): 0~90분 매치 타임라인 기반 실시간 경기 차트 탭, 시가/종가 기준선 및 경기   이벤트 컬러 마커 시스템 구현 [32m(6 days ago) [1;34m<iminchoi>[m
+* [31m185e4af[m -[33m[m feat(fix): 선수 세부 포지션 정규화 및 포메이션 슬롯 매핑으로 수비수 공격 배치 버그 수정 [32m(6 days ago) [1;34m<iminchoi>[m
+* [31m2cc09bb[m -[33m[m feat(trade): A매치 국가대표 필터링 강화 및 API 라인업 기반 동적 스쿼드 동기화 구현 [32m(6 days ago) [1;34m<iminchoi>[m
+* [31ma6d9623[m -[33m[m feat: A매치 국가대표 경기 시세 통합 연동 및 인증 모달 핀테크 UI/UX·외부 클릭 닫힘 방지 개선 [32m(6 days ago) [1;34m<iminchoi>[m
+* [31m9a1b56c[m -[33m[m feat(auth): 계정별 포트폴리오 격리, 비밀번호 해시 검증 및 회원가입 유효성 검사 구현 [32m(6 days ago) [1;34m<iminchoi>[m
+* [31m60ad7bd[m -[33m[m 트레이딩 도메인 & 경제 모델 검증, 인증(Auth Guard) 및 세션 격리 검증, UI/UX 및 모바일 인터랙션 검증 [32m(2 weeks ago) [1;34m<iminchoi>[m
+* [31m83ccb56[m -[33m[m 선수 데이터 모델 확장 및 티어별 공급량 설정 [32m(2 weeks ago) [1;34m<iminchoi>[m
+* [31m8d63a63[m -[33m[m feat: Football trading MVP prototype [32m(3 weeks ago) [1;34m<iminchoi>[m
+* [31m5c67282[m -[33m[m Agent host session 4084fd95-70e3-4467-a3e1-7049fd9406fb - turn 1 [32m(2 weeks ago) [1;34m<iminchoi>[m
+* [31m58227eb[m -[33m[m Agent host session 4084fd95-70e3-4467-a3e1-7049fd9406fb - turn 1 start [32m(2 weeks ago) [1;34m<iminchoi>[m
+* [31m58cc03b[m -[33m[m Agent host session 4084fd95-70e3-4467-a3e1-7049fd9406fb - baseline checkpoint [32m(2 weeks ago) [1;34m<iminchoi>[m
+* [31m216e1f2[m -[33m (empty-clean)[m clean repo [32m(3 weeks ago) [1;34m<GEUNHYEONGG>[m

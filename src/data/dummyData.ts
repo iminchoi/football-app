@@ -1189,8 +1189,8 @@ export const INITIAL_PLAYERS: Player[] = [
         timeLabel: "52'",
         price: 12750,
         event: {
-          type: "SAVE",
-          label: "🧱 결정적 골라인 수비 (+4.2%)",
+          type: "DEFENSIVE_ACTION",
+          label: "🧱 결정적 골라인 클리어 (+4.2%)",
           impactPercent: 4.2,
         },
       },
@@ -2731,34 +2731,37 @@ export interface EventTemplate {
 }
 
 const FW_EVENT_TEMPLATES: EventTemplate[] = [
-  { text: "🔥 날카로운 유효슈팅! 골키퍼 선방", sentiment: "positive", minRate: 0.015, maxRate: 0.045, statEffect: "shot" },
+  { text: "🎯 골문 구석을 노린 날카로운 유효슈팅!", sentiment: "positive", minRate: 0.015, maxRate: 0.045, statEffect: "shot", chartEventType: "KEY_PLAY", chartEventTitle: "🎯 유효슈팅" },
   { text: "⚽ 침착한 마무리로 추가 득점 성공!", sentiment: "positive", minRate: 0.045, maxRate: 0.08, statEffect: "goal", chartEventType: "GOAL", chartEventTitle: "⚽ 득점" },
   { text: "⚡ 수비수 제치는 측면 드리블 돌파", sentiment: "positive", minRate: 0.01, maxRate: 0.035 },
-  { text: "🎯 동료에게 연결한 결정적 컷백 패스", sentiment: "positive", minRate: 0.015, maxRate: 0.035, statEffect: "keyPass", chartEventType: "ASSIST", chartEventTitle: "🅰️ 도움" },
+  { text: "🅰️ 동료에게 연결한 결정적 컷백 도움", sentiment: "positive", minRate: 0.025, maxRate: 0.05, statEffect: "assist", chartEventType: "ASSIST", chartEventTitle: "🅰️ 도움" },
   { text: "🟨 전방 압박 중 거친 태클로 경고", sentiment: "negative", minRate: -0.035, maxRate: -0.012, chartEventType: "YELLOW_CARD", chartEventTitle: "🟨 경고" },
-  { text: "😥 박스 안 슈팅이 골대 위로 벗어남", sentiment: "negative", minRate: -0.04, maxRate: -0.015 },
+  { text: "😣 골키퍼와 1대1 빅찬스 슈팅 미스", sentiment: "negative", minRate: -0.04, maxRate: -0.015, chartEventType: "BIG_CHANCE_MISS", chartEventTitle: "😣 빅찬스 미스" },
 ];
 
 const MF_EVENT_TEMPLATES: EventTemplate[] = [
-  { text: "🎯 수비 라인을 허무는 침투 킬패스!", sentiment: "positive", minRate: 0.02, maxRate: 0.045, statEffect: "keyPass" },
+  { text: "🎯 수비 라인을 허무는 결정적 킬패스!", sentiment: "positive", minRate: 0.02, maxRate: 0.045, statEffect: "keyPass", chartEventType: "KEY_PLAY", chartEventTitle: "🎯 결정적 킬패스" },
   { text: "🅰️ 정확한 크로스로 어시스트 기록!", sentiment: "positive", minRate: 0.04, maxRate: 0.07, statEffect: "assist", chartEventType: "ASSIST", chartEventTitle: "🅰️ 도움" },
-  { text: "✨ 중원 탈압박 후 반대 전환 롱패스 성공", sentiment: "positive", minRate: 0.01, maxRate: 0.03 },
-  { text: "🚀 아크 정면 날카로운 중거리 슈팅", sentiment: "positive", minRate: 0.015, maxRate: 0.04, statEffect: "shot" },
+  { text: "⚽ 아크 정면 날카로운 중거리 슈팅 득점!", sentiment: "positive", minRate: 0.045, maxRate: 0.075, statEffect: "goal", chartEventType: "GOAL", chartEventTitle: "⚽ 득점" },
+  { text: "🚀 아크 정면 날카로운 중거리 유효슈팅", sentiment: "positive", minRate: 0.015, maxRate: 0.04, statEffect: "shot", chartEventType: "KEY_PLAY", chartEventTitle: "🚀 중거리 유효슈팅" },
   { text: "🟨 역습 저지 전술적 파울로 옐로카드", sentiment: "negative", minRate: -0.035, maxRate: -0.01, chartEventType: "YELLOW_CARD", chartEventTitle: "🟨 경고" },
   { text: "🔄 안정적인 중원 볼 배급 (패스 성공률 93%)", sentiment: "neutral", minRate: -0.005, maxRate: 0.015 },
 ];
 
 const DF_EVENT_TEMPLATES: EventTemplate[] = [
-  { text: "🛡️ 박스 안 결정적 블로킹으로 위기 차단!", sentiment: "positive", minRate: 0.02, maxRate: 0.05, chartEventType: "SAVE", chartEventTitle: "🛡️ 결정적 차단" },
-  { text: "🦅 공중볼 경합 완벽 승리 및 클리어링", sentiment: "positive", minRate: 0.01, maxRate: 0.03 },
-  { text: "🧱 상대 에이스 1대1 돌파 완벽 수비", sentiment: "positive", minRate: 0.02, maxRate: 0.04 },
+  { text: "🛡️ 상대 공격수 1대1 돌파 완벽 저지!", sentiment: "positive", minRate: 0.02, maxRate: 0.045, chartEventType: "DEFENSIVE_ACTION", chartEventTitle: "🛡️ 1대1 돌파 저지" },
+  { text: "🧱 박스 안 결정적 태클로 슈팅 차단!", sentiment: "positive", minRate: 0.02, maxRate: 0.05, chartEventType: "DEFENSIVE_ACTION", chartEventTitle: "🧱 결정적 태클" },
+  { text: "🦅 골라인 앞 결정적 헤딩 클리어!", sentiment: "positive", minRate: 0.02, maxRate: 0.045, chartEventType: "DEFENSIVE_ACTION", chartEventTitle: "🦅 골라인 클리어" },
+  { text: "⚽ 세트피스 코너킥 헤더 득점!", sentiment: "positive", minRate: 0.05, maxRate: 0.08, statEffect: "goal", chartEventType: "GOAL", chartEventTitle: "⚽ 헤더 득점" },
   { text: "🟨 박스 근처 위험 지역 파울 경고", sentiment: "negative", minRate: -0.04, maxRate: -0.015, chartEventType: "YELLOW_CARD", chartEventTitle: "🟨 경고" },
   { text: "🔄 안정적인 후방 빌드업 전개", sentiment: "neutral", minRate: -0.005, maxRate: 0.015 },
 ];
 
 const GK_EVENT_TEMPLATES: EventTemplate[] = [
-  { text: "🧤 동물적인 반사신경 슈퍼 세이브!", sentiment: "positive", minRate: 0.025, maxRate: 0.05, chartEventType: "SAVE", chartEventTitle: "🧤 슈퍼 세이브" },
-  { text: "⚠️ 골킥 연결 부정확", sentiment: "negative", minRate: -0.025, maxRate: -0.01 },
+  { text: "🧤 동물적인 반사신경 슈퍼 세이브!", sentiment: "positive", minRate: 0.025, maxRate: 0.05, chartEventType: "SAVE", chartEventTitle: "🧤 선방" },
+  { text: "🧤 결정적인 PK 선방으로 팀 위기 구출!", sentiment: "positive", minRate: 0.045, maxRate: 0.075, chartEventType: "SAVE", chartEventTitle: "🧤 PK 선방" },
+  { text: "🧤 크로스 상황에서 결정적 공중볼 처리!", sentiment: "positive", minRate: 0.018, maxRate: 0.038, chartEventType: "SAVE", chartEventTitle: "🧤 공중볼 처리" },
+  { text: "🥅 상대 유효슈팅에 아쉬운 실점 허용", sentiment: "negative", minRate: -0.04, maxRate: -0.015, chartEventType: "CONCEDED", chartEventTitle: "🥅 실점" },
 ];
 
 export const POSITION_EVENTS: Record<string, EventTemplate[]> = {

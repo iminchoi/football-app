@@ -51,6 +51,37 @@ function getNearestSaturdayStr(dateStr: string): string {
   return toDateStr(d);
 }
 
+/**
+ * Force every match dated before today to FT. Demo/A-Match fallbacks reuse the same
+ * LIVE fixtures for any requested date, so their date is the requested date; real API
+ * matches use their own kickoff date (`utcDate`).
+ */
+function finalizePastMatches(
+  list: Match[],
+  requestedDateStr: string,
+  todayStr: string,
+  useKickoffDate: boolean
+): Match[] {
+  return list.map((m) => {
+    const kickoff = useKickoffDate && m.utcDate ? new Date(m.utcDate) : null;
+    const matchDateStr =
+      kickoff && !Number.isNaN(kickoff.getTime())
+        ? toDateStr(kickoff)
+        : requestedDateStr;
+    if (matchDateStr >= todayStr || m.status === "FT") return m;
+    return {
+      ...m,
+      status: "FT",
+      rawStatus: "FINISHED",
+      minute: 90,
+      kickoffTime: "종료",
+      highlightText: `경기 종료 (${m.homeTeam.score ?? 0} : ${
+        m.awayTeam.score ?? 0
+      })`,
+    };
+  });
+}
+
 function formatKoreanDateLabel(dateStr: string, todayStr: string): {
   badge?: string;
   mainText: string;
@@ -145,16 +176,22 @@ export default function MatchesTabView({
         setDataSource(data.source || "UNKNOWN");
 
         if (data.source === "FOOTBALL_DATA_API") {
-          const fetchedList: Match[] = Array.isArray(data.matches)
-            ? data.matches
-            : [];
+          const fetchedList = finalizePastMatches(
+            Array.isArray(data.matches) ? data.matches : [],
+            dateStr,
+            todayStr,
+            true
+          );
           setApiMatches(fetchedList);
           syncPlayersFromMatches(fetchedList);
           setStatusMessage(null);
         } else if (data.source === "AMATCH_FALLBACK") {
-          const fallbackList: Match[] = Array.isArray(data.matches)
-            ? data.matches
-            : fallbackMatches;
+          const fallbackList = finalizePastMatches(
+            Array.isArray(data.matches) ? data.matches : fallbackMatches,
+            dateStr,
+            todayStr,
+            false
+          );
           setApiMatches(fallbackList);
           syncPlayersFromMatches(fallbackList);
           setStatusMessage(data.message || null);
@@ -177,8 +214,12 @@ export default function MatchesTabView({
           const filteredMock = fallbackMatches.filter(
             (m) => m.dateKey === targetKey
           );
-          const resolvedFallback =
-            filteredMock.length > 0 ? filteredMock : fallbackMatches;
+          const resolvedFallback = finalizePastMatches(
+            filteredMock.length > 0 ? filteredMock : fallbackMatches,
+            dateStr,
+            todayStr,
+            false
+          );
           setApiMatches(resolvedFallback);
           syncPlayersFromMatches(resolvedFallback);
           setStatusMessage(data.message || null);
@@ -187,7 +228,9 @@ export default function MatchesTabView({
         // An aborted request is superseded by a newer one that owns the state.
         if (controller.signal.aborted) return;
         setDataSource("CLIENT_FALLBACK");
-        setApiMatches(fallbackMatches);
+        setApiMatches(
+          finalizePastMatches(fallbackMatches, dateStr, todayStr, false)
+        );
         setStatusMessage(
           "네트워크 연결 상태를 확인해주세요. 데모 경기를 표시합니다."
         );
@@ -206,9 +249,12 @@ export default function MatchesTabView({
 
   useEffect(() => () => fetchControllerRef.current?.abort(), []);
 
-  // Overlay live store match state (scores/minutes) onto fetched matches
-  const resolvedMatches = apiMatches.map(
-    (m) => storeMockMatches.find((sm) => sm.id === m.id) ?? m
+  // Overlay live store match state (scores/minutes) onto fetched matches;
+  // finished matches keep their FT state so a past date never shows LIVE.
+  const resolvedMatches = apiMatches.map((m) =>
+    m.status === "FT"
+      ? m
+      : storeMockMatches.find((sm) => sm.id === m.id) ?? m
   );
 
   // Group fetched matches by leagueId
