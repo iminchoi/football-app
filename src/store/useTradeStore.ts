@@ -1516,13 +1516,32 @@ export const useTradeStore = create<TradeStoreState>()(
 
           // Guard: Only fluctuate prices for LIVE matches (FT and UPCOMING stay fixed)
           if (!isLive) {
+            if (!isFT) {
+              return {
+                ...player,
+                basePrice,
+                openPrice,
+                initialPrice: basePrice,
+                currentPrice: openPrice,
+                previousPrice: openPrice,
+                highPrice: openPrice,
+                lowPrice: openPrice,
+                events: [],
+                priceHistory: [
+                  {
+                    minute: 0,
+                    timeLabel: "0'",
+                    price: openPrice,
+                    changePercentFromOpen: 0,
+                  },
+                ],
+              };
+            }
             return {
               ...player,
               basePrice,
               openPrice,
-              closePrice: isFT
-                ? player.closePrice ?? safeCurrentPrice
-                : player.closePrice,
+              closePrice: player.closePrice ?? safeCurrentPrice,
               initialPrice: basePrice,
               currentPrice: safeCurrentPrice,
             };

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -23,6 +23,7 @@ import {
   calculateDiffFromOpen,
   derivePlayerMarketData,
   extractInitialMatchEvents,
+  resolveLastMatchReview,
 } from "@/utils/priceEngine";
 import MatchEventTimeline from "@/components/MatchEventTimeline";
 import {
@@ -302,10 +303,16 @@ export default function MatchTimelineChart({
   const matches = useTradeStore((s) => s.matches);
 
   const [viewMode, setViewMode] = useState<ChartViewMode>("MATCH_TIMELINE");
+  const [preMatchMode, setPreMatchMode] = useState<"PRE" | "LAST_FT">("PRE");
   const [overallPeriod, setOverallPeriod] = useState<OverallPeriod>("1D");
   const [selectedEventMinute, setSelectedEventMinute] = useState<number | null>(
     null
   );
+
+  useEffect(() => {
+    setPreMatchMode("PRE");
+    setSelectedEventMinute(null);
+  }, [player.id]);
 
   // Resolve the player's active match (prioritizing LIVE, then direct matchId, then team match)
   const playerMatch: Match | undefined = useMemo(() => {
@@ -349,11 +356,14 @@ export default function MatchTimelineChart({
 
   // Derive SSOT timeline & metrics from player.events and openPrice
   const ssotData = useMemo(() => {
-    const events = extractInitialMatchEvents({
-      ...player,
-      openPrice: rawOpenPrice,
-      basePrice,
-    });
+    const events = extractInitialMatchEvents(
+      {
+        ...player,
+        openPrice: rawOpenPrice,
+        basePrice,
+      },
+      matchStatus
+    );
     const endMin =
       matchStatus === "FT"
         ? 90
@@ -370,16 +380,46 @@ export default function MatchTimelineChart({
     });
   }, [player, rawOpenPrice, basePrice, matchStatus, playerMatch?.minute]);
 
-  const openPrice = player.openPrice ?? ssotData.openPrice;
-  const closePrice =
-    matchStatus === "FT"
-      ? roundToTen(player.closePrice ?? player.currentPrice ?? ssotData.currentPrice)
-      : roundToTen(player.currentPrice ?? ssotData.currentPrice);
-  const highPrice = player.highPrice ?? ssotData.highPrice;
-  const lowPrice = player.lowPrice ?? ssotData.lowPrice;
-  const volume = player.volume ?? ssotData.volume;
-  const timelineData: PricePoint[] = ssotData.priceHistory;
-  const canonicalEvents = player.events ?? ssotData.events;
+  const lastMatchReview = useMemo(() => {
+    if (matchStatus !== "UPCOMING") return null;
+    return resolveLastMatchReview(player, matches);
+  }, [matchStatus, player, matches]);
+
+  const isViewingLastMatch = matchStatus === "UPCOMING" && preMatchMode === "LAST_FT" && Boolean(lastMatchReview);
+
+  const openPrice = isViewingLastMatch && lastMatchReview
+    ? lastMatchReview.openPrice
+    : player.openPrice ?? ssotData.openPrice;
+  const closePrice = isViewingLastMatch && lastMatchReview
+    ? lastMatchReview.marketData.currentPrice
+    : matchStatus === "UPCOMING"
+    ? openPrice
+    : matchStatus === "FT"
+    ? roundToTen(player.closePrice ?? player.currentPrice ?? ssotData.currentPrice)
+    : roundToTen(player.currentPrice ?? ssotData.currentPrice);
+  const highPrice = isViewingLastMatch && lastMatchReview
+    ? lastMatchReview.marketData.highPrice
+    : matchStatus === "UPCOMING"
+    ? openPrice
+    : player.highPrice ?? ssotData.highPrice;
+  const lowPrice = isViewingLastMatch && lastMatchReview
+    ? lastMatchReview.marketData.lowPrice
+    : matchStatus === "UPCOMING"
+    ? openPrice
+    : player.lowPrice ?? ssotData.lowPrice;
+  const volume = isViewingLastMatch && lastMatchReview
+    ? lastMatchReview.marketData.volume
+    : matchStatus === "UPCOMING"
+    ? 0
+    : player.volume ?? ssotData.volume;
+  const timelineData: PricePoint[] = isViewingLastMatch && lastMatchReview
+    ? lastMatchReview.marketData.priceHistory
+    : ssotData.priceHistory;
+  const canonicalEvents = isViewingLastMatch && lastMatchReview
+    ? lastMatchReview.events
+    : matchStatus === "UPCOMING"
+    ? []
+    : player.events ?? ssotData.events;
 
   const eventPoints = useMemo(
     () =>
@@ -502,10 +542,17 @@ export default function MatchTimelineChart({
         </button>
       </div>
 
-      {/* Match Context Banner */}
+      {/* Match Context Banner + PRE/LAST_FT Toggle */}
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-1.5 px-0.5">
         <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-700">
-          {playerMatch ? (
+          {isViewingLastMatch && lastMatchReview ? (
+            <>
+              <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-extrabold text-white">
+                LAST MATCH · FT
+              </span>
+              <span className="text-slate-700">{lastMatchReview.matchLabel}</span>
+            </>
+          ) : playerMatch ? (
             <>
               <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-extrabold text-gray-600 border border-gray-200">
                 {playerMatch.leagueName}
@@ -522,6 +569,39 @@ export default function MatchTimelineChart({
             <span className="text-gray-500">매치 타임라인 시세</span>
           )}
         </div>
+
+        {matchStatus === "UPCOMING" && viewMode === "MATCH_TIMELINE" && (
+          <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 text-[10px] font-bold">
+            <button
+              type="button"
+              onClick={() => {
+                setPreMatchMode("PRE");
+                setSelectedEventMinute(null);
+              }}
+              className={`rounded-md px-2 py-1 transition ${
+                preMatchMode === "PRE"
+                  ? "bg-[#E8F5EF] text-[#00A878]"
+                  : "text-gray-500 hover:text-gray-900"
+              }`}
+            >
+              오늘 경기 (PRE)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPreMatchMode("LAST_FT");
+                setSelectedEventMinute(null);
+              }}
+              className={`rounded-md px-2 py-1 transition ${
+                preMatchMode === "LAST_FT"
+                  ? "bg-slate-900 text-white"
+                  : "text-gray-500 hover:text-gray-900"
+              }`}
+            >
+              지난 경기 (FT)
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 3. Main Chart Area */}
@@ -531,7 +611,7 @@ export default function MatchTimelineChart({
             <div className="flex items-center gap-2.5 px-3 pb-1 text-[10px] font-semibold text-gray-400">
               <span className="inline-flex items-center gap-1">
                 <span className="inline-block h-0.5 w-3 border-t border-dashed border-[#00A878]" />
-                현재가 ({closePrice.toLocaleString()}P)
+                {isViewingLastMatch ? "직전 종가" : "현재가"} ({closePrice.toLocaleString()}P)
               </span>
               <span className="inline-flex items-center gap-1">
                 <span className="inline-block h-2.5 w-0.5 border-l border-dashed border-amber-500" />
@@ -539,21 +619,26 @@ export default function MatchTimelineChart({
               </span>
             </div>
 
-            {matchStatus === "UPCOMING" && timelineData.length <= 1 ? (
-              <div className="flex h-56 flex-col items-center justify-center text-center px-4">
-                <div className="mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-amber-50 text-lg">
-                  🕒
+            {matchStatus === "UPCOMING" && !isViewingLastMatch ? (
+              <div className="relative flex h-56 flex-col items-center justify-center px-4 text-center">
+                <div className="pointer-events-none absolute inset-x-4 top-1/2 -translate-y-1/2 border-t border-dashed border-[#CBD5E1]" />
+                <div className="relative z-10 inline-flex items-center gap-1.5 rounded-full border border-[#E2E8F0] bg-[#FFFFFF]/90 px-3.5 py-2 text-xs font-semibold text-[#0F172A] shadow-sm backdrop-blur-sm">
+                  <span>⏱ KICK-OFF 대기 · 경기 시작 후 실시간 시세 및 이벤트 반영</span>
                 </div>
-                <p className="text-xs font-extrabold text-gray-800">
-                  경기 시작 전 (킥오프 대기 중)
-                </p>
-                <p className="mt-1 text-[11px] text-gray-500">
-                  킥오프(0&apos;) 시가{" "}
-                  <strong className="font-mono text-gray-800">
+                <p className="relative z-10 mt-2 font-sans tabular-nums text-[11px] font-medium text-[#64748B]">
+                  기준 시가{" "}
+                  <strong className="font-bold text-[#0F172A]">
                     {openPrice.toLocaleString()}P
-                  </strong>
-                  에서 출발하며, 경기 중 골·도움·선방·경고 이벤트가 0~90분 차트 위에 실시간 마커로 표시됩니다.
+                  </strong>{" "}
+                  · 장전 주문 가능
                 </p>
+                <button
+                  type="button"
+                  onClick={() => setPreMatchMode("LAST_FT")}
+                  className="relative z-10 mt-3 inline-flex items-center gap-1.5 rounded-full border border-[#00A878]/30 bg-[#E8F5EF] px-3.5 py-1.5 text-xs font-bold text-[#00A878] transition hover:bg-[#00A878] hover:text-white active:scale-95"
+                >
+                  <span>📊 지난 경기 시세 차트 바로 보기 →</span>
+                </button>
               </div>
             ) : (
               <div className="h-60 w-full">

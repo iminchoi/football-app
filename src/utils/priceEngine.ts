@@ -240,8 +240,12 @@ export function extractInitialMatchEvents(
     | "events"
     | "priceHistory"
     | "lastEvent"
-  >
+  >,
+  matchStatus?: MatchStatus
 ): MatchEvent[] {
+  if (matchStatus === "UPCOMING") {
+    return [];
+  }
   if (Array.isArray(player.events) && player.events.length > 0) {
     return normalizeMatchEvents(player.events, player.id);
   }
@@ -442,13 +446,16 @@ export function derivePlayerMarketData(params: {
 }): DerivedPlayerMarketData {
   const basePrice = roundToTen(params.basePrice ?? params.openPrice ?? 10000);
   const openPrice = clampToPriceLimit(params.openPrice ?? basePrice, basePrice);
-  const events = normalizeMatchEvents(params.events, params.playerId);
+  const status: MatchStatus = params.matchStatus ?? "LIVE";
+  const events =
+    status === "UPCOMING"
+      ? []
+      : normalizeMatchEvents(params.events, params.playerId);
   const maxEventMin =
     events.length > 0 ? events[events.length - 1].minute : 0;
 
-  const status: MatchStatus = params.matchStatus ?? "LIVE";
   const endMinute =
-    status === "UPCOMING" && maxEventMin === 0
+    status === "UPCOMING"
       ? 0
       : status === "FT"
       ? Math.max(90, maxEventMin)
@@ -544,8 +551,26 @@ export function deriveCandlesFromEvents(params: {
 }): CandleData[] {
   const basePrice = roundToTen(params.basePrice ?? params.openPrice ?? 10000);
   const openPrice = clampToPriceLimit(params.openPrice ?? basePrice, basePrice);
-  const events = normalizeMatchEvents(params.events, params.playerId);
   const status: MatchStatus = params.matchStatus ?? "LIVE";
+  const events =
+    status === "UPCOMING"
+      ? []
+      : normalizeMatchEvents(params.events, params.playerId);
+
+  if (status === "UPCOMING") {
+    return [
+      {
+        index: 0,
+        minute: 0,
+        label: "0'",
+        open: openPrice,
+        high: openPrice,
+        low: openPrice,
+        close: openPrice,
+        volume: 0,
+      },
+    ];
+  }
 
   const derived = derivePlayerMarketData({
     playerId: params.playerId,
@@ -560,9 +585,7 @@ export function deriveCandlesFromEvents(params: {
   const maxEventMin =
     events.length > 0 ? events[events.length - 1].minute : 0;
   const endMin =
-    status === "UPCOMING" && maxEventMin === 0
-      ? 0
-      : status === "FT"
+    status === "FT"
       ? Math.max(90, maxEventMin)
       : Math.max(1, Math.min(95, Math.max(params.currentMinute ?? 60, maxEventMin)));
 
@@ -765,4 +788,166 @@ export function resolvePlayerMatchContext(
       : Math.max(1, direct?.minute ?? player.lastEvent?.minute ?? maxEvMin ?? 60);
 
   return { status, minute, match: direct };
+}
+
+export interface LastMatchReviewData {
+  matchLabel: string;
+  openPrice: number;
+  basePrice: number;
+  events: MatchEvent[];
+  marketData: DerivedPlayerMarketData;
+}
+
+const FALLBACK_OPPONENTS = [
+  "아스날",
+  "리버풀",
+  "맨시티",
+  "첼시",
+  "토트넘",
+  "레알 마드리드",
+  "바르셀로나",
+  "바이에른",
+];
+
+/**
+ * Derive deterministic 90' FT review data for a player's previous completed match.
+ * Used when a player's upcoming match is in PRE state so users can inspect last match form.
+ */
+export function resolveLastMatchReview(
+  player: Player,
+  matches: Match[]
+): LastMatchReviewData {
+  const basePrice = roundToTen(
+    player.basePrice ?? player.initialPrice ?? player.currentPrice ?? 10000
+  );
+
+  // Find a completed (FT) match involving this player's team if available
+  const ftMatch = matches.find(
+    (m) =>
+      (m.status === "FT" || m.rawStatus === "FINISHED") &&
+      (m.homeTeam.id === player.teamId ||
+        m.awayTeam.id === player.teamId ||
+        m.homeTeam.shortName === player.teamShort ||
+        m.awayTeam.shortName === player.teamShort)
+  );
+
+  let matchLabel: string;
+  if (ftMatch) {
+    const isHome =
+      ftMatch.homeTeam.id === player.teamId ||
+      ftMatch.homeTeam.shortName === player.teamShort;
+    const opp = isHome ? ftMatch.awayTeam.name : ftMatch.homeTeam.name;
+    const score = isHome
+      ? `${ftMatch.homeTeam.score ?? 2}:${ftMatch.awayTeam.score ?? 1}`
+      : `${ftMatch.awayTeam.score ?? 2}:${ftMatch.homeTeam.score ?? 1}`;
+    matchLabel = `직전 경기 종료 · vs ${opp} ${score}`;
+  } else {
+    const oppIdx = Math.floor(
+      seededNoise(`${player.id}-last-opp`, 1) * FALLBACK_OPPONENTS.length
+    );
+    const opp = FALLBACK_OPPONENTS[oppIdx] ?? "아스날";
+    const s1 = 1 + Math.floor(seededNoise(`${player.id}-last-s1`, 2) * 3);
+    const s2 = Math.floor(seededNoise(`${player.id}-last-s2`, 3) * 2);
+    matchLabel = `직전 경기 종료 · vs ${opp} ${s1}:${s2}`;
+  }
+
+  const nOpen = seededNoise(`${player.id}-last-open`, 5);
+  const openPrice = clampToPriceLimit(
+    basePrice * (0.94 + nOpen * 0.06),
+    basePrice
+  );
+
+  const isDefensive =
+    player.position === "GK" ||
+    player.position === "CB" ||
+    player.position === "LB" ||
+    player.position === "RB";
+
+  const min1 = 18 + Math.floor(seededNoise(`${player.id}-lm1`, 11) * 18);
+  const min2 = 46 + Math.floor(seededNoise(`${player.id}-lm2`, 12) * 16);
+  const min3 = 68 + Math.floor(seededNoise(`${player.id}-lm3`, 13) * 16);
+
+  const rawEvents: MatchEvent[] = isDefensive
+    ? [
+        {
+          id: `ft-${player.id}-${min1}-SAVE`,
+          playerId: player.id,
+          minute: min1,
+          type: "SAVE",
+          description: "결정적 실점 위기 슈퍼세이브",
+          priceImpactPercent: Number(
+            (3.8 + seededNoise(`${player.id}-li1`, 21) * 2.5).toFixed(1)
+          ),
+        },
+        {
+          id: `ft-${player.id}-${min2}-YC`,
+          playerId: player.id,
+          minute: min2,
+          type: "YELLOW_CARD",
+          description: "역습 저지 반칙으로 옐로카드",
+          priceImpactPercent: Number(
+            (-(2.2 + seededNoise(`${player.id}-li2`, 22) * 1.5)).toFixed(1)
+          ),
+        },
+        {
+          id: `ft-${player.id}-${min3}-SAVE`,
+          playerId: player.id,
+          minute: min3,
+          type: "SAVE",
+          description: "후반 막판 골문 앞 클리어링 선방",
+          priceImpactPercent: Number(
+            (4.2 + seededNoise(`${player.id}-li3`, 23) * 2.8).toFixed(1)
+          ),
+        },
+      ]
+    : [
+        {
+          id: `ft-${player.id}-${min1}-GOAL`,
+          playerId: player.id,
+          minute: min1,
+          type: "GOAL",
+          description: "박스 안 침착한 오른발 슈팅 득점",
+          priceImpactPercent: Number(
+            (7.2 + seededNoise(`${player.id}-li1`, 31) * 3.8).toFixed(1)
+          ),
+        },
+        {
+          id: `ft-${player.id}-${min2}-YC`,
+          playerId: player.id,
+          minute: min2,
+          type: "YELLOW_CARD",
+          description: "중원 경합 중 거친 태클 경고",
+          priceImpactPercent: Number(
+            (-(2.4 + seededNoise(`${player.id}-li2`, 32) * 1.4)).toFixed(1)
+          ),
+        },
+        {
+          id: `ft-${player.id}-${min3}-ASSIST`,
+          playerId: player.id,
+          minute: min3,
+          type: "ASSIST",
+          description: "측면 돌파 후 정확한 컷백 어시스트",
+          priceImpactPercent: Number(
+            (4.6 + seededNoise(`${player.id}-li3`, 33) * 2.6).toFixed(1)
+          ),
+        },
+      ];
+
+  const events = normalizeMatchEvents(rawEvents, `${player.id}-last-ft`);
+  const marketData = derivePlayerMarketData({
+    playerId: `${player.id}-last-ft`,
+    openPrice,
+    basePrice,
+    events,
+    currentMinute: 90,
+    matchStatus: "FT",
+  });
+
+  return {
+    matchLabel,
+    openPrice,
+    basePrice,
+    events,
+    marketData,
+  };
 }
