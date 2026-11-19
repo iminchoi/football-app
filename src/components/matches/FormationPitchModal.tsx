@@ -1185,52 +1185,52 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
     <button
       type="button"
       onClick={() => onSelect(player, "BUY")}
-      className="group relative flex min-w-[82px] flex-col items-center rounded-2xl border border-gray-200/90 bg-[#FFFFFF] px-2.5 pt-2.5 pb-2 shadow-xs transition hover:-translate-y-0.5 hover:border-[#00A878] hover:shadow-sm focus:outline-none active:scale-95"
+      className="group relative flex min-w-0 flex-1 max-w-[74px] sm:max-w-[92px] flex-col items-center rounded-xl sm:rounded-2xl border border-gray-200/90 bg-[#FFFFFF] px-1 pt-2 pb-1.5 sm:px-2.5 sm:pt-2.5 sm:pb-2 shadow-xs transition hover:-translate-y-0.5 hover:border-[#00A878] hover:shadow-sm focus:outline-none active:scale-95"
     >
       {/* Top-Left: Owned Holdings Dot */}
       {holdingQty > 0 && (
-        <span className="absolute left-1.5 top-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#00A878] px-1 text-[9px] font-black text-white">
+        <span className="absolute left-1 top-1 sm:left-1.5 sm:top-1.5 flex h-3.5 min-w-[14px] sm:h-4 sm:min-w-[16px] items-center justify-center rounded-full bg-[#00A878] px-1 text-[8px] sm:text-[9px] font-black text-white">
           {holdingQty}
         </span>
       )}
 
       {/* Top-Right: Match Rating Chip */}
-      <span className="absolute right-1.5 top-1.5 rounded-md bg-[#F7F9F8] px-1 py-0.5 font-mono text-[9px] font-extrabold text-gray-700 tabular-nums border border-gray-200/70 leading-none">
+      <span className="absolute right-1 top-1 sm:right-1.5 sm:top-1.5 rounded bg-[#F7F9F8] px-1 py-0.5 font-mono text-[8px] sm:text-[9px] font-extrabold text-gray-700 tabular-nums border border-gray-200/70 leading-none">
         {player.stats.rating.toFixed(1)}
       </span>
 
-      {/* Top-Center: Minimal Team Jersey Avatar (No overlap, clean spacing) */}
-      <div className="mt-1.5 mb-1.5">
+      {/* Top-Center: Minimal Team Jersey Avatar */}
+      <div className="mt-1 mb-1 sm:mt-1.5 sm:mb-1.5">
         <PlayerAvatar
           player={player}
           teamColorOverride={teamColor}
-          size={40}
+          size={34}
         />
       </div>
 
       {/* Middle: Player Name + Subtle Position Label */}
-      <div className="flex max-w-[84px] items-center justify-center gap-1">
-        <span className="truncate text-[11px] font-extrabold text-gray-900 leading-tight">
+      <div className="flex w-full items-center justify-center gap-0.5 sm:gap-1 px-0.5">
+        <span className="truncate text-[10px] sm:text-[11px] font-extrabold text-gray-900 leading-tight">
           {extractLastName(player)}
         </span>
-        <span className="shrink-0 text-[9px] font-semibold text-gray-400 leading-tight">
+        <span className="shrink-0 text-[8px] sm:text-[9px] font-semibold text-gray-400 leading-tight">
           {player.position}
         </span>
       </div>
 
       {/* Bottom: Current Price + Change % */}
-      <div className="mt-0.5 flex items-center gap-1 font-mono text-[9.5px] font-bold tabular-nums">
-        <span className="text-gray-800">
+      <div className="mt-0.5 flex max-w-full items-center gap-0.5 sm:gap-1 font-mono text-[8.5px] sm:text-[9.5px] font-bold tabular-nums">
+        <span className="truncate text-gray-800">
           {player.currentPrice.toLocaleString()}
         </span>
         <span
-          className={
+          className={`shrink-0 ${
             isUp
               ? "text-[#00A878]"
               : isDown
               ? "text-[#F07868]"
               : "text-[#A8B2BC]"
-          }
+          }`}
         >
           {isUp ? "+" : isDown ? "-" : ""}
           {Math.abs(Number(pct)).toFixed(1)}%
@@ -1468,35 +1468,35 @@ export function FormationPitchContent({
       )}
 
       {/* Guide Pill */}
-      <div className="flex items-center justify-between text-xs text-gray-500 px-1">
-        <span className="flex items-center gap-1 font-medium">
-          <Sparkles className="h-3.5 w-3.5 text-[#00A878]" />
-          선수를 클릭하면 우측 패널에 차트와 주문 창이 열립니다
+      <div className="flex items-center justify-between gap-2 text-[11px] sm:text-xs text-gray-500 px-1">
+        <span className="flex items-center gap-1 font-medium truncate">
+          <Sparkles className="h-3.5 w-3.5 shrink-0 text-[#00A878]" />
+          <span className="truncate">선수를 터치하면 차트·주문 창이 열립니다</span>
         </span>
-        <span className="font-mono font-bold text-gray-700">
-          {formationLabel} · 선발 {startingPlayers.slice(0, 11).length}명
+        <span className="shrink-0 font-mono font-bold text-gray-700">
+          {formationLabel} · {startingPlayers.slice(0, 11).length}명
         </span>
       </div>
 
       {/* Soft Ivory Green Pitch Container */}
-      <div className="relative w-full overflow-hidden rounded-3xl border border-[#00A878]/25 bg-[#E8F5EF]">
+      <div className="relative w-full overflow-hidden rounded-2xl sm:rounded-3xl border border-[#00A878]/25 bg-[#E8F5EF]">
         {/* Crisp White 1.5px Pitch Markings */}
-        <div className="pointer-events-none absolute inset-3 rounded-xl border-[1.5px] border-white">
-          <div className="mx-auto h-14 w-44 border-x-[1.5px] border-b-[1.5px] border-white" />
-          <div className="mx-auto -mt-14 h-6 w-20 border-x-[1.5px] border-b-[1.5px] border-white" />
+        <div className="pointer-events-none absolute inset-2 sm:inset-3 rounded-xl border-[1.5px] border-white">
+          <div className="mx-auto h-12 sm:h-14 w-36 sm:w-44 border-x-[1.5px] border-b-[1.5px] border-white" />
+          <div className="mx-auto -mt-12 sm:-mt-14 h-5 sm:h-6 w-16 sm:w-20 border-x-[1.5px] border-b-[1.5px] border-white" />
           <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 border-t-[1.5px] border-white" />
-          <div className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-[1.5px] border-white" />
+          <div className="absolute left-1/2 top-1/2 h-16 w-16 sm:h-20 sm:w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-[1.5px] border-white" />
           <div className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
-          <div className="absolute bottom-0 left-1/2 h-14 w-44 -translate-x-1/2 border-x-[1.5px] border-t-[1.5px] border-white" />
-          <div className="absolute bottom-0 left-1/2 h-6 w-20 -translate-x-1/2 border-x-[1.5px] border-t-[1.5px] border-white" />
+          <div className="absolute bottom-0 left-1/2 h-12 sm:h-14 w-36 sm:w-44 -translate-x-1/2 border-x-[1.5px] border-t-[1.5px] border-white" />
+          <div className="absolute bottom-0 left-1/2 h-5 sm:h-6 w-16 sm:w-20 -translate-x-1/2 border-x-[1.5px] border-t-[1.5px] border-white" />
         </div>
 
         {/* Players Positioned by Formation Rows */}
-        <div className="relative z-10 flex min-h-[430px] flex-col justify-between py-5 px-2">
+        <div className="relative z-10 flex min-h-[370px] sm:min-h-[430px] flex-col justify-between py-3.5 sm:py-5 px-1 sm:px-2">
           {startingRows.map((row, rowIdx) => (
             <div
               key={`${selectedSide}-row-${rowIdx}`}
-              className="flex items-center justify-around gap-1.5"
+              className="flex items-center justify-around gap-1 sm:gap-1.5"
             >
               {row.map((player) => (
                 <PitchPlayerNode

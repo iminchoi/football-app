@@ -31,7 +31,6 @@ interface MatchAccordionCardProps {
   isExpanded: boolean;
   onToggleExpand: () => void;
   onSelectPlayerTrade: (player: Player, type: TradeType) => void;
-  onOpenPitchView: (match: Match) => void;
 }
 
 export default function MatchAccordionCard({
@@ -41,7 +40,6 @@ export default function MatchAccordionCard({
   isExpanded,
   onToggleExpand,
   onSelectPlayerTrade,
-  onOpenPitchView,
 }: MatchAccordionCardProps) {
   const user = useTradeStore((s) => s.user);
   const storeHoldings = useTradeStore((s) => s.holdings);
@@ -58,28 +56,23 @@ export default function MatchAccordionCard({
     match.rawStatus === "SCHEDULED";
 
   const handleOpenPitch = () => {
-    if (typeof window !== "undefined" && window.innerWidth >= 1024) {
-      if (!isExpanded) onToggleExpand();
-      setIsInlinePitchOpen(true);
-    } else {
-      onOpenPitchView(match);
-    }
+    if (!isExpanded) onToggleExpand();
+    setIsInlinePitchOpen(true);
   };
 
   const handleSummaryClick = () => {
     if (isUpcoming) {
-      if (typeof window !== "undefined" && window.innerWidth >= 1024) {
-        if (isExpanded && isInlinePitchOpen) {
-          setIsInlinePitchOpen(false);
-          onToggleExpand();
-        } else {
-          if (!isExpanded) onToggleExpand();
-          setIsInlinePitchOpen(true);
-        }
+      if (isExpanded && isInlinePitchOpen) {
+        setIsInlinePitchOpen(false);
+        onToggleExpand();
       } else {
-        onOpenPitchView(match);
+        if (!isExpanded) onToggleExpand();
+        setIsInlinePitchOpen(true);
       }
       return;
+    }
+    if (isExpanded && isInlinePitchOpen) {
+      setIsInlinePitchOpen(false);
     }
     onToggleExpand();
   };
@@ -167,7 +160,7 @@ export default function MatchAccordionCard({
           <div className="flex items-center gap-1 text-[11px] font-bold text-[#00985f]">
             <Users className="h-3.5 w-3.5" />
             <span>라인업/시세</span>
-            {!isUpcoming && isExpanded ? (
+            {isExpanded ? (
               <ChevronUp className="h-4 w-4 text-gray-400" />
             ) : (
               <ChevronDown className="h-4 w-4 text-gray-400" />
@@ -246,22 +239,20 @@ export default function MatchAccordionCard({
         </div>
       </div>
 
-      {/* Stage 1 Expanded View: Inline Pitch on PC (lg+) or Key Players Summary */}
-      {isExpanded && (!isUpcoming || isInlinePitchOpen) && (
-        <div className="border-t border-gray-100 bg-[#F7F9F8] px-3.5 py-3">
-          {isInlinePitchOpen ? (
-            <div className="hidden lg:block">
-              <FormationPitchContent
-                match={match}
-                players={players}
-                holdings={holdings}
-                onSelectPlayerTrade={onSelectPlayerTrade}
-                onCollapseInline={() => {
-                  setIsInlinePitchOpen(false);
-                  if (isUpcoming) onToggleExpand();
-                }}
-              />
-            </div>
+      {/* Stage 1 Expanded View: Unified Inline Pitch & Key Players Summary */}
+      {isExpanded && (
+        <div className="border-t border-gray-100 bg-[#F7F9F8] px-2.5 sm:px-3.5 py-3">
+          {isInlinePitchOpen || isUpcoming ? (
+            <FormationPitchContent
+              match={match}
+              players={players}
+              holdings={holdings}
+              onSelectPlayerTrade={onSelectPlayerTrade}
+              onCollapseInline={() => {
+                setIsInlinePitchOpen(false);
+                if (isUpcoming) onToggleExpand();
+              }}
+            />
           ) : (
             <>
               {/* Home / Away Key Players Tab Header */}

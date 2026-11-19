@@ -16,7 +16,6 @@ import {
 } from "@/store/useTradeStore";
 import { Holding, Match, Player, TradeType } from "@/types";
 import MatchAccordionCard from "./MatchAccordionCard";
-import FormationPitchModal from "./FormationPitchModal";
 
 interface MatchesTabViewProps {
   onSelectPlayerTrade: (player: Player, type: TradeType) => void;
@@ -138,7 +137,6 @@ export default function MatchesTabView({
   const [dataSource, setDataSource] = useState<string>("LOADING");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [pitchViewMatch, setPitchViewMatch] = useState<Match | null>(null);
 
   // Close calendar popover when clicking outside
   useEffect(() => {
@@ -594,7 +592,6 @@ export default function MatchesTabView({
                       isExpanded={expandedMatchIds.includes(match.id)}
                       onToggleExpand={() => toggleExpandMatch(match.id)}
                       onSelectPlayerTrade={onSelectPlayerTrade}
-                      onOpenPitchView={(m) => setPitchViewMatch(m)}
                     />
                   );
                 })}
@@ -603,17 +600,6 @@ export default function MatchesTabView({
           ))}
         </div>
       )}
-
-      {/* Stage 2: Full Formation Pitch View Modal */}
-      <FormationPitchModal
-        match={pitchViewMatch}
-        players={
-          pitchViewMatch ? filterPlayersForMatch(players, pitchViewMatch) : players
-        }
-        holdings={visibleHoldings}
-        onClose={() => setPitchViewMatch(null)}
-        onSelectPlayerTrade={onSelectPlayerTrade}
-      />
     </div>
   );
 }
