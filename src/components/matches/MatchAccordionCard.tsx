@@ -18,7 +18,10 @@ import {
   calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import { getAvailableShares } from "@/utils/tier";
-import { buildTeamLineupForMatch } from "./FormationPitchModal";
+import {
+  buildTeamLineupForMatch,
+  FormationPitchContent,
+} from "./FormationPitchModal";
 
 interface MatchAccordionCardProps {
   match: Match;
@@ -46,11 +49,39 @@ export default function MatchAccordionCard({
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
   const [selectedSide, setSelectedSide] = useState<"HOME" | "AWAY">("HOME");
   const [activeKeyPlayers, setActiveKeyPlayers] = useState<Player[]>([]);
+  const [isInlinePitchOpen, setIsInlinePitchOpen] = useState<boolean>(false);
 
   const isUpcoming =
     match.status === "UPCOMING" ||
     match.rawStatus === "TIMED" ||
     match.rawStatus === "SCHEDULED";
+
+  const handleOpenPitch = () => {
+    if (typeof window !== "undefined" && window.innerWidth >= 1024) {
+      if (!isExpanded) onToggleExpand();
+      setIsInlinePitchOpen(true);
+    } else {
+      onOpenPitchView(match);
+    }
+  };
+
+  const handleSummaryClick = () => {
+    if (isUpcoming) {
+      if (typeof window !== "undefined" && window.innerWidth >= 1024) {
+        if (isExpanded && isInlinePitchOpen) {
+          setIsInlinePitchOpen(false);
+          onToggleExpand();
+        } else {
+          if (!isExpanded) onToggleExpand();
+          setIsInlinePitchOpen(true);
+        }
+      } else {
+        onOpenPitchView(match);
+      }
+      return;
+    }
+    onToggleExpand();
+  };
 
   // Build deduplicated 3 key players for Home and Away teams (prioritizing base players from store)
   const { homeKeyPlayers, awayKeyPlayers } = useMemo(() => {
@@ -110,7 +141,7 @@ export default function MatchAccordionCard({
     <div className="overflow-hidden rounded-2xl border border-gray-200/90 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.03)] transition-all">
       {/* Clickable Match Summary Row (FotMob Clean Style) */}
       <div
-        onClick={isUpcoming ? () => onOpenPitchView(match) : onToggleExpand}
+        onClick={handleSummaryClick}
         className="cursor-pointer px-4 py-3.5 transition-colors hover:bg-gray-50/80 active:bg-gray-100/70"
       >
         {/* Top Row: Single Clean Status Pill ONLY + Lineup Toggle */}
@@ -214,9 +245,24 @@ export default function MatchAccordionCard({
         </div>
       </div>
 
-      {/* Stage 1 Expanded View (pre-kickoff matches open the pitch view directly) */}
-      {isExpanded && !isUpcoming && (
-        <div className="border-t border-gray-100 bg-[#f8f9fa] px-3.5 py-3">
+      {/* Stage 1 Expanded View: Inline Pitch on PC (lg+) or Key Players Summary */}
+      {isExpanded && (!isUpcoming || isInlinePitchOpen) && (
+        <div className="border-t border-gray-100 bg-[#F7F9F8] px-3.5 py-3">
+          {isInlinePitchOpen ? (
+            <div className="hidden lg:block">
+              <FormationPitchContent
+                match={match}
+                players={players}
+                holdings={holdings}
+                onSelectPlayerTrade={onSelectPlayerTrade}
+                onCollapseInline={() => {
+                  setIsInlinePitchOpen(false);
+                  if (isUpcoming) onToggleExpand();
+                }}
+              />
+            </div>
+          ) : (
+            <>
               {/* Home / Away Key Players Tab Header */}
               <div className="mb-2.5 flex items-center justify-between">
                 <div className="grid grid-cols-2 rounded-xl bg-gray-200/75 p-0.5 text-[11px] font-bold">
@@ -371,12 +417,14 @@ export default function MatchAccordionCard({
               {/* Stage 2 Trigger CTA: [전체 라인업 및 포메이션 보기 ➔] */}
               <button
                 type="button"
-                onClick={() => onOpenPitchView(match)}
-                className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50/80 py-2.5 text-xs font-extrabold text-[#00985f] transition hover:bg-[#00985f] hover:text-white active:scale-[0.99]"
+                onClick={handleOpenPitch}
+                className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl border border-[#00A878]/30 bg-[#E8F5EF] py-2.5 text-xs font-extrabold text-[#00A878] transition hover:bg-[#00A878] hover:text-white active:scale-[0.99]"
               >
                 <span>전체 라인업 및 포메이션 보기</span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Minus,
   Plus,
+  ChevronRight,
 } from "lucide-react";
 import {
   useTradeStore,
@@ -23,6 +24,7 @@ import { TradeType } from "@/types";
 import { getTierConfig } from "@/utils/tier";
 import MatchTimelineChart from "@/components/market/MatchTimelineChart";
 import FullScreenCandleChartModal from "@/components/market/FullScreenCandleChartModal";
+import PlayerDetailModal from "@/components/PlayerDetailModal";
 
 interface RightTradeDockPanelProps {
   playerId: string | null;
@@ -55,10 +57,12 @@ export default function RightTradeDockPanel({
     text: string;
   } | null>(null);
   const [isCandleModalOpen, setIsCandleModalOpen] = useState<boolean>(false);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState<boolean>(false);
 
   useEffect(() => {
     setQuantity(1);
     setFeedback(null);
+    setIsDetailModalOpen(false);
   }, [playerId, tradeType]);
 
   const player = playerId
@@ -156,7 +160,7 @@ export default function RightTradeDockPanel({
               <span className="text-xs font-black">{player.backNumber}</span>
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <h3 className="truncate text-sm font-extrabold text-gray-900">
                   {player.name}
                 </h3>
@@ -166,6 +170,14 @@ export default function RightTradeDockPanel({
                 <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-[#00A878]">
                   {tierCfg.tier}티어
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setIsDetailModalOpen(true)}
+                  className="inline-flex items-center gap-0.5 rounded-full border border-gray-200 bg-[#F7F9F8] px-2 py-0.5 text-[10px] font-bold text-gray-600 transition hover:border-[#00A878]/50 hover:text-[#00A878]"
+                >
+                  <span>상세 정보</span>
+                  <ChevronRight className="h-3 w-3" />
+                </button>
               </div>
               <p className="truncate text-[11px] text-gray-500">
                 {player.teamName} · 평점 {player.stats.rating.toFixed(1)}
@@ -409,6 +421,12 @@ export default function RightTradeDockPanel({
           onChangeTradeType(type);
           setIsCandleModalOpen(false);
         }}
+      />
+
+      <PlayerDetailModal
+        player={player}
+        isOpen={isDetailModalOpen}
+        onClose={() => setIsDetailModalOpen(false)}
       />
     </>
   );

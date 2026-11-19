@@ -1184,42 +1184,42 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
     <button
       type="button"
       onClick={() => onSelect(player, "BUY")}
-      className="group flex flex-col items-center focus:outline-none active:scale-95 transition-transform"
+      className="group relative flex min-w-[74px] flex-col items-center rounded-2xl border border-gray-200/90 bg-[#FFFFFF] px-2 py-1.5 shadow-xs transition hover:-translate-y-0.5 hover:border-[#00A878] hover:shadow-sm focus:outline-none active:scale-95"
     >
-      {/* Jersey Number Circle Badge + Rating */}
-      <div className="relative">
-        <div
-          style={{ backgroundColor: teamColor }}
-          className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-white font-mono text-xs font-black text-white shadow-md group-hover:scale-105 transition"
-        >
-          {player.backNumber}
-        </div>
-
-        {/* Rating Mini Pill */}
-        <span className="absolute -right-2 -top-1 rounded-full bg-white px-1.5 py-0.2 font-mono text-[9px] font-extrabold text-gray-900 shadow">
-          {player.stats.rating.toFixed(1)}
+      {/* Owned Holdings Dot */}
+      {holdingQty > 0 && (
+        <span className="absolute -left-1.5 -top-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#00A878] px-1 text-[9px] font-black text-white shadow-xs">
+          {holdingQty}
         </span>
+      )}
 
-        {/* Owned Holdings Dot */}
-        {holdingQty > 0 && (
-          <span className="absolute -left-2 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#00985f] px-1 text-[9px] font-black text-white border border-white shadow">
-            {holdingQty}
-          </span>
-        )}
-      </div>
-
-      {/* Player Last Name + DetailedPosition Tag (solid background, no backdrop-blur) */}
-      <span className="mt-1 flex items-center gap-1 rounded-md bg-black/65 px-1.5 py-0.5 text-[11px] font-extrabold text-white">
-        <span className="font-mono text-[9px] font-black text-emerald-300">
-          {player.position}
-        </span>
-        <span>{extractLastName(player)}</span>
+      {/* Rating Mini Pill */}
+      <span className="absolute -right-1.5 -top-1.5 rounded-full border border-gray-200 bg-[#F7F9F8] px-1.5 py-0.2 font-mono text-[9px] font-extrabold text-gray-800 shadow-2xs">
+        {player.stats.rating.toFixed(1)}
       </span>
 
-      {/* Mini Live Price Chip: e.g. 16,400P ▲9.3% */}
-      <div className="mt-0.5 flex items-center gap-0.5 rounded-full bg-white px-2 py-0.5 font-mono text-[9px] font-extrabold shadow-sm">
-        <span className="text-gray-900">
-          {player.currentPrice.toLocaleString()}P
+      {/* White Jersey Capsule with Team Color Border Accent */}
+      <div className="flex items-center gap-1">
+        <span
+          style={{ borderColor: teamColor, color: teamColor }}
+          className="flex h-6 w-6 items-center justify-center rounded-lg border-2 bg-[#F7F9F8] font-mono text-[10px] font-black"
+        >
+          {player.backNumber}
+        </span>
+        <span className="font-mono text-[9px] font-bold text-gray-400">
+          {player.position}
+        </span>
+      </div>
+
+      {/* Player Last Name */}
+      <span className="mt-1 max-w-[72px] truncate text-[11px] font-extrabold text-gray-900 leading-tight">
+        {extractLastName(player)}
+      </span>
+
+      {/* Mini Live Price & % */}
+      <div className="mt-0.5 flex items-center gap-0.5 font-mono text-[9px] font-extrabold tabular-nums">
+        <span className="text-gray-700">
+          {player.currentPrice.toLocaleString()}
         </span>
         <span
           className={
@@ -1230,7 +1230,7 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
               : "text-[#A8B2BC]"
           }
         >
-          {isUp ? "▲" : isDown ? "▼" : ""}
+          {isUp ? "+" : isDown ? "-" : ""}
           {Math.abs(Number(pct)).toFixed(1)}%
         </span>
       </div>
@@ -1320,13 +1320,21 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
   );
 });
 
-export default function FormationPitchModal({
+export interface FormationPitchContentProps {
+  match: Match;
+  players: Player[];
+  holdings: Record<string, Holding>;
+  onSelectPlayerTrade: (player: Player, type: TradeType) => void;
+  onCollapseInline?: () => void;
+}
+
+export function FormationPitchContent({
   match,
   players,
   holdings,
-  onClose,
   onSelectPlayerTrade,
-}: FormationPitchModalProps) {
+  onCollapseInline,
+}: FormationPitchContentProps) {
   const [selectedSide, setSelectedSide] = useState<"HOME" | "AWAY">("HOME");
   const [pitchPlayers, setPitchPlayers] = useState<Player[]>([]);
   const [benchPlayers, setBenchPlayers] = useState<Player[]>([]);
@@ -1334,17 +1342,11 @@ export default function FormationPitchModal({
   const [isBenchOpen, setIsBenchOpen] = useState<boolean>(false);
 
   const activeTeam =
-    selectedSide === "HOME" ? match?.homeTeam : match?.awayTeam;
+    selectedSide === "HOME" ? match.homeTeam : match.awayTeam;
 
-  // Team selection handler: completely replaces (never appends) pitchPlayers with max 11 players
   const handleSelectTeam = useCallback(
     (side: "HOME" | "AWAY") => {
       setSelectedSide(side);
-      if (!match) {
-        setPitchPlayers([]);
-        setBenchPlayers([]);
-        return;
-      }
       const selectedLineup = buildTeamLineupForMatch(match, side, players);
       setPitchPlayers(selectedLineup.startingLineup.slice(0, 11));
       setBenchPlayers(selectedLineup.benchLineup.slice(0, 5));
@@ -1353,19 +1355,12 @@ export default function FormationPitchModal({
     [match, players]
   );
 
-  // Reset to HOME team when switching to a different match
   useEffect(() => {
     setSelectedSide("HOME");
     setIsBenchOpen(false);
-  }, [match?.id]);
+  }, [match.id]);
 
-  // Synchronize and replace pitchPlayers whenever active team or live player prices update
   useEffect(() => {
-    if (!match || !activeTeam) {
-      setPitchPlayers([]);
-      setBenchPlayers([]);
-      return;
-    }
     const currentTeamLineup = buildTeamLineupForMatch(
       match,
       selectedSide,
@@ -1374,14 +1369,13 @@ export default function FormationPitchModal({
     setPitchPlayers(currentTeamLineup.startingLineup.slice(0, 11));
     setBenchPlayers(currentTeamLineup.benchLineup.slice(0, 5));
     setFormationLabel(currentTeamLineup.formation);
-  }, [match, activeTeam?.id, selectedSide, players]);
+  }, [match, activeTeam.id, selectedSide, players]);
 
   const isUpcoming =
-    match?.status === "UPCOMING" ||
-    match?.rawStatus === "TIMED" ||
-    match?.rawStatus === "SCHEDULED";
+    match.status === "UPCOMING" ||
+    match.rawStatus === "TIMED" ||
+    match.rawStatus === "SCHEDULED";
 
-  // Enforce .slice(0, 11) safety guard before arranging into formation rows
   const startingPlayers = useMemo(
     () => pitchPlayers.slice(0, 11),
     [pitchPlayers]
@@ -1394,50 +1388,193 @@ export default function FormationPitchModal({
     }
 
     if (formationLabel === "4-2-3-1") {
-      // Exact slot mapping for FORMATION_4231_SLOTS (left -> right):
-      // [0]: ST
-      // [1..3]: LAM, CAM, RAM
-      // [4..5]: DM, DM
-      // [6..9]: LB, CB, CB, RB
-      // [10]: GK
       return [
-        [capped[0]], // [ST]
-        [capped[1], capped[2], capped[3]], // [LAM, CAM, RAM]
-        [capped[4], capped[5]], // [DM, DM]
-        [capped[6], capped[7], capped[8], capped[9]], // [LB, CB, CB, RB]
-        [capped[10]], // [GK]
+        [capped[0]],
+        [capped[1], capped[2], capped[3]],
+        [capped[4], capped[5]],
+        [capped[6], capped[7], capped[8], capped[9]],
+        [capped[10]],
       ];
     }
 
-    // Exact slot mapping for FORMATION_433_SLOTS (left -> right):
-    // [0..2]: LW, ST, RW
-    // [3..5]: CM, CM, CM
-    // [6..9]: LB, CB, CB, RB
-    // [10]: GK
     return [
-      [capped[0], capped[1], capped[2]], // [LW, ST, RW]
-      [capped[3], capped[4], capped[5]], // [CM, CM, CM]
-      [capped[6], capped[7], capped[8], capped[9]], // [LB, CB, CB, RB]
-      [capped[10]], // [GK]
+      [capped[0], capped[1], capped[2]],
+      [capped[3], capped[4], capped[5]],
+      [capped[6], capped[7], capped[8], capped[9]],
+      [capped[10]],
     ];
   }, [startingPlayers, formationLabel]);
 
-  if (!match || !activeTeam) return null;
+  return (
+    <div className="space-y-3">
+      {/* Segmented Team Switcher */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="grid flex-1 grid-cols-2 rounded-xl bg-gray-200/75 p-1 text-xs font-extrabold">
+          <button
+            type="button"
+            onClick={() => handleSelectTeam("HOME")}
+            className={`flex items-center justify-center gap-1.5 rounded-lg py-2 transition ${
+              selectedSide === "HOME"
+                ? "bg-white text-gray-900 shadow-xs"
+                : "text-gray-500 hover:text-gray-800"
+            }`}
+          >
+            <span
+              style={{ backgroundColor: match.homeTeam.color }}
+              className="h-2 w-2 rounded-full"
+            />
+            <span className="truncate">{match.homeTeam.name}</span>
+            <span className="font-mono text-[10px] text-gray-400">
+              ({normalizeSupportedFormation(match.homeTeam.formation, "HOME")})
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSelectTeam("AWAY")}
+            className={`flex items-center justify-center gap-1.5 rounded-lg py-2 transition ${
+              selectedSide === "AWAY"
+                ? "bg-white text-gray-900 shadow-xs"
+                : "text-gray-500 hover:text-gray-800"
+            }`}
+          >
+            <span
+              style={{ backgroundColor: match.awayTeam.color }}
+              className="h-2 w-2 rounded-full"
+            />
+            <span className="truncate">{match.awayTeam.name}</span>
+            <span className="font-mono text-[10px] text-gray-400">
+              ({normalizeSupportedFormation(match.awayTeam.formation, "AWAY")})
+            </span>
+          </button>
+        </div>
+
+        {onCollapseInline && (
+          <button
+            type="button"
+            onClick={onCollapseInline}
+            className="shrink-0 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-600 transition hover:bg-gray-100"
+          >
+            접기
+          </button>
+        )}
+      </div>
+
+      {isUpcoming && (
+        <div className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200/80 px-3 py-1 text-[11px] font-bold text-amber-900">
+          예상 선발 · 킥오프 45분 전 공식 라인업 확정
+        </div>
+      )}
+
+      {/* Guide Pill */}
+      <div className="flex items-center justify-between text-xs text-gray-500 px-1">
+        <span className="flex items-center gap-1 font-medium">
+          <Sparkles className="h-3.5 w-3.5 text-[#00A878]" />
+          선수를 클릭하면 우측 패널에 차트와 주문 창이 열립니다
+        </span>
+        <span className="font-mono font-bold text-gray-700">
+          {formationLabel} · 선발 {startingPlayers.slice(0, 11).length}명
+        </span>
+      </div>
+
+      {/* Soft Ivory Green Pitch Container */}
+      <div className="relative w-full overflow-hidden rounded-3xl border border-[#00A878]/25 bg-[#E8F5EF]">
+        {/* Crisp White 1.5px Pitch Markings */}
+        <div className="pointer-events-none absolute inset-3 rounded-xl border-[1.5px] border-white">
+          <div className="mx-auto h-14 w-44 border-x-[1.5px] border-b-[1.5px] border-white" />
+          <div className="mx-auto -mt-14 h-6 w-20 border-x-[1.5px] border-b-[1.5px] border-white" />
+          <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 border-t-[1.5px] border-white" />
+          <div className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-[1.5px] border-white" />
+          <div className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
+          <div className="absolute bottom-0 left-1/2 h-14 w-44 -translate-x-1/2 border-x-[1.5px] border-t-[1.5px] border-white" />
+          <div className="absolute bottom-0 left-1/2 h-6 w-20 -translate-x-1/2 border-x-[1.5px] border-t-[1.5px] border-white" />
+        </div>
+
+        {/* Players Positioned by Formation Rows */}
+        <div className="relative z-10 flex min-h-[430px] flex-col justify-between py-5 px-2">
+          {startingRows.map((row, rowIdx) => (
+            <div
+              key={`${selectedSide}-row-${rowIdx}`}
+              className="flex items-center justify-around gap-1.5"
+            >
+              {row.map((player) => (
+                <PitchPlayerNode
+                  key={`${player.id}-${player.position}`}
+                  player={player}
+                  teamColor={activeTeam.color}
+                  holdingQty={holdings[player.id]?.quantity ?? 0}
+                  onSelect={onSelectPlayerTrade}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Collapsible Bench (Substitutes) Accordion */}
+      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+        <button
+          type="button"
+          onClick={() => setIsBenchOpen((prev) => !prev)}
+          className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-gray-50"
+        >
+          <div className="flex items-center gap-2">
+            <Users className="h-4 w-4 text-[#00A878]" />
+            <span className="text-xs font-extrabold text-gray-900">
+              후보 선수 (Bench) 목록 ({benchPlayers.slice(0, 5).length}명)
+            </span>
+          </div>
+          <div className="flex items-center gap-1 text-[11px] font-semibold text-gray-400">
+            <span>{isBenchOpen ? "접기" : "펼치기"}</span>
+            {isBenchOpen ? (
+              <ChevronUp className="h-4 w-4" />
+            ) : (
+              <ChevronDown className="h-4 w-4" />
+            )}
+          </div>
+        </button>
+
+        {isBenchOpen && (
+          <div className="divide-y divide-gray-100 border-t border-gray-100 px-3 py-1">
+            {benchPlayers.slice(0, 5).map((sub) => (
+              <BenchPlayerRow
+                key={`${sub.id}-${sub.position}`}
+                sub={sub}
+                teamColor={activeTeam.color}
+                holdingQty={holdings[sub.id]?.quantity ?? 0}
+                onSelect={onSelectPlayerTrade}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function FormationPitchModal({
+  match,
+  players,
+  holdings,
+  onClose,
+  onSelectPlayerTrade,
+}: FormationPitchModalProps) {
+  if (!match) return null;
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-end justify-center bg-black/55 animate-fadeIn"
+      className="lg:hidden fixed inset-0 z-40 flex items-end justify-center bg-black/55 animate-fadeIn"
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[92vh] w-full max-w-[480px] flex-col overflow-hidden rounded-t-3xl bg-[#f8f9fa] shadow-2xl animate-slideUp"
+        className="flex max-h-[92vh] w-full max-w-[480px] flex-col overflow-hidden rounded-t-3xl bg-[#F7F9F8] shadow-2xl animate-slideUp"
       >
         {/* Modal Top Header */}
         <div className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-3.5 shrink-0">
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-extrabold text-[#00985f] border border-emerald-200">
+              <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-extrabold text-[#00A878] border border-emerald-200">
                 포메이션 피치 뷰
               </span>
               <span className="text-xs font-bold text-gray-500">
@@ -1446,7 +1583,7 @@ export default function FormationPitchModal({
             </div>
             <h2 className="mt-0.5 text-sm font-extrabold text-gray-900">
               {match.homeTeam.name}{" "}
-              <span className="font-mono text-[#00985f]">
+              <span className="font-mono text-[#00A878]">
                 {match.status === "UPCOMING"
                   ? "vs"
                   : `${match.homeTeam.score ?? 0} : ${
@@ -1466,148 +1603,14 @@ export default function FormationPitchModal({
           </button>
         </div>
 
-        {/* Segmented Team Switcher: [홈팀 포메이션] / [원정팀 포메이션] */}
-        <div className="bg-white px-4 pb-3 pt-2 border-b border-gray-200/80 shrink-0">
-          <div className="grid grid-cols-2 rounded-2xl bg-gray-100 p-1 text-xs font-extrabold">
-            <button
-              type="button"
-              onClick={() => handleSelectTeam("HOME")}
-              className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 transition ${
-                selectedSide === "HOME"
-                  ? "bg-white text-gray-900 shadow-sm"
-                  : "text-gray-500 hover:text-gray-800"
-              }`}
-            >
-              <span
-                style={{ backgroundColor: match.homeTeam.color }}
-                className="h-2.5 w-2.5 rounded-full"
-              />
-              <span className="truncate">{match.homeTeam.name}</span>
-              <span className="font-mono text-[10px] text-gray-400">
-                ({normalizeSupportedFormation(match.homeTeam.formation, "HOME")})
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSelectTeam("AWAY")}
-              className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 transition ${
-                selectedSide === "AWAY"
-                  ? "bg-white text-gray-900 shadow-sm"
-                  : "text-gray-500 hover:text-gray-800"
-              }`}
-            >
-              <span
-                style={{ backgroundColor: match.awayTeam.color }}
-                className="h-2.5 w-2.5 rounded-full"
-              />
-              <span className="truncate">{match.awayTeam.name}</span>
-              <span className="font-mono text-[10px] text-gray-400">
-                ({normalizeSupportedFormation(match.awayTeam.formation, "AWAY")})
-              </span>
-            </button>
-          </div>
-        </div>
-
         {/* Single Scrollable Content */}
-        <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3.5 space-y-4">
-          {/* Pre-kickoff: single slim status chip, pitch renders immediately */}
-          <>
-              {isUpcoming && (
-                <div className="flex items-center rounded-full bg-amber-50 border border-amber-200/80 px-3 py-1 text-[11px] font-bold text-amber-900">
-                  예상 선발 · 킥오프 45분 전 공식 라인업 확정
-                </div>
-              )}
-
-              {/* Guide Pill */}
-              <div className="flex items-center justify-between text-xs text-gray-500 px-1">
-                <span className="flex items-center gap-1 font-medium">
-                  <Sparkles className="h-3.5 w-3.5 text-[#00985f]" />
-                  선수를 터치하면 즉시 매수/매도 창이 열립니다
-                </span>
-                <span className="font-mono font-bold text-gray-700">
-                  {formationLabel} · 선발 {startingPlayers.slice(0, 11).length}명
-                </span>
-              </div>
-
-              {/* Football Pitch Container (FotMob Light Grass Style) */}
-              <div
-                className="relative w-full overflow-hidden rounded-3xl border-2 border-[#2b8a57] shadow-inner"
-                style={{
-                  background:
-                    "repeating-linear-gradient(to bottom, #1e824c 0px, #1e824c 44px, #238c53 44px, #238c53 88px)",
-                }}
-              >
-                {/* Pitch White Line Markings */}
-                <div className="pointer-events-none absolute inset-3 rounded-xl border-2 border-white/35">
-                  <div className="mx-auto h-14 w-44 border-x-2 border-b-2 border-white/35" />
-                  <div className="mx-auto -mt-14 h-6 w-20 border-x-2 border-b-2 border-white/35" />
-                  <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 border-t-2 border-white/35" />
-                  <div className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/35" />
-                  <div className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/50" />
-                  <div className="absolute bottom-0 left-1/2 h-14 w-44 -translate-x-1/2 border-x-2 border-t-2 border-white/35" />
-                  <div className="absolute bottom-0 left-1/2 h-6 w-20 -translate-x-1/2 border-x-2 border-t-2 border-white/35" />
-                </div>
-
-                {/* Players Positioned by Formation Rows (strictly from startingPlayers.slice(0, 11)) */}
-                <div className="relative z-10 flex min-h-[450px] flex-col justify-between py-5 px-2">
-                  {startingRows.map((row, rowIdx) => (
-                    <div
-                      key={`${selectedSide}-row-${rowIdx}`}
-                      className="flex items-center justify-around gap-1"
-                    >
-                      {row.map((player) => (
-                        <PitchPlayerNode
-                          key={`${player.id}-${player.position}`}
-                          player={player}
-                          teamColor={activeTeam.color}
-                          holdingQty={holdings[player.id]?.quantity ?? 0}
-                          onSelect={onSelectPlayerTrade}
-                        />
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Collapsible Bench (Substitutes) Accordion */}
-              <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-                <button
-                  type="button"
-                  onClick={() => setIsBenchOpen((prev) => !prev)}
-                  className="flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-gray-50"
-                >
-                  <div className="flex items-center gap-2">
-                    <Users className="h-4 w-4 text-[#00985f]" />
-                    <span className="text-xs font-extrabold text-gray-900">
-                      후보 선수 (Bench) 목록 ({benchPlayers.slice(0, 5).length}명)
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1 text-[11px] font-semibold text-gray-400">
-                    <span>{isBenchOpen ? "접기" : "펼치기"}</span>
-                    {isBenchOpen ? (
-                      <ChevronUp className="h-4 w-4" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4" />
-                    )}
-                  </div>
-                </button>
-
-                {isBenchOpen && (
-                  <div className="divide-y divide-gray-100 border-t border-gray-100 px-3 py-1">
-                    {benchPlayers.slice(0, 5).map((sub) => (
-                      <BenchPlayerRow
-                        key={`${sub.id}-${sub.position}`}
-                        sub={sub}
-                        teamColor={activeTeam.color}
-                        holdingQty={holdings[sub.id]?.quantity ?? 0}
-                        onSelect={onSelectPlayerTrade}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-          </>
+        <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3.5">
+          <FormationPitchContent
+            match={match}
+            players={players}
+            holdings={holdings}
+            onSelectPlayerTrade={onSelectPlayerTrade}
+          />
         </div>
       </div>
     </div>
