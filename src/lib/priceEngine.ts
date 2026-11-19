@@ -1,6 +1,5 @@
 import type { Position, PositionLine, PricePoint } from "../types";
 
-export const CIRCUIT_BREAKER_MS = 30_000;
 export const RETURN_CLAMP_MIN = -0.3;
 export const RETURN_CLAMP_MAX = 0.3;
 
@@ -13,6 +12,7 @@ export type GoalContext =
 export type PlayerEventType =
   | "GOAL"
   | "ASSIST"
+  | "KEY_ACTION"
   | "KEY_PLAY"
   | "SAVE"
   | "DEFENSIVE_ACTION"
@@ -36,11 +36,14 @@ export interface PlayerEvent {
   type: PlayerEventType;
   description?: string;
   goalContext?: GoalContext;
-  triggeredAt?: number; // Epoch ms for 30s circuit breaker
+  detectedAt?: number; // Epoch ms when API/feed detected event (used by orderGate)
+  triggeredAt?: number; // Legacy alias for detectedAt
 }
 
 export interface PlayerContext {
   position: Position | PositionLine | string;
+  playerId?: string;
+  matchId?: string;
   isStarter?: boolean;
   subInMinute?: number;
   isBenchUnused?: boolean;
@@ -63,6 +66,7 @@ export interface TeamMatchRawEvent {
   kind:
     | "GOAL"
     | "ASSIST"
+    | "KEY_ACTION"
     | "KEY_PLAY"
     | "SAVE"
     | "DEFENSIVE_ACTION"
@@ -140,9 +144,13 @@ function resolveLine(pos?: string): PositionLine {
   return "MF";
 }
 
-function deterministicNoise(seed: string, minute: number): number {
+function deterministicNoise(
+  playerId: string,
+  matchId: string,
+  minute: number
+): number {
   let h = 2166136261;
-  const s = `${seed}:${minute}`;
+  const s = `${playerId}:${matchId}:${minute}`;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 16777619);
@@ -151,7 +159,7 @@ function deterministicNoise(seed: string, minute: number): number {
 }
 
 /**
- * Pure deterministic delta table for a single PlayerEvent given PlayerContext.
+ * Pure deterministic delta table (v2.1) for a single PlayerEvent given PlayerContext.
  * Zero randomness: identical inputs always yield the exact same return delta.
  */
 export function eventDelta(event: PlayerEvent, ctx: PlayerContext): number {
@@ -173,38 +181,40 @@ export function eventDelta(event: PlayerEvent, ctx: PlayerContext): number {
 
   switch (event.type) {
     case "GOAL": {
+      // Mutually exclusive priority: Equalizer/Go-ahead > Opener > Extend Lead (2+ goal margin)
       const ctxBonus =
         event.goalContext === "EQUALIZER" || event.goalContext === "GO_AHEAD"
-          ? 0.09
+          ? 0.12
           : event.goalContext === "EXTEND_LEAD"
-          ? 0.05
-          : 0.07; // OPENER / default
+          ? 0.07
+          : 0.095; // OPENER / default
       const defenderBonus = line === "DF" || line === "GK" ? 0.02 : 0;
       return ctxBonus + defenderBonus;
     }
     case "ASSIST":
-      return 0.045;
+      return 0.055;
+    case "KEY_ACTION":
     case "SAVE":
     case "DEFENSIVE_ACTION":
     case "KEY_PLAY":
-      return 0.015;
+      return line === "GK" ? 0.008 : 0.015;
     case "YELLOW_CARD":
-      return -0.02;
+      return -0.025;
     case "RED_CARD":
-      return -0.12;
+      return -0.15;
     case "TEAM_GOAL":
       return 0.008;
     case "TEAM_CONCEDED":
     case "CONCEDED":
-      return line === "GK" || line === "DF" ? -0.015 : -0.005;
+      return line === "GK" || line === "DF" ? -0.022 : -0.01;
     case "CLEAN_SHEET_45":
       return line === "GK" || line === "DF" ? 0.012 : 0;
     case "CLEAN_SHEET_75":
       return line === "GK" || line === "DF" ? 0.015 : 0;
     case "LINEUP_CONFIRMED":
-      return 0.01;
+      return 0;
     case "LINEUP_EXCLUDED":
-      return -0.02;
+      return -0.025;
     case "BIG_CHANCE_MISS":
       return -0.015;
     case "PENALTY":
@@ -437,7 +447,9 @@ export function buildPriceSeries(
   const maxEvMin =
     sortedEvents.length > 0 ? sortedEvents[sortedEvents.length - 1].minute : 0;
   const targetEnd = Math.max(0, Math.min(95, Math.max(endMinute, maxEvMin)));
-  const seed = ctx.seedId ?? sortedEvents[0]?.playerId ?? "player";
+  const noisePlayerId =
+    ctx.playerId ?? ctx.seedId ?? sortedEvents[0]?.playerId ?? "player";
+  const noiseMatchId = ctx.matchId ?? "default";
 
   let cumulativeRaw = 0;
   const points: PricePoint[] = [];
@@ -450,11 +462,11 @@ export function buildPriceSeries(
     }
     cumulativeRaw += stepDelta;
 
-    // Quiet-interval micro-noise strictly within ±0.15% (1/3 of prior level)
+    // Quiet-interval micro-noise strictly within ±0.15%, seeded deterministically by (playerId, matchId, minute)
     const quietNoise =
       m === 0 || minEvents.length > 0
         ? 0
-        : (deterministicNoise(seed, m) - 0.5) * 0.003; // [-0.0015, +0.0015]
+        : (deterministicNoise(noisePlayerId, noiseMatchId, m) - 0.5) * 0.003; // [-0.0015, +0.0015]
 
     const rawAtMinute = Number((cumulativeRaw + quietNoise).toFixed(4));
     const clampedAtMinute = Number(
@@ -520,25 +532,4 @@ export function buildPriceSeries(
     points,
     stats,
   };
-}
-
-/**
- * Check whether a 30-second circuit breaker is active after a major event
- * (GOAL, RED_CARD, or PENALTY).
- */
-export function getCircuitBreakerRemainingSec(
-  lastMajorEventAt?: number,
-  nowMs = Date.now()
-): number {
-  if (!lastMajorEventAt || !Number.isFinite(lastMajorEventAt)) return 0;
-  const elapsed = nowMs - lastMajorEventAt;
-  if (elapsed < 0 || elapsed >= CIRCUIT_BREAKER_MS) return 0;
-  return Math.ceil((CIRCUIT_BREAKER_MS - elapsed) / 1000);
-}
-
-export function isCircuitBreakerActive(
-  lastMajorEventAt?: number,
-  nowMs = Date.now()
-): boolean {
-  return getCircuitBreakerRemainingSec(lastMajorEventAt, nowMs) > 0;
 }

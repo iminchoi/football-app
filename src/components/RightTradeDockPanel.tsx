@@ -17,7 +17,7 @@ import {
   calculateChangePercentFromOpen,
   calculateDiffFromOpen,
 } from "@/store/useTradeStore";
-import { getCircuitBreakerRemainingSec } from "@/utils/priceEngine";
+import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
 import { TradeType } from "@/types";
 import { getTierConfig } from "@/utils/tier";
 import MatchTimelineChart from "@/components/market/MatchTimelineChart";

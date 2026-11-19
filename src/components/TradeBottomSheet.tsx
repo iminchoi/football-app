@@ -28,7 +28,7 @@ import {
   resolvePlayerMatchContext,
 } from "@/utils/priceEngine";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
-import { getCircuitBreakerRemainingSec } from "@/utils/priceEngine";
+import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
 import { Player, TradeType, getPositionLine } from "@/types";
 import PlayerDetailModal from "@/components/PlayerDetailModal";
 import MatchTimelineChart from "@/components/market/MatchTimelineChart";

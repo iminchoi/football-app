@@ -14,7 +14,6 @@ import {
 } from "@/types";
 import { getTierConfig } from "@/utils/tier";
 export {
-  CIRCUIT_BREAKER_MS,
   RETURN_CLAMP_MIN,
   RETURN_CLAMP_MAX,
   eventDelta,
@@ -22,8 +21,6 @@ export {
   deriveStatsFromEvents,
   fanOutTeamEventsToPlayers,
   buildPriceSeries,
-  isCircuitBreakerActive,
-  getCircuitBreakerRemainingSec,
 } from "@/lib/priceEngine";
 export type {
   GoalContext,

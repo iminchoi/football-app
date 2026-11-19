@@ -42,8 +42,8 @@ import {
   resolvePlayerMatchContext,
   sanitizeEventTypeForPosition,
   isNegativeEventType,
-  getCircuitBreakerRemainingSec,
 } from "@/utils/priceEngine";
+import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
 
 export {
   getAvailableShares,
