@@ -1,15 +1,15 @@
 # STATUS
 
 ## Current State
-- Estimated MVP completion: ~99% (Inline PC pitch view, Soft Ivory Green pitch redesign, and Player Detail entry in RightTradeDockPanel completed).
+- Estimated MVP completion: ~99% (Streamlined RightTradeDockPanel/MatchTimelineChart controls, prominent Player Detail CTA, and calendar/clock X-axis in Overall Market tab completed).
 - Verification: `npx tsc --noEmit` passes with 0 errors; `src/` contains zero `any`, `@ts-ignore`, `eslint-disable`, or `console.*`.
-- Working features: `max-w-[1380px]` 3-column adaptive workspace, inline formation pitch on desktop (`lg+`) synced with `RightTradeDockPanel`, Soft Ivory Green `#E8F5EF` pitch with white `#FFFFFF` player capsules, `상세 정보 >` trigger opening `PlayerDetailModal`, and mobile bottom-sheet/modal fallback.
+- Working features: `max-w-[1380px]` 3-column adaptive workspace, inline Soft Ivory Green formation pitch (`lg+`), compact 2-row `MatchTimelineChart` (`당일 경기 | 전체 시세` + `확대`), real date/clock X-axis in `전체 시세`, and full-width `📊 선수 상세 스탯 · 최근 경기 히스토리 보기 →` button.
 
 ## Recent Changes
-- `src/components/matches/FormationPitchModal.tsx`, `src/components/matches/MatchAccordionCard.tsx`: extracted `FormationPitchContent` for inline expansion inside desktop match cards (preserving mobile modal on `< lg`) and redesigned the pitch (`#E8F5EF` surface, `1.5px` `#FFFFFF` markings, clean white player capsules).
-- `src/components/RightTradeDockPanel.tsx`: added `[상세 정보 >]` button in the docked player header connected to `<PlayerDetailModal />`.
+- `src/components/RightTradeDockPanel.tsx`, `src/components/TradeBottomSheet.tsx`: removed header `[상세 정보 >]` pill and placed a full-width `h-11` detail CTA below the chart card (`bg-[#F7F9F8] hover:bg-[#E8F5EF] border-[#E2E8F0]`).
+- `src/components/market/MatchTimelineChart.tsx`: replaced the wide top expand banner with a compact `확대` button beside `[당일 경기 | 전체 시세]`, slimmed match context to 1 line (`League · HOME score : score AWAY`), and updated `전체 시세` X-axis ticks to real dates (`MM.DD`) and clock times (`HH:mm`).
 
 ## Known Issues & Next Steps
-1. **Priority 1 — Browser UI & E2E verification**: verify inline pitch expansion alongside `RightTradeDockPanel` on desktop (`1380px`), Soft Ivory Green pitch readability, `PlayerDetailModal` opening, and mobile modal fallback (`390x844`).
+1. **Priority 1 — Browser UI & E2E verification**: verify docked panel chart controls, `전체 시세` X-axis labels (`11.15`, `11.17`, `11.19`), and full-width detail CTA on desktop (`1380px`) and mobile (`390x844`).
 2. **Priority 2 — Real API key verification**: configure `FOOTBALL_DATA_API_KEY` in `.env.local` to test live match lineups and event ingestion.
 3. **Priority 3 — Server-side persistence**: migrate accounts, holdings, and market supply from `localStorage` to a backend database for multi-device sync.

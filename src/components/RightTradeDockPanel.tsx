@@ -10,7 +10,6 @@ import {
   CheckCircle2,
   Minus,
   Plus,
-  ChevronRight,
 } from "lucide-react";
 import {
   useTradeStore,
@@ -160,7 +159,7 @@ export default function RightTradeDockPanel({
               <span className="text-xs font-black">{player.backNumber}</span>
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex items-center gap-1.5">
                 <h3 className="truncate text-sm font-extrabold text-gray-900">
                   {player.name}
                 </h3>
@@ -170,14 +169,6 @@ export default function RightTradeDockPanel({
                 <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-[#00A878]">
                   {tierCfg.tier}티어
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setIsDetailModalOpen(true)}
-                  className="inline-flex items-center gap-0.5 rounded-full border border-gray-200 bg-[#F7F9F8] px-2 py-0.5 text-[10px] font-bold text-gray-600 transition hover:border-[#00A878]/50 hover:text-[#00A878]"
-                >
-                  <span>상세 정보</span>
-                  <ChevronRight className="h-3 w-3" />
-                </button>
               </div>
               <p className="truncate text-[11px] text-gray-500">
                 {player.teamName} · 평점 {player.stats.rating.toFixed(1)}
@@ -239,6 +230,15 @@ export default function RightTradeDockPanel({
             player={player}
             onOpenFullScreenCandle={() => setIsCandleModalOpen(true)}
           />
+
+          {/* Prominent Full-Width Player Detail Entry */}
+          <button
+            type="button"
+            onClick={() => setIsDetailModalOpen(true)}
+            className="flex h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-[#E2E8F0] bg-[#F7F9F8] px-3 text-xs font-semibold text-gray-800 transition hover:bg-[#E8F5EF] active:scale-[0.99]"
+          >
+            <span>📊 선수 상세 스탯 · 최근 경기 히스토리 보기 →</span>
+          </button>
 
           {/* Instant Order Form */}
           <div className="rounded-2xl border border-gray-200/90 bg-[#F7F9F8] p-3.5 space-y-3">

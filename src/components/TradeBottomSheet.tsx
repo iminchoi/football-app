@@ -994,9 +994,9 @@ export default function TradeBottomSheet({
             <button
               type="button"
               onClick={() => setIsDetailModalOpen(true)}
-              className="mt-3 w-full py-2 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 flex items-center justify-center gap-1.5 transition active:scale-[0.99]"
+              className="mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-[#E2E8F0] bg-[#F7F9F8] text-xs font-semibold text-gray-800 transition hover:bg-[#E8F5EF] active:scale-[0.99]"
             >
-              <span>📊 선수 상세 프로필 및 시즌 통계 보기 ➔</span>
+              <span>📊 선수 상세 스탯 · 최근 경기 히스토리 보기 →</span>
             </button>
           </div>
         </div>
