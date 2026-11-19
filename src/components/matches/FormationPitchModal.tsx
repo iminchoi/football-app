@@ -1185,44 +1185,42 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
     <button
       type="button"
       onClick={() => onSelect(player, "BUY")}
-      className="group relative flex min-w-[74px] flex-col items-center rounded-2xl border border-gray-200/90 bg-[#FFFFFF] px-2 py-1.5 shadow-xs transition hover:-translate-y-0.5 hover:border-[#00A878] hover:shadow-sm focus:outline-none active:scale-95"
+      className="group relative flex min-w-[82px] flex-col items-center rounded-2xl border border-gray-200/90 bg-[#FFFFFF] px-2.5 pt-2.5 pb-2 shadow-xs transition hover:-translate-y-0.5 hover:border-[#00A878] hover:shadow-sm focus:outline-none active:scale-95"
     >
-      {/* Owned Holdings Dot */}
+      {/* Top-Left: Owned Holdings Dot */}
       {holdingQty > 0 && (
-        <span className="absolute -left-1.5 -top-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#00A878] px-1 text-[9px] font-black text-white shadow-xs">
+        <span className="absolute left-1.5 top-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#00A878] px-1 text-[9px] font-black text-white">
           {holdingQty}
         </span>
       )}
 
-      {/* Rating Mini Pill */}
-      <span className="absolute -right-1.5 -top-1.5 rounded-full border border-gray-200 bg-[#F7F9F8] px-1.5 py-0.2 font-mono text-[9px] font-extrabold text-gray-800 shadow-2xs">
+      {/* Top-Right: Match Rating Chip */}
+      <span className="absolute right-1.5 top-1.5 rounded-md bg-[#F7F9F8] px-1 py-0.5 font-mono text-[9px] font-extrabold text-gray-700 tabular-nums border border-gray-200/70 leading-none">
         {player.stats.rating.toFixed(1)}
       </span>
 
-      {/* Player Vector Avatar + Position Tag */}
-      <div className="relative flex flex-col items-center">
+      {/* Top-Center: Minimal Team Jersey Avatar (No overlap, clean spacing) */}
+      <div className="mt-1.5 mb-1.5">
         <PlayerAvatar
           player={player}
           teamColorOverride={teamColor}
-          size={36}
-          className="border-2 border-white shadow-xs"
+          size={40}
         />
-        <span
-          style={{ borderColor: teamColor, color: teamColor }}
-          className="-mt-2 rounded-full border bg-white px-1.5 py-0.2 font-mono text-[8.5px] font-black leading-none shadow-2xs"
-        >
-          #{player.backNumber} {player.position}
+      </div>
+
+      {/* Middle: Player Name + Subtle Position Label */}
+      <div className="flex max-w-[84px] items-center justify-center gap-1">
+        <span className="truncate text-[11px] font-extrabold text-gray-900 leading-tight">
+          {extractLastName(player)}
+        </span>
+        <span className="shrink-0 text-[9px] font-semibold text-gray-400 leading-tight">
+          {player.position}
         </span>
       </div>
 
-      {/* Player Last Name */}
-      <span className="mt-1 max-w-[72px] truncate text-[11px] font-extrabold text-gray-900 leading-tight">
-        {extractLastName(player)}
-      </span>
-
-      {/* Mini Live Price & % */}
-      <div className="mt-0.5 flex items-center gap-0.5 font-mono text-[9px] font-extrabold tabular-nums">
-        <span className="text-gray-700">
+      {/* Bottom: Current Price + Change % */}
+      <div className="mt-0.5 flex items-center gap-1 font-mono text-[9.5px] font-bold tabular-nums">
+        <span className="text-gray-800">
           {player.currentPrice.toLocaleString()}
         </span>
         <span
