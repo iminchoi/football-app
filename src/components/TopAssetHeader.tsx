@@ -1,27 +1,30 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  TrendingUp,
-  TrendingDown,
-  Wallet,
   User,
   LogOut,
   LogIn,
-  Lock,
-  ChevronRight,
+  Search,
+  X,
 } from "lucide-react";
-import { useTradeStore, roundToTen } from "@/store/useTradeStore";
-import { INITIAL_CASH } from "@/data/dummyData";
+import {
+  useTradeStore,
+  roundToTen,
+  calculateChangePercentFromOpen,
+} from "@/store/useTradeStore";
+import { BottomTab, Player } from "@/types";
 
 interface TopAssetHeaderProps {
   countdown?: number;
+  searchQuery: string;
+  onSearchQueryChange: (q: string) => void;
+  onSelectSearchPlayer: (player: Player) => void;
   onOpenAuthModal: () => void;
 }
 
 /**
- * 1초 주기 타이머 상태를 하위 뱃지 컴포넌트로 격리하여
- * 상위 레이아웃(HomePage, TopAssetHeader, 각 탭 뷰)의 1초 주기 불필요한 전체 리렌더링을 완전히 차단합니다.
+ * Isolated 1-second timer badge so parent layout/tabs do not re-render every second.
  */
 function MarketCountdownBadge({
   externalCountdown,
@@ -51,199 +54,296 @@ function MarketCountdownBadge({
   }, [externalCountdown, tickMarket]);
 
   return (
-    <span className="ml-0.5 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-[#00985f] border border-emerald-200/60 shrink-0">
-      <span className="h-1.5 w-1.5 rounded-full bg-[#00985f] animate-pulse" />
+    <span className="ml-0.5 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-[#00A878] border border-emerald-200/60 shrink-0">
+      <span className="h-1.5 w-1.5 rounded-full bg-[#00A878] animate-pulse" />
       {countdown}s
     </span>
   );
 }
 
+const NAV_TABS: { key: BottomTab; label: string }[] = [
+  { key: "MATCHES", label: "경기 일정" },
+  { key: "MARKET", label: "시세/차트" },
+  { key: "PORTFOLIO", label: "마이 포트폴리오" },
+];
+
 export default function TopAssetHeader({
   countdown,
+  searchQuery,
+  onSearchQueryChange,
+  onSelectSearchPlayer,
   onOpenAuthModal,
 }: TopAssetHeaderProps) {
   const user = useTradeStore((s) => s.user);
   const cash = useTradeStore((s) => s.cash);
-  const realizedPnL = useTradeStore((s) => s.realizedPnL);
   const players = useTradeStore((s) => s.players);
   const holdings = useTradeStore((s) => s.holdings);
-  const logout = useTradeStore((s) => s.logout);
+  const activeTab = useTradeStore((s) => s.activeTab);
   const setActiveTab = useTradeStore((s) => s.setActiveTab);
+  const logout = useTradeStore((s) => s.logout);
+
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const searchBoxRef = useRef<HTMLDivElement | null>(null);
+  const [isSearchFocused, setIsSearchFocused] = useState<boolean>(false);
+
+  // Global "/" keyboard shortcut to focus search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      e.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Close search dropdown on outside click
+  useEffect(() => {
+    if (!isSearchFocused) return;
+    const handleClick = (e: MouseEvent) => {
+      if (
+        searchBoxRef.current &&
+        !searchBoxRef.current.contains(e.target as Node)
+      ) {
+        setIsSearchFocused(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [isSearchFocused]);
 
   let holdingsValue = 0;
-  let holdingsInvested = 0;
-
   if (user) {
     for (const h of Object.values(holdings)) {
       if (h.quantity <= 0) continue;
       const p = players.find((pl) => pl.id === h.playerId);
       if (!p) continue;
       holdingsValue += roundToTen(p.currentPrice) * h.quantity;
-      holdingsInvested += roundToTen(h.avgBuyPrice) * h.quantity;
     }
   }
-
   const totalAssets = roundToTen(cash + holdingsValue);
-  const unrealizedPnL = roundToTen(holdingsValue - holdingsInvested);
-  const totalTradingProfit = roundToTen(unrealizedPnL + (realizedPnL ?? 0));
-  const basePrincipal = holdingsInvested > 0 ? holdingsInvested : INITIAL_CASH;
-  const profitPercent = ((totalTradingProfit / basePrincipal) * 100).toFixed(2);
-  const isUp = totalTradingProfit > 0;
-  const isDown = totalTradingProfit < 0;
+
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return players
+      .filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.englishName.toLowerCase().includes(q) ||
+          p.teamName.toLowerCase().includes(q) ||
+          p.teamShort.toLowerCase().includes(q) ||
+          (p.nationalTeam && p.nationalTeam.toLowerCase().includes(q))
+      )
+      .slice(0, 6);
+  }, [players, searchQuery]);
 
   return (
-    <header className="sticky top-0 z-30 bg-white border-b border-gray-200/80 px-4 pt-3 pb-3">
-      {/* Row 1: FotMob-inspired Brand Header + Isolated Live Pulse + Right Auth/Profile Area */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#00985f] text-white font-black text-sm tracking-tighter shadow-sm">
-            PT
-          </div>
-          <span className="text-[17px] font-extrabold tracking-tight text-gray-900">
-            Pitch<span className="text-[#00985f]">Trade</span>
-          </span>
-          <span
-            title="시뮬레이션 및 더미 데이터 기반 데모 프로토타입"
-            className="rounded-md bg-amber-100 border border-amber-300/80 px-1.5 py-0.5 font-mono text-[9px] font-black tracking-wider text-amber-800 shrink-0"
+    <header className="sticky top-0 z-30 h-16 border-b border-gray-200/80 bg-[#FFFFFF]/95">
+      <div className="mx-auto flex h-full w-full max-w-[1380px] items-center justify-between gap-3 px-4 lg:px-6">
+        {/* Left: Logo + Main Navigation Tabs */}
+        <div className="flex items-center gap-6 min-w-0">
+          <button
+            type="button"
+            onClick={() => setActiveTab("MATCHES")}
+            className="flex items-center gap-2 shrink-0 text-left"
           >
-            DEMO
-          </span>
-          <MarketCountdownBadge externalCountdown={countdown} />
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#00A878] text-white font-black text-sm tracking-tighter shadow-xs">
+              PT
+            </div>
+            <span className="text-[17px] font-extrabold tracking-tight text-gray-900">
+              Pitch<span className="text-[#00A878]">Trade</span>
+            </span>
+            <span
+              title="시뮬레이션 및 더미 데이터 기반 데모 프로토타입"
+              className="hidden sm:inline-block rounded-md bg-amber-100 border border-amber-300/80 px-1.5 py-0.5 font-mono text-[9px] font-black tracking-wider text-amber-800 shrink-0"
+            >
+              DEMO
+            </span>
+            <MarketCountdownBadge externalCountdown={countdown} />
+          </button>
+
+          {/* Desktop Main Navigation Tabs */}
+          <nav className="hidden lg:flex items-center gap-1">
+            {NAV_TABS.map((tab) => {
+              const isActive = activeTab === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`rounded-xl px-3.5 py-2 text-[13px] transition ${
+                    isActive
+                      ? "bg-[#F7F9F8] font-extrabold text-[#00A878]"
+                      : "font-semibold text-gray-500 hover:bg-gray-50 hover:text-gray-900"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
         </div>
 
-        {/* Right: [로그인 / 프로필] 영역 */}
-        {user ? (
-          <div className="flex items-center gap-1.5 shrink-0">
+        {/* Right: Global Search Bar + Auth / Profile */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          {/* Global Search Input */}
+          <div ref={searchBoxRef} className="relative hidden sm:block w-56 md:w-72">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onFocus={() => setIsSearchFocused(true)}
+              onChange={(e) => {
+                onSearchQueryChange(e.target.value);
+                setIsSearchFocused(true);
+              }}
+              placeholder="선수명, 구단명, 리그 검색"
+              className="h-9 w-full rounded-xl border border-gray-200/90 bg-[#F7F9F8] pl-8 pr-12 text-xs font-medium text-gray-900 placeholder:text-gray-400 transition focus:border-[#00A878] focus:bg-white focus:outline-none"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => onSearchQueryChange("")}
+                aria-label="검색어 지우기"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : (
+              <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-bold text-gray-400">
+                /
+              </kbd>
+            )}
+
+            {/* Instant Search Dropdown */}
+            {isSearchFocused && searchQuery.trim().length > 0 && (
+              <div className="absolute left-0 right-0 top-11 z-40 overflow-hidden rounded-2xl border border-gray-200 bg-[#FFFFFF] shadow-lg">
+                {searchResults.length === 0 ? (
+                  <p className="px-4 py-3 text-xs text-gray-400">
+                    일치하는 선수 또는 구단이 없습니다.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {searchResults.map((p) => {
+                      const open = roundToTen(p.openPrice ?? p.initialPrice);
+                      const pct = calculateChangePercentFromOpen(
+                        p.currentPrice,
+                        open
+                      );
+                      const isUp = pct > 0;
+                      const isDown = pct < 0;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            onSelectSearchPlayer(p);
+                            setIsSearchFocused(false);
+                          }}
+                          className="flex w-full items-center justify-between px-3.5 py-2.5 text-left transition hover:bg-[#F7F9F8]"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-extrabold text-gray-900">
+                              {p.name}{" "}
+                              <span className="font-semibold text-gray-400">
+                                {p.position}
+                              </span>
+                            </p>
+                            <p className="truncate text-[10px] text-gray-400">
+                              {p.teamName}
+                            </p>
+                          </div>
+                          <div className="text-right font-mono shrink-0">
+                            <p className="text-xs font-black text-gray-900">
+                              {p.currentPrice.toLocaleString()}P
+                            </p>
+                            <p
+                              className={`text-[10px] font-bold ${
+                                isUp
+                                  ? "text-[#00A878]"
+                                  : isDown
+                                  ? "text-[#F07868]"
+                                  : "text-[#A8B2BC]"
+                              }`}
+                            >
+                              {isUp ? "+" : ""}
+                              {pct.toFixed(2)}%
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Compact Asset Chip (Desktop when logged in) */}
+          {user && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("PORTFOLIO")}
+              className="hidden xl:inline-flex items-center gap-1.5 rounded-xl border border-gray-200/90 bg-[#F7F9F8] px-3 py-1.5 text-xs transition hover:border-[#00A878]/50"
+            >
+              <span className="font-semibold text-gray-500">총 자산</span>
+              <span className="font-mono font-black text-gray-900">
+                {totalAssets.toLocaleString()}P
+              </span>
+            </button>
+          )}
+
+          {/* Auth / Profile */}
+          {user ? (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={onOpenAuthModal}
+                title="계정 전환 모달 열기"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-[#F7F9F8] px-2.5 py-1.5 text-xs font-extrabold text-gray-800 transition hover:border-gray-300"
+              >
+                <User className="h-3.5 w-3.5 text-[#00A878]" />
+                <span className="max-w-[84px] truncate">{user.name}</span>
+                {user.role === "admin" && (
+                  <span className="rounded bg-rose-600 px-1.5 py-0.5 text-[9px] font-black tracking-wider text-white">
+                    ADMIN
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={logout}
+                title="로그아웃"
+                className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+              >
+                <LogOut className="h-3 w-3" />
+                <span className="hidden md:inline">로그아웃</span>
+              </button>
+            </div>
+          ) : (
             <button
               type="button"
               onClick={onOpenAuthModal}
-              title="계정 전환 모달 열기"
-              className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-[#f8f9fa] px-2.5 py-1 text-xs font-extrabold text-gray-800 transition hover:border-gray-300"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-[#00A878] px-3.5 py-2 text-xs font-extrabold text-white shadow-xs transition hover:bg-[#00985f] active:scale-95"
             >
-              <User className="h-3.5 w-3.5 text-[#00985f]" />
-              <span className="max-w-[90px] truncate">{user.name}</span>
-              {user.role === "admin" && (
-                <span className="rounded bg-rose-600 px-1.5 py-0.5 text-[9px] font-black tracking-wider text-white shadow-xs">
-                  ADMIN
-                </span>
-              )}
+              <LogIn className="h-3.5 w-3.5" />
+              <span>로그인 / 프로필</span>
             </button>
-            <button
-              type="button"
-              onClick={logout}
-              title="로그아웃"
-              className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-bold text-gray-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 active:scale-95"
-            >
-              <LogOut className="h-3 w-3" />
-              <span>로그아웃</span>
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={onOpenAuthModal}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#00985f] px-3 py-1.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-[#007f4f] active:scale-95"
-          >
-            <LogIn className="h-3.5 w-3.5" />
-            <span>로그인 / 프로필</span>
-          </button>
-        )}
-      </div>
-
-      {/* Row 2: Asset Summary Card (Blind when user === null) */}
-      {user ? (
-        <div
-          onClick={() => setActiveTab("PORTFOLIO")}
-          className="mt-2.5 cursor-pointer rounded-2xl bg-[#f8f9fa] border border-gray-200/90 px-3.5 py-2.5 transition hover:border-emerald-500/40"
-        >
-          <div className="flex items-center justify-between">
-            {/* Left: Total Evaluated Assets */}
-            <div>
-              <div className="flex items-center gap-1.5 text-[11px] font-medium text-gray-500">
-                <span>총 평가 자산</span>
-                <span className="text-gray-300">|</span>
-                <span>{user.name} 님</span>
-              </div>
-              <div className="mt-0.5 flex items-baseline gap-1.5">
-                <span className="font-mono text-xl font-black tracking-tight text-gray-900">
-                  {totalAssets.toLocaleString()}
-                </span>
-                <span className="text-xs font-bold text-gray-500">P</span>
-              </div>
-            </div>
-
-            {/* Right: Return Badge */}
-            <div className="text-right">
-              <span className="text-[11px] font-medium text-gray-500 block">
-                트레이딩 손익률
-              </span>
-              <div
-                className={`mt-0.5 inline-flex items-center gap-1 rounded-lg px-2 py-0.5 font-mono text-xs font-bold ${
-                  isUp
-                    ? "bg-[#00A878]/10 text-[#00A878]"
-                    : isDown
-                    ? "bg-[#F07868]/10 text-[#F07868]"
-                    : "bg-[#A8B2BC]/15 text-[#A8B2BC]"
-                }`}
-              >
-                {isUp ? (
-                  <TrendingUp className="h-3.5 w-3.5" />
-                ) : isDown ? (
-                  <TrendingDown className="h-3.5 w-3.5" />
-                ) : null}
-                <span>
-                  {isUp ? "+" : ""}
-                  {profitPercent}% ({isUp ? "+" : ""}
-                  {totalTradingProfit.toLocaleString()}P)
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Sub-row: Available Cash Points vs Player Holdings Value */}
-          <div className="mt-2 flex items-center justify-between border-t border-gray-200/70 pt-2 text-xs">
-            <div className="flex items-center gap-1.5 text-gray-600">
-              <Wallet className="h-3.5 w-3.5 text-[#00985f]" />
-              <span>보유 포인트(현금)</span>
-              <strong className="font-mono font-bold text-gray-900">
-                {cash.toLocaleString()} P
-              </strong>
-            </div>
-
-            <div className="text-gray-500">
-              <span>선수 평가액 </span>
-              <strong className="font-mono font-semibold text-gray-800">
-                {holdingsValue.toLocaleString()} P
-              </strong>
-            </div>
-          </div>
+          )}
         </div>
-      ) : (
-        <button
-          type="button"
-          onClick={onOpenAuthModal}
-          className="mt-2.5 flex w-full items-center justify-between rounded-2xl border border-gray-200 bg-gray-100/90 px-4 py-3.5 text-left transition hover:border-gray-300 hover:bg-gray-200/60 active:scale-[0.995]"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gray-200 text-gray-500">
-              <Lock className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-sm font-extrabold text-gray-700">
-                🔒 로그인하여 자산 확인
-              </p>
-              <p className="mt-0.5 text-[11px] font-medium text-gray-500">
-                보유 포인트 및 실시간 수익률은 로그인 후 표시됩니다
-              </p>
-            </div>
-          </div>
-
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-white px-3 py-1.5 text-xs font-extrabold text-gray-700 shadow-xs border border-gray-200">
-            <span>로그인 필요</span>
-            <ChevronRight className="h-3.5 w-3.5 text-gray-400" />
-          </span>
-        </button>
-      )}
+      </div>
     </header>
   );
 }

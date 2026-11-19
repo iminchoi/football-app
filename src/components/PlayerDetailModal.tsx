@@ -427,7 +427,7 @@ export default function PlayerDetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-end justify-center bg-black/55 backdrop-blur-[2px] animate-fade-in"
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-black/55 animate-fade-in"
       onClick={onClose}
     >
       {/* Fullscreen Bottom Sheet Container */}

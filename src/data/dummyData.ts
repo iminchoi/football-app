@@ -1156,6 +1156,59 @@ export const INITIAL_PLAYERS: Player[] = [
     },
   },
   {
+    id: "p-mbappe",
+    name: "킬리안 음바페",
+    englishName: "Kylian Mbappe",
+    nationalTeam: "프랑스",
+    matchId: "m-rma-bay",
+    teamId: "rma",
+    teamName: "레알 마드리드",
+    teamShort: "RMA",
+    teamColor: "#3b4252",
+    position: "ST",
+    backNumber: 9,
+    ...(() => {
+      const cfg = getTierConfig(19500);
+      return {
+        tier: cfg.tier,
+        totalShares: cfg.totalShares,
+        marketSupply: cfg.marketSupply,
+      };
+    })(),
+    openPrice: 19500,
+    initialPrice: 19500,
+    currentPrice: 20450,
+    previousPrice: 20100,
+    priceHistory: [
+      { minute: 0, timeLabel: "0'", price: 19500 },
+      { minute: 15, timeLabel: "15'", price: 19700 },
+      {
+        minute: 38,
+        timeLabel: "38'",
+        price: 20250,
+        event: {
+          type: "ASSIST",
+          label: "🅰️ 뒷공간 침투 후 컷백 도움 (+4.6%)",
+          impactPercent: 4.6,
+        },
+      },
+      { minute: 45, timeLabel: "45'", price: 20100 },
+      { minute: 54, timeLabel: "54'", price: 20450 },
+    ],
+    lastEvent: {
+      text: "⚡ 폭발적인 스피드로 왼쪽 측면 돌파 후 유효슈팅",
+      sentiment: "positive",
+      minute: 52,
+    },
+    stats: {
+      rating: 8.3,
+      goals: 0,
+      assists: 1,
+      shotsOnTarget: 3,
+      keyPasses: 2,
+    },
+  },
+  {
     id: "p-kim",
     name: "김민재",
     englishName: "Min-Jae Kim",

@@ -1161,6 +1161,165 @@ export function buildTeamLineupForMatch(
   };
 }
 
+interface PitchPlayerNodeProps {
+  player: Player;
+  teamColor: string;
+  holdingQty: number;
+  onSelect: (player: Player, type: TradeType) => void;
+}
+
+const PitchPlayerNode = React.memo(function PitchPlayerNode({
+  player,
+  teamColor,
+  holdingQty,
+  onSelect,
+}: PitchPlayerNodeProps) {
+  const base = player.openPrice ?? player.basePrice ?? player.initialPrice;
+  const diff = calculateDiffFromOpen(player.currentPrice, base);
+  const pct = calculateChangePercentFromOpen(player.currentPrice, base).toFixed(1);
+  const isUp = diff > 0;
+  const isDown = diff < 0;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(player, "BUY")}
+      className="group flex flex-col items-center focus:outline-none active:scale-95 transition-transform"
+    >
+      {/* Jersey Number Circle Badge + Rating */}
+      <div className="relative">
+        <div
+          style={{ backgroundColor: teamColor }}
+          className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-white font-mono text-xs font-black text-white shadow-md group-hover:scale-105 transition"
+        >
+          {player.backNumber}
+        </div>
+
+        {/* Rating Mini Pill */}
+        <span className="absolute -right-2 -top-1 rounded-full bg-white px-1.5 py-0.2 font-mono text-[9px] font-extrabold text-gray-900 shadow">
+          {player.stats.rating.toFixed(1)}
+        </span>
+
+        {/* Owned Holdings Dot */}
+        {holdingQty > 0 && (
+          <span className="absolute -left-2 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#00985f] px-1 text-[9px] font-black text-white border border-white shadow">
+            {holdingQty}
+          </span>
+        )}
+      </div>
+
+      {/* Player Last Name + DetailedPosition Tag (solid background, no backdrop-blur) */}
+      <span className="mt-1 flex items-center gap-1 rounded-md bg-black/65 px-1.5 py-0.5 text-[11px] font-extrabold text-white">
+        <span className="font-mono text-[9px] font-black text-emerald-300">
+          {player.position}
+        </span>
+        <span>{extractLastName(player)}</span>
+      </span>
+
+      {/* Mini Live Price Chip: e.g. 16,400P ▲9.3% */}
+      <div className="mt-0.5 flex items-center gap-0.5 rounded-full bg-white px-2 py-0.5 font-mono text-[9px] font-extrabold shadow-sm">
+        <span className="text-gray-900">
+          {player.currentPrice.toLocaleString()}P
+        </span>
+        <span
+          className={
+            isUp
+              ? "text-[#00A878]"
+              : isDown
+              ? "text-[#F07868]"
+              : "text-[#A8B2BC]"
+          }
+        >
+          {isUp ? "▲" : isDown ? "▼" : ""}
+          {Math.abs(Number(pct)).toFixed(1)}%
+        </span>
+      </div>
+    </button>
+  );
+});
+
+interface BenchPlayerRowProps {
+  sub: Player;
+  teamColor: string;
+  holdingQty: number;
+  onSelect: (player: Player, type: TradeType) => void;
+}
+
+const BenchPlayerRow = React.memo(function BenchPlayerRow({
+  sub,
+  teamColor,
+  holdingQty,
+  onSelect,
+}: BenchPlayerRowProps) {
+  const base = sub.openPrice ?? sub.basePrice ?? sub.initialPrice;
+  const diff = calculateDiffFromOpen(sub.currentPrice, base);
+  const pct = calculateChangePercentFromOpen(sub.currentPrice, base).toFixed(1);
+  const isUp = diff > 0;
+  const isDown = diff < 0;
+
+  return (
+    <div
+      onClick={() => onSelect(sub, "BUY")}
+      className="flex cursor-pointer items-center justify-between py-2.5 px-1 transition hover:bg-gray-50"
+    >
+      <div className="flex items-center gap-2.5 min-w-0">
+        <span
+          style={{ backgroundColor: teamColor }}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-mono text-[11px] font-black text-white"
+        >
+          {sub.backNumber}
+        </span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-bold text-gray-900 truncate">
+              {sub.name}
+            </span>
+            <span className="rounded bg-gray-100 px-1.5 py-0.2 text-[10px] font-bold text-gray-600">
+              {sub.position}
+            </span>
+            {holdingQty > 0 && (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-50 px-1.5 py-0.2 text-[10px] font-bold text-[#00985f]">
+                <ShoppingBag className="h-2.5 w-2.5" />
+                {holdingQty}주
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 shrink-0">
+        <div className="text-right font-mono text-xs">
+          <span className="font-black text-gray-900">
+            {sub.currentPrice.toLocaleString()}P
+          </span>
+          <span
+            className={`ml-1.5 text-[11px] font-bold ${
+              isUp
+                ? "text-[#00A878]"
+                : isDown
+                ? "text-[#F07868]"
+                : "text-[#A8B2BC]"
+            }`}
+          >
+            {isUp ? "+" : ""}
+            {pct}%
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(sub, "BUY");
+          }}
+          className="rounded-lg bg-[#00A878] px-2.5 py-1 text-[11px] font-bold text-white hover:opacity-95"
+        >
+          매수
+        </button>
+      </div>
+    </div>
+  );
+});
+
 export default function FormationPitchModal({
   match,
   players,
@@ -1267,7 +1426,7 @@ export default function FormationPitchModal({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-end justify-center bg-black/50 backdrop-blur-[2px] animate-fadeIn"
+      className="fixed inset-0 z-40 flex items-end justify-center bg-black/55 animate-fadeIn"
       onClick={onClose}
     >
       <div
@@ -1350,8 +1509,8 @@ export default function FormationPitchModal({
           </div>
         </div>
 
-        {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto px-4 py-3.5 space-y-4">
+        {/* Single Scrollable Content */}
+        <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3.5 space-y-4">
           {/* Pre-kickoff: single slim status chip, pitch renders immediately */}
           <>
               {isUpcoming && (
@@ -1397,81 +1556,15 @@ export default function FormationPitchModal({
                       key={`${selectedSide}-row-${rowIdx}`}
                       className="flex items-center justify-around gap-1"
                     >
-                      {row.map((player) => {
-                        const base =
-                          player.openPrice ??
-                          player.basePrice ??
-                          player.initialPrice;
-                        const diff = calculateDiffFromOpen(
-                          player.currentPrice,
-                          base
-                        );
-                        const pct = calculateChangePercentFromOpen(
-                          player.currentPrice,
-                          base
-                        ).toFixed(1);
-                        const isUp = diff > 0;
-                        const isDown = diff < 0;
-                        const holding = holdings[player.id];
-
-                        return (
-                          <button
-                            key={`${player.id}-${player.position}`}
-                            type="button"
-                            onClick={() => onSelectPlayerTrade(player, "BUY")}
-                            className="group flex flex-col items-center focus:outline-none active:scale-95 transition-transform"
-                          >
-                            {/* Jersey Number Circle Badge + Rating */}
-                            <div className="relative">
-                              <div
-                                style={{ backgroundColor: activeTeam.color }}
-                                className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-white font-mono text-xs font-black text-white shadow-md group-hover:scale-105 transition"
-                              >
-                                {player.backNumber}
-                              </div>
-
-                              {/* Rating Mini Pill */}
-                              <span className="absolute -right-2 -top-1 rounded-full bg-white px-1.5 py-0.2 font-mono text-[9px] font-extrabold text-gray-900 shadow">
-                                {player.stats.rating.toFixed(1)}
-                              </span>
-
-                              {/* Owned Holdings Dot */}
-                              {holding && holding.quantity > 0 && (
-                                <span className="absolute -left-2 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#00985f] px-1 text-[9px] font-black text-white border border-white shadow">
-                                  {holding.quantity}
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Player Last Name + DetailedPosition Tag */}
-                            <span className="mt-1 flex items-center gap-1 rounded-md bg-black/45 px-1.5 py-0.5 text-[11px] font-extrabold text-white backdrop-blur-[2px]">
-                              <span className="font-mono text-[9px] font-black text-emerald-300">
-                                {player.position}
-                              </span>
-                              <span>{extractLastName(player)}</span>
-                            </span>
-
-                            {/* Mini Live Price Chip: e.g. 16,400P ▲9.3% */}
-                            <div className="mt-0.5 flex items-center gap-0.5 rounded-full bg-white/95 px-2 py-0.5 font-mono text-[9px] font-extrabold shadow-sm">
-                              <span className="text-gray-900">
-                                {player.currentPrice.toLocaleString()}P
-                              </span>
-                              <span
-                                className={
-                                  isUp
-                                    ? "text-[#00A878]"
-                                    : isDown
-                                    ? "text-[#F07868]"
-                                    : "text-[#A8B2BC]"
-                                }
-                              >
-                                {isUp ? "▲" : isDown ? "▼" : ""}
-                                {Math.abs(Number(pct)).toFixed(1)}%
-                              </span>
-                            </div>
-                          </button>
-                        );
-                      })}
+                      {row.map((player) => (
+                        <PitchPlayerNode
+                          key={`${player.id}-${player.position}`}
+                          player={player}
+                          teamColor={activeTeam.color}
+                          holdingQty={holdings[player.id]?.quantity ?? 0}
+                          onSelect={onSelectPlayerTrade}
+                        />
+                      ))}
                     </div>
                   ))}
                 </div>
@@ -1502,84 +1595,15 @@ export default function FormationPitchModal({
 
                 {isBenchOpen && (
                   <div className="divide-y divide-gray-100 border-t border-gray-100 px-3 py-1">
-                    {benchPlayers.slice(0, 5).map((sub) => {
-                      const base =
-                        sub.openPrice ?? sub.basePrice ?? sub.initialPrice;
-                      const diff = calculateDiffFromOpen(
-                        sub.currentPrice,
-                        base
-                      );
-                      const pct = calculateChangePercentFromOpen(
-                        sub.currentPrice,
-                        base
-                      ).toFixed(1);
-                      const isUp = diff > 0;
-                      const isDown = diff < 0;
-                      const holding = holdings[sub.id];
-
-                      return (
-                        <div
-                          key={`${sub.id}-${sub.position}`}
-                          onClick={() => onSelectPlayerTrade(sub, "BUY")}
-                          className="flex cursor-pointer items-center justify-between py-2.5 px-1 transition hover:bg-gray-50"
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <span
-                              style={{ backgroundColor: activeTeam.color }}
-                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-mono text-[11px] font-black text-white"
-                            >
-                              {sub.backNumber}
-                            </span>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-xs font-bold text-gray-900 truncate">
-                                  {sub.name}
-                                </span>
-                                <span className="rounded bg-gray-100 px-1.5 py-0.2 text-[10px] font-bold text-gray-600">
-                                  {sub.position}
-                                </span>
-                                {holding && holding.quantity > 0 && (
-                                  <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-50 px-1.5 py-0.2 text-[10px] font-bold text-[#00985f]">
-                                    <ShoppingBag className="h-2.5 w-2.5" />
-                                    {holding.quantity}주
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 shrink-0">
-                            <div className="text-right font-mono text-xs">
-                              <span className="font-black text-gray-900">
-                                {sub.currentPrice.toLocaleString()}P
-                              </span>
-                              <span
-                                className={`ml-1.5 text-[11px] font-bold ${
-                                  isUp
-                                    ? "text-[#00A878]"
-                                    : isDown
-                                    ? "text-[#F07868]"
-                                    : "text-[#A8B2BC]"
-                                }`}
-                              >
-                                {isUp ? "+" : ""}
-                                {pct}%
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onSelectPlayerTrade(sub, "BUY");
-                              }}
-                              className="rounded-lg bg-[#00A878] px-2.5 py-1 text-[11px] font-bold text-white hover:opacity-95"
-                            >
-                              매수
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {benchPlayers.slice(0, 5).map((sub) => (
+                      <BenchPlayerRow
+                        key={`${sub.id}-${sub.position}`}
+                        sub={sub}
+                        teamColor={activeTeam.color}
+                        holdingQty={holdings[sub.id]?.quantity ?? 0}
+                        onSelect={onSelectPlayerTrade}
+                      />
+                    ))}
                   </div>
                 )}
               </div>

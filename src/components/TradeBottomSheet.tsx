@@ -755,7 +755,7 @@ export default function TradeBottomSheet({
       : coords[coords.length - 1];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-[2px] animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 animate-fade-in">
       {/* Top-Center Floating Order Execution Toast Notification */}
       {toast && (
         <div

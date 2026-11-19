@@ -136,7 +136,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="auth-modal-title"
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-gray-900/55 px-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-gray-900/60 px-4"
     >
       <div
         className="w-full max-w-[420px] max-h-[92vh] overflow-y-auto rounded-3xl bg-white shadow-[0_20px_50px_rgba(15,23,42,0.18)] border border-gray-200/90"

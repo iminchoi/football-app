@@ -40,7 +40,7 @@ export default function BottomTabBar() {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-[480px] -translate-x-1/2 border-t border-gray-200 bg-white/95 backdrop-blur-md">
+    <nav className="lg:hidden fixed bottom-0 left-1/2 z-30 w-full max-w-[480px] -translate-x-1/2 border-t border-gray-200 bg-[#FFFFFF]/95">
       <div className="grid grid-cols-3 h-16">
         {tabs.map((tab) => {
           const Icon = tab.icon;

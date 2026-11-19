@@ -3,16 +3,11 @@
 import React, { useMemo, useState } from "react";
 import {
   Flame,
-  ArrowUpRight,
-  ArrowDownRight,
   Star,
-  TrendingUp,
   Search,
   RotateCcw,
-  BarChart2,
-  SlidersHorizontal,
-  ChevronDown,
-  ChevronUp,
+  CalendarDays,
+  ChevronRight,
 } from "lucide-react";
 import {
   useTradeStore,
@@ -25,13 +20,15 @@ import {
 import {
   Player,
   PositionLine,
+  PricePoint,
   TradeType,
   getPositionLine,
 } from "@/types";
-import MatchTimelineChart from "@/components/market/MatchTimelineChart";
-import FullScreenCandleChartModal from "@/components/market/FullScreenCandleChartModal";
 
 interface MarketChartTabViewProps {
+  searchQuery: string;
+  onSearchQueryChange: (q: string) => void;
+  selectedPlayerId: string | null;
   onSelectPlayerTrade: (player: Player, type: TradeType) => void;
 }
 
@@ -44,8 +41,16 @@ type LeagueFilter =
   | "SERIEA"
   | "LIGUE1"
   | "AMATCH";
-type PriceBandFilter = "ALL" | "UNDER_10K" | "MID_10K_15K" | "OVER_15K";
-type ChangeRangeFilter = "ALL" | "SURGE_5" | "DROP_5";
+type SortMode = "GAINERS" | "LOSERS" | "PRICE" | "RATING";
+
+const SPOTLIGHT_IDS = [
+  "p-son",
+  "p-haaland",
+  "p-bellingham",
+  "p-lee",
+  "p-kim",
+  "p-mbappe",
+];
 
 const EplTeams = new Set([
   "토트넘 홋스퍼",
@@ -90,68 +95,56 @@ const Ligue1Teams = new Set([
   "마르세유",
 ]);
 
+function buildSparklinePoints(
+  history: PricePoint[],
+  width = 72,
+  height = 24
+): string {
+  const pts = history.length >= 2 ? history : [{ price: 100 }, { price: 100 }];
+  const prices = pts.map((p) => p.price);
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const range = Math.max(1, max - min);
+  return pts
+    .map((pt, idx) => {
+      const x = (idx / Math.max(1, pts.length - 1)) * width;
+      const y = height - 3 - ((pt.price - min) / range) * (height - 6);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
 export default function MarketChartTabView({
+  searchQuery,
+  onSearchQueryChange,
+  selectedPlayerId,
   onSelectPlayerTrade,
 }: MarketChartTabViewProps) {
-  const user = useTradeStore((s) => s.user);
   const players = useTradeStore((s) => s.players);
   const matches = useTradeStore((s) => s.matches);
-  const holdings = useTradeStore((s) => s.holdings);
   const watchlist = useTradeStore((s) => s.watchlist);
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
+  const setActiveTab = useTradeStore((s) => s.setActiveTab);
 
-  // Featured player & Full-screen Candle Modal state
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string>(
-    players[0]?.id ?? "p-son"
-  );
-  const [candleModalPlayer, setCandleModalPlayer] = useState<Player | null>(
-    null
-  );
-  const [isInlineChartExpanded, setIsInlineChartExpanded] =
-    useState<boolean>(false);
-
-  // Sort mode
-  const [rankFilter, setRankFilter] = useState<
-    "GAINERS" | "LOSERS" | "PRICE" | "RATING"
-  >("GAINERS");
-
-  // Search & Dual Filter States (Football Criteria vs Investment Criteria)
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [isFilterOpen, setIsFilterOpen] = useState<boolean>(true);
-
-  // 1) Football Criteria
+  // 1-Line Slim Quick Filter Bar States
+  const [sortMode, setSortMode] = useState<SortMode>("GAINERS");
   const [posFilter, setPosFilter] = useState<PositionFilter>("ALL");
   const [leagueFilter, setLeagueFilter] = useState<LeagueFilter>("ALL");
-  const [clubFilter, setClubFilter] = useState<string>("ALL");
-
-  // 2) Investment Criteria
-  const [priceBandFilter, setPriceBandFilter] =
-    useState<PriceBandFilter>("ALL");
-  const [changeFilter, setChangeFilter] = useState<ChangeRangeFilter>("ALL");
-  const [onlyWatchlist, setOnlyWatchlist] = useState<boolean>(false);
-  const [onlyHoldings, setOnlyHoldings] = useState<boolean>(false);
-  const [onlyHighVolume, setOnlyHighVolume] = useState<boolean>(false);
+  const [onlySurge5, setOnlySurge5] = useState<boolean>(false);
   const [onlyWonderkid, setOnlyWonderkid] = useState<boolean>(false);
+  const [onlyWatchlist, setOnlyWatchlist] = useState<boolean>(false);
 
-  const activePlayer =
-    players.find((p) => p.id === selectedPlayerId) ?? players[0];
+  const spotlightPlayers = useMemo(() => {
+    return SPOTLIGHT_IDS.map((id) => players.find((p) => p.id === id)).filter(
+      (p): p is Player => Boolean(p)
+    );
+  }, [players]);
 
-  // Featured popular players for quick switcher
-  const featuredIds = [
-    "p-son",
-    "p-haaland",
-    "p-bellingham",
-    "p-lee",
-    "p-salah",
-    "p-kim",
-    "p-yamal",
-    "p-palmer",
-  ];
-  const featuredPlayers = featuredIds
-    .map((id) => players.find((p) => p.id === id))
-    .filter((p): p is Player => Boolean(p));
+  const todayKeyMatches = useMemo(() => {
+    const todayMatches = matches.filter((m) => m.dateKey === "TODAY");
+    return (todayMatches.length > 0 ? todayMatches : matches).slice(0, 4);
+  }, [matches]);
 
-  // Helper to check which league a player belongs to
   const doesPlayerMatchLeague = (
     player: Player,
     league: LeagueFilter
@@ -200,71 +193,27 @@ export default function MarketChartTabView({
     return true;
   };
 
-  // Distinct clubs/national teams for the club dropdown
-  const availableClubs = useMemo(() => {
-    const set = new Set<string>();
-    for (const p of players) {
-      if (p.teamName) set.add(p.teamName);
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b, "ko"));
-  }, [players]);
-
-  // Count active filters
-  const activeFilterCount = useMemo(() => {
-    let count = 0;
-    if (searchQuery.trim() !== "") count++;
-    if (posFilter !== "ALL") count++;
-    if (leagueFilter !== "ALL") count++;
-    if (clubFilter !== "ALL") count++;
-    if (priceBandFilter !== "ALL") count++;
-    if (changeFilter !== "ALL") count++;
-    if (onlyWatchlist) count++;
-    if (onlyHoldings) count++;
-    if (onlyHighVolume) count++;
-    if (onlyWonderkid) count++;
-    return count;
-  }, [
-    searchQuery,
-    posFilter,
-    leagueFilter,
-    clubFilter,
-    priceBandFilter,
-    changeFilter,
-    onlyWatchlist,
-    onlyHoldings,
-    onlyHighVolume,
-    onlyWonderkid,
-  ]);
+  const hasActiveFilter =
+    searchQuery.trim() !== "" ||
+    posFilter !== "ALL" ||
+    leagueFilter !== "ALL" ||
+    onlySurge5 ||
+    onlyWonderkid ||
+    onlyWatchlist;
 
   const handleResetFilters = () => {
-    setSearchQuery("");
+    onSearchQueryChange("");
     setPosFilter("ALL");
     setLeagueFilter("ALL");
-    setClubFilter("ALL");
-    setPriceBandFilter("ALL");
-    setChangeFilter("ALL");
-    setOnlyWatchlist(false);
-    setOnlyHoldings(false);
-    setOnlyHighVolume(false);
+    setOnlySurge5(false);
     setOnlyWonderkid(false);
+    setOnlyWatchlist(false);
   };
 
-  // Compute volatility/volume proxy for each player (for '📊 거래량(변동성) 상위' filter)
-  const highVolumeThreshold = useMemo(() => {
-    const swings = players.map((p) => {
-      const open = p.openPrice ?? p.initialPrice;
-      return Math.abs((p.currentPrice - open) / Math.max(1, open)) * 100;
-    });
-    swings.sort((a, b) => b - a);
-    return swings[Math.min(19, Math.max(0, swings.length - 1))] ?? 2.5;
-  }, [players]);
-
-  // Apply Search + Football Criteria + Investment Criteria + Sort + Top 15 Cutoff
-  const { filteredTotalCount, top15Players } = useMemo(() => {
+  const rankedPlayers = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
 
     const filtered = players.filter((p) => {
-      // Search query check
       if (q) {
         const hit =
           p.name.toLowerCase().includes(q) ||
@@ -275,746 +224,452 @@ export default function MarketChartTabView({
         if (!hit) return false;
       }
 
-      // 1) Football Criteria: Position Line
       if (posFilter !== "ALL" && getPositionLine(p.position) !== posFilter) {
         return false;
       }
 
-      // 2) Football Criteria: League & Club
       if (!doesPlayerMatchLeague(p, leagueFilter)) {
         return false;
       }
-      if (
-        clubFilter !== "ALL" &&
-        p.teamName !== clubFilter &&
-        p.nationalTeam !== clubFilter
-      ) {
-        return false;
-      }
 
-      // 3) Investment Criteria: Price Band
-      if (priceBandFilter === "UNDER_10K" && p.currentPrice >= 10000) {
-        return false;
-      }
-      if (
-        priceBandFilter === "MID_10K_15K" &&
-        (p.currentPrice < 10000 || p.currentPrice >= 15000)
-      ) {
-        return false;
-      }
-      if (priceBandFilter === "OVER_15K" && p.currentPrice < 15000) {
-        return false;
-      }
-
-      // 4) Investment Criteria: Price Change %
-      const openP = p.openPrice ?? p.initialPrice;
+      const openP = roundToTen(p.openPrice ?? p.initialPrice);
       const pct = calculateChangePercentFromOpen(p.currentPrice, openP);
-      if (changeFilter === "SURGE_5" && pct < 5) {
-        return false;
-      }
-      if (changeFilter === "DROP_5" && pct > -5) {
+      if (onlySurge5 && pct < 5) {
         return false;
       }
 
-      // 5) Investment Status & Supply Toggles
-      if (onlyWatchlist && !watchlist.includes(p.id)) {
-        return false;
-      }
-      if (onlyHoldings && (!user || (holdings[p.id]?.quantity ?? 0) <= 0)) {
-        return false;
-      }
-      if (
-        onlyHighVolume &&
-        Math.abs(pct) < highVolumeThreshold &&
-        !p.priceHistory.some((pt) => Boolean(pt.event))
-      ) {
-        return false;
-      }
       if (onlyWonderkid && p.tier !== "C" && (p.basePrice ?? p.initialPrice) >= 5000) {
+        return false;
+      }
+
+      if (onlyWatchlist && !watchlist.includes(p.id)) {
         return false;
       }
 
       return true;
     });
 
-    const sorted = [...filtered].sort((a, b) => {
-      const openA = a.openPrice ?? a.initialPrice;
-      const openB = b.openPrice ?? b.initialPrice;
+    return [...filtered].sort((a, b) => {
+      const openA = roundToTen(a.openPrice ?? a.initialPrice);
+      const openB = roundToTen(b.openPrice ?? b.initialPrice);
       const rateA = calculateChangePercentFromOpen(a.currentPrice, openA);
       const rateB = calculateChangePercentFromOpen(b.currentPrice, openB);
 
-      if (rankFilter === "GAINERS") return rateB - rateA;
-      if (rankFilter === "LOSERS") return rateA - rateB;
-      if (rankFilter === "PRICE") return b.currentPrice - a.currentPrice;
+      if (sortMode === "GAINERS") return rateB - rateA;
+      if (sortMode === "LOSERS") return rateA - rateB;
+      if (sortMode === "PRICE") return b.currentPrice - a.currentPrice;
       return b.stats.rating - a.stats.rating;
     });
-
-    return {
-      filteredTotalCount: sorted.length,
-      top15Players: sorted.slice(0, 15), // Strict Top 15 cutoff
-    };
   }, [
     players,
+    matches,
     searchQuery,
     posFilter,
     leagueFilter,
-    clubFilter,
-    priceBandFilter,
-    changeFilter,
-    onlyWatchlist,
-    onlyHoldings,
-    onlyHighVolume,
+    onlySurge5,
     onlyWonderkid,
+    onlyWatchlist,
     watchlist,
-    user,
-    holdings,
-    highVolumeThreshold,
-    rankFilter,
+    sortMode,
   ]);
 
-  const openPrice = roundToTen(
-    activePlayer.openPrice ??
-      activePlayer.priceHistory[0]?.price ??
-      activePlayer.initialPrice
-  );
-  const activeHigh = activePlayer.highPrice ?? activePlayer.currentPrice;
-  const activeLow = activePlayer.lowPrice ?? openPrice;
-  const activeVolume = activePlayer.volume ?? 0;
-  const activeDiff = calculateDiffFromOpen(activePlayer.currentPrice, openPrice);
-  const activePct = calculateChangePercentFromOpen(
-    activePlayer.currentPrice,
-    openPrice
-  );
-  const isActiveUp = activeDiff > 0;
-  const isActiveDown = activeDiff < 0;
-  const isActiveWatched = watchlist.includes(activePlayer.id);
-
   return (
-    <div className="px-4 pt-4 pb-8 space-y-4">
-      {/* 1. Compact Featured Player Card + [📊 실시간 캔들 차트 크게 보기] Trigger */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-        <div className="flex items-center justify-between mb-2.5">
-          <div className="flex items-center gap-1.5">
-            <Flame className="h-4 w-4 text-[#00A878]" />
-            <h2 className="text-sm font-extrabold text-gray-900">
-              인기 종목 실시간 시세 & 캔들 차트
-            </h2>
+    <div className="px-4 lg:px-6 pt-5 pb-10 space-y-5">
+      {/* 1. Top Spotlight Grid: Left 2/3 Hot 6 Players (3x2) + Right 1/3 Today's Key Matches */}
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        {/* Left 2/3: 6 Hot Players Compact Grid (3 cols x 2 rows) */}
+        <div className="lg:col-span-8 rounded-2xl border border-gray-200/80 bg-[#FFFFFF] p-4 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <Flame className="h-4 w-4 text-[#00A878]" />
+              <h2 className="text-sm font-extrabold text-gray-900">
+                핫 플레이어 스포트라이트
+              </h2>
+            </div>
+            <span className="text-[11px] font-medium text-gray-400">
+              카드 클릭 시 즉시 차트 · 주문 패널 연결
+            </span>
           </div>
-          <span className="text-[11px] font-medium text-gray-400">
-            5초 주기 자동 갱신
-          </span>
-        </div>
 
-        {/* Horizontal Featured Player Chip Selector */}
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-2">
-          {featuredPlayers.map((p) => {
-            const isSelected = p.id === activePlayer.id;
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => setSelectedPlayerId(p.id)}
-                className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition ${
-                  isSelected
-                    ? "bg-[#111827] text-white font-bold shadow-xs"
-                    : "bg-[#f1f3f5] text-gray-600 font-medium hover:bg-gray-200"
-                }`}
-              >
-                <span>{p.name}</span>
-                <span
-                  className={`font-mono text-[10px] ${
-                    isSelected ? "text-[#00A878]" : "text-gray-400"
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            {spotlightPlayers.map((p) => {
+              const open = roundToTen(p.openPrice ?? p.initialPrice);
+              const pct = calculateChangePercentFromOpen(p.currentPrice, open);
+              const isUp = pct > 0;
+              const isDown = pct < 0;
+              const isSelected = selectedPlayerId === p.id;
+              const sparkColor = isUp
+                ? "#00A878"
+                : isDown
+                ? "#F07868"
+                : "#A8B2BC";
+
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => onSelectPlayerTrade(p, "BUY")}
+                  className={`flex flex-col justify-between rounded-xl border p-3 text-left transition hover:border-[#00A878]/60 active:scale-[0.99] ${
+                    isSelected
+                      ? "border-[#00A878] bg-emerald-50/35"
+                      : "border-gray-200/80 bg-[#F7F9F8]"
                   }`}
                 >
-                  {p.teamShort}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+                  <div className="flex items-start justify-between gap-2 w-full">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-extrabold text-gray-900">
+                        {p.name}
+                      </p>
+                      <span className="text-[10px] font-semibold text-gray-400">
+                        {p.position} · {p.teamShort}
+                      </span>
+                    </div>
+                    <svg
+                      width="56"
+                      height="22"
+                      viewBox="0 0 72 24"
+                      className="shrink-0 overflow-visible"
+                    >
+                      <polyline
+                        fill="none"
+                        stroke={sparkColor}
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        points={buildSparklinePoints(p.priceHistory)}
+                      />
+                    </svg>
+                  </div>
 
-        {/* Selected Player Summary Row */}
-        <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div
-              style={{ backgroundColor: activePlayer.teamColor }}
-              className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-xl text-white font-mono shadow-xs"
-            >
-              <span className="text-[9px] font-semibold opacity-80 leading-none">
-                {activePlayer.teamShort}
-              </span>
-              <span className="text-sm font-black">
-                {activePlayer.backNumber}
-              </span>
-            </div>
-
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <h3 className="truncate text-base font-extrabold text-gray-900">
-                  {activePlayer.name}
-                </h3>
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">
-                  {activePlayer.position}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => toggleWatchlist(activePlayer.id)}
-                  title={isActiveWatched ? "관심선수 해제" : "관심선수 등록"}
-                  className="rounded-full p-1 text-gray-400 transition hover:bg-gray-100 active:scale-90"
-                >
-                  <Star
-                    className={`h-4 w-4 ${
-                      isActiveWatched
-                        ? "fill-amber-400 text-amber-400"
-                        : "text-gray-300"
-                    }`}
-                  />
+                  <div className="mt-2.5 flex items-baseline justify-between gap-1 w-full">
+                    <span className="font-mono text-sm font-black text-gray-900 tabular-nums">
+                      {p.currentPrice.toLocaleString()}P
+                    </span>
+                    <span
+                      className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] font-extrabold tabular-nums ${
+                        isUp
+                          ? "bg-[#00A878]/10 text-[#00A878]"
+                          : isDown
+                          ? "bg-[#F07868]/10 text-[#F07868]"
+                          : "bg-gray-200/70 text-[#A8B2BC]"
+                      }`}
+                    >
+                      {isUp ? "+" : ""}
+                      {pct.toFixed(2)}%
+                    </span>
+                  </div>
                 </button>
-              </div>
-              <p className="truncate text-[11px] text-gray-400 font-mono">
-                {activePlayer.teamName} · 시가 {openPrice.toLocaleString()}P · 고가{" "}
-                <span className="text-[#00A878]">
-                  {activeHigh.toLocaleString()}P
-                </span>{" "}
-                · 저가{" "}
-                <span className="text-[#F07868]">
-                  {activeLow.toLocaleString()}P
-                </span>{" "}
-                · 거래량 {activeVolume.toLocaleString()}주
-              </p>
-            </div>
+              );
+            })}
           </div>
+        </div>
 
-          <div className="text-right font-mono shrink-0">
-            <div className="text-lg font-black text-gray-900">
-              {activePlayer.currentPrice.toLocaleString()}{" "}
-              <span className="text-xs font-semibold text-gray-400">P</span>
+        {/* Right 1/3: Today's Key Match Schedule Summary Card */}
+        <div className="lg:col-span-4 rounded-2xl border border-gray-200/80 bg-[#FFFFFF] p-4 shadow-[0_1px_3px_rgba(0,0,0,0.02)] flex flex-col">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <CalendarDays className="h-4 w-4 text-[#00A878]" />
+              <h2 className="text-sm font-extrabold text-gray-900">
+                오늘의 주요 매치 일정
+              </h2>
             </div>
-            <div
-              className={`inline-flex items-center gap-0.5 text-xs font-bold ${
-                isActiveUp
-                  ? "text-[#00A878]"
-                  : isActiveDown
-                  ? "text-[#F07868]"
-                  : "text-[#A8B2BC]"
-              }`}
+            <button
+              type="button"
+              onClick={() => setActiveTab("MATCHES")}
+              className="inline-flex items-center gap-0.5 text-[11px] font-bold text-[#00A878] hover:underline"
             >
-              {isActiveUp ? (
-                <ArrowUpRight className="h-3.5 w-3.5" />
-              ) : isActiveDown ? (
-                <ArrowDownRight className="h-3.5 w-3.5" />
-              ) : null}
-              <span>
-                {isActiveUp ? "+" : ""}
-                {activeDiff.toLocaleString()}P ({isActiveUp ? "+" : ""}
-                {activePct.toFixed(2)}%)
-              </span>
-            </div>
+              <span>전체 보기</span>
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="flex-1 space-y-2">
+            {todayKeyMatches.map((m) => {
+              const statusLabel =
+                m.status === "LIVE"
+                  ? `${m.minute ?? 45}'`
+                  : m.status === "FT"
+                  ? "FT"
+                  : "PRE";
+
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setActiveTab("MATCHES")}
+                  className="flex w-full items-center justify-between gap-2 rounded-xl border border-gray-100 bg-[#F7F9F8] px-3 py-2 text-left transition hover:border-[#00A878]/40"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className={`shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[10px] font-extrabold ${
+                        m.status === "LIVE"
+                          ? "bg-[#00A878]/15 text-[#00A878]"
+                          : m.status === "FT"
+                          ? "bg-gray-200 text-gray-600"
+                          : "bg-amber-100 text-amber-800"
+                      }`}
+                    >
+                      {statusLabel}
+                    </span>
+                    <span className="truncate text-xs font-bold text-gray-900">
+                      {m.homeTeam.shortName} vs {m.awayTeam.shortName}
+                    </span>
+                  </div>
+
+                  <span className="shrink-0 font-mono text-xs font-black text-gray-800 tabular-nums">
+                    {m.status === "UPCOMING"
+                      ? m.kickoffTime
+                      : `${m.homeTeam.score ?? 0} : ${m.awayTeam.score ?? 0}`}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
+      </section>
 
-        {/* Action Row: [📊 실시간 캔들 차트 크게 보기] + [즉시 주문] + Collapsible Inline Preview Toggle */}
-        <div className="mt-3 grid grid-cols-[1.5fr_1fr] gap-2">
-          <button
-            type="button"
-            onClick={() => setCandleModalPlayer(activePlayer)}
-            className="flex items-center justify-center gap-1.5 rounded-xl bg-gray-900 px-3 py-2.5 text-xs font-extrabold text-white shadow-xs transition hover:bg-gray-800 active:scale-95"
-          >
-            <BarChart2 className="h-4 w-4 text-[#00A878]" />
-            <span>📊 실시간 캔들 차트 크게 보기</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onSelectPlayerTrade(activePlayer, "BUY")}
-            className="flex items-center justify-center gap-1 rounded-xl bg-[#00A878] px-3 py-2.5 text-xs font-extrabold text-white shadow-xs transition hover:opacity-95 active:scale-95"
-          >
-            <span>즉시 매수/매도</span>
-          </button>
-        </div>
-
-        {/* Optional Collapsible Inline Timeline Summary (Default Collapsed for Clean Readability) */}
-        <div className="mt-2 border-t border-gray-100 pt-2">
-          <button
-            type="button"
-            onClick={() => setIsInlineChartExpanded((prev) => !prev)}
-            className="flex w-full items-center justify-between text-[11px] font-bold text-gray-500 hover:text-gray-800"
-          >
-            <span className="truncate">
-              {activePlayer.lastEvent.text}
-            </span>
-            <span className="inline-flex shrink-0 items-center gap-0.5 text-gray-400">
-              <span>{isInlineChartExpanded ? "미니 차트 접기" : "0~90' 라인 요약"}</span>
-              {isInlineChartExpanded ? (
-                <ChevronUp className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5" />
-              )}
-            </span>
-          </button>
-
-          {isInlineChartExpanded && (
-            <div className="mt-2.5">
-              <MatchTimelineChart
-                player={activePlayer}
-                onOpenFullScreenCandle={() => setCandleModalPlayer(activePlayer)}
-              />
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* 2. Search Bar + Dual Filter System ('⚽ 축구 기준' vs '📈 투자 기준') */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.03)] space-y-3">
-        {/* Top Search Input + Filter Toggle & Reset */}
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+      {/* 2. 1-Line Slim Quick Filter Bar + Live Ranking List */}
+      <section className="rounded-2xl border border-gray-200/80 bg-[#FFFFFF] shadow-[0_1px_3px_rgba(0,0,0,0.02)] overflow-hidden">
+        {/* Mobile-only Search Input */}
+        <div className="sm:hidden border-b border-gray-100 px-4 pt-3 pb-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="선수명, 구단명, 국가대표 검색 (예: 손흥민, 바르샤)"
-              className="h-10 w-full rounded-xl border border-gray-200 bg-[#f8f9fa] pl-9 pr-3 text-xs font-semibold text-gray-900 placeholder:text-gray-400 focus:border-[#00A878] focus:bg-white focus:outline-none"
+              onChange={(e) => onSearchQueryChange(e.target.value)}
+              placeholder="선수명, 구단명, 리그 검색"
+              className="h-9 w-full rounded-xl border border-gray-200 bg-[#F7F9F8] pl-8 pr-3 text-xs font-medium text-gray-900 focus:border-[#00A878] focus:bg-white focus:outline-none"
             />
           </div>
-
-          <button
-            type="button"
-            onClick={() => setIsFilterOpen((prev) => !prev)}
-            className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-extrabold transition ${
-              activeFilterCount > 0
-                ? "border-[#00A878] bg-[#00A878]/10 text-[#00A878]"
-                : "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-            <span>필터</span>
-            {activeFilterCount > 0 && (
-              <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#00A878] px-1 font-mono text-[10px] font-black text-white">
-                {activeFilterCount}
-              </span>
-            )}
-          </button>
-
-          {activeFilterCount > 0 && (
-            <button
-              type="button"
-              onClick={handleResetFilters}
-              title="필터 초기화"
-              className="inline-flex h-10 shrink-0 items-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 text-[11px] font-bold text-gray-500 transition hover:bg-gray-100 hover:text-gray-900"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              <span>초기화</span>
-            </button>
-          )}
         </div>
 
-        {/* Dual Filter Panel: Group 1 (Football Criteria) & Group 2 (Investment Criteria) */}
-        {isFilterOpen && (
-          <div className="space-y-3 border-t border-gray-100 pt-3">
-            {/* Group 1: ⚽ 축구 기준 필터 (Football Criteria) */}
-            <div className="rounded-xl bg-[#f8f9fa] p-3 border border-gray-100 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-gray-900">
-                  ⚽ 축구 기준 필터 (포지션 · 리그 · 구단)
-                </span>
-                <span className="text-[10px] font-semibold text-gray-400">
-                  Football Criteria
-                </span>
-              </div>
+        {/* 1-Line Quick Filter Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <select
+              value={sortMode}
+              onChange={(e) => setSortMode(e.target.value as SortMode)}
+              aria-label="정렬 기준"
+              className="h-8 rounded-xl border border-gray-200 bg-[#F7F9F8] px-2.5 text-xs font-bold text-gray-800 focus:border-[#00A878] focus:outline-none"
+            >
+              <option value="GAINERS">정렬: 급등순</option>
+              <option value="LOSERS">정렬: 급락순</option>
+              <option value="PRICE">정렬: 시세순</option>
+              <option value="RATING">정렬: 평점순</option>
+            </select>
 
-              {/* ① 포지션 */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                {(
-                  [
-                    { key: "ALL", label: "포지션 전체" },
-                    { key: "FW", label: "FW (공격)" },
-                    { key: "MF", label: "MF (미드필더)" },
-                    { key: "DF", label: "DF (수비)" },
-                    { key: "GK", label: "GK (골키퍼)" },
-                  ] as { key: PositionFilter; label: string }[]
-                ).map((item) => (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => setPosFilter(item.key)}
-                    className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-extrabold transition ${
-                      posFilter === item.key
-                        ? "bg-gray-900 text-white shadow-xs"
-                        : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-100"
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
+            <select
+              value={posFilter}
+              onChange={(e) => setPosFilter(e.target.value as PositionFilter)}
+              aria-label="포지션 필터"
+              className="h-8 rounded-xl border border-gray-200 bg-[#F7F9F8] px-2.5 text-xs font-bold text-gray-800 focus:border-[#00A878] focus:outline-none"
+            >
+              <option value="ALL">포지션: 전체</option>
+              <option value="FW">포지션: FW</option>
+              <option value="MF">포지션: MF</option>
+              <option value="DF">포지션: DF</option>
+              <option value="GK">포지션: GK</option>
+            </select>
 
-              {/* ② 소속 리그 + 구단 선택 */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                {(
-                  [
-                    { key: "ALL", label: "리그 전체" },
-                    { key: "EPL", label: "프리미어리그" },
-                    { key: "LALIGA", label: "라리가" },
-                    { key: "BUNDESLIGA", label: "분데스리가" },
-                    { key: "SERIEA", label: "세리에A" },
-                    { key: "LIGUE1", label: "리그1" },
-                    { key: "AMATCH", label: "🌍 국가대표(A매치)" },
-                  ] as { key: LeagueFilter; label: string }[]
-                ).map((lg) => (
-                  <button
-                    key={lg.key}
-                    type="button"
-                    onClick={() => {
-                      setLeagueFilter(lg.key);
-                      setClubFilter("ALL");
-                    }}
-                    className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-extrabold transition ${
-                      leagueFilter === lg.key
-                        ? "bg-[#00A878] text-white shadow-xs"
-                        : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-100"
-                    }`}
-                  >
-                    {lg.label}
-                  </button>
-                ))}
+            <select
+              value={leagueFilter}
+              onChange={(e) => setLeagueFilter(e.target.value as LeagueFilter)}
+              aria-label="리그 필터"
+              className="h-8 rounded-xl border border-gray-200 bg-[#F7F9F8] px-2.5 text-xs font-bold text-gray-800 focus:border-[#00A878] focus:outline-none"
+            >
+              <option value="ALL">리그: 전체</option>
+              <option value="EPL">프리미어리그</option>
+              <option value="LALIGA">라리가</option>
+              <option value="BUNDESLIGA">분데스리가</option>
+              <option value="SERIEA">세리에 A</option>
+              <option value="LIGUE1">리그 1</option>
+              <option value="AMATCH">국가대표</option>
+            </select>
 
-                {/* Club Dropdown */}
-                <select
-                  value={clubFilter}
-                  onChange={(e) => setClubFilter(e.target.value)}
-                  className="h-7 shrink-0 rounded-lg border border-gray-200 bg-white px-2 text-[11px] font-bold text-gray-700 focus:border-[#00A878] focus:outline-none"
-                >
-                  <option value="ALL">구단 전체 ({availableClubs.length})</option>
-                  {availableClubs.map((club) => (
-                    <option key={club} value={club}>
-                      {club}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={() => setOnlySurge5((v) => !v)}
+              className={`h-8 rounded-xl border px-3 text-xs font-bold transition ${
+                onlySurge5
+                  ? "border-[#00A878] bg-[#00A878]/10 text-[#00A878]"
+                  : "border-gray-200 bg-[#F7F9F8] text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              급등 +5%
+            </button>
 
-            {/* Group 2: 📈 투자 기준 필터 (Investment Criteria) */}
-            <div className="rounded-xl bg-[#f8f9fa] p-3 border border-gray-100 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold text-gray-900">
-                  📈 투자 기준 필터 (가격대 · 등락폭 · 관심/수급)
-                </span>
-                <span className="text-[10px] font-semibold text-gray-400">
-                  Investment Criteria
-                </span>
-              </div>
+            <button
+              type="button"
+              onClick={() => setOnlyWonderkid((v) => !v)}
+              className={`h-8 rounded-xl border px-3 text-xs font-bold transition ${
+                onlyWonderkid
+                  ? "border-[#00A878] bg-[#00A878]/10 text-[#00A878]"
+                  : "border-gray-200 bg-[#F7F9F8] text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              원더키드
+            </button>
 
-              {/* ③ 가격대 */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                {(
-                  [
-                    { key: "ALL", label: "가격대 전체" },
-                    { key: "UNDER_10K", label: "10,000P 미만 (저가주)" },
-                    { key: "MID_10K_15K", label: "10,000~15,000P (중가주)" },
-                    { key: "OVER_15K", label: "15,000P 이상 (고액주/S티어)" },
-                  ] as { key: PriceBandFilter; label: string }[]
-                ).map((pb) => (
-                  <button
-                    key={pb.key}
-                    type="button"
-                    onClick={() => setPriceBandFilter(pb.key)}
-                    className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-extrabold transition ${
-                      priceBandFilter === pb.key
-                        ? "bg-gray-900 text-white shadow-xs"
-                        : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-100"
-                    }`}
-                  >
-                    {pb.label}
-                  </button>
-                ))}
-              </div>
+            <button
+              type="button"
+              onClick={() => setOnlyWatchlist((v) => !v)}
+              className={`h-8 rounded-xl border px-3 text-xs font-bold transition ${
+                onlyWatchlist
+                  ? "border-amber-400 bg-amber-50 text-amber-700"
+                  : "border-gray-200 bg-[#F7F9F8] text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              ★ 관심만
+            </button>
 
-              {/* ④ 가격 변동폭 + ⑤ 투자 상태 및 수급 */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                {(
-                  [
-                    { key: "ALL", label: "변동폭 전체" },
-                    { key: "SURGE_5", label: "🔥 +5% 이상 급등" },
-                    { key: "DROP_5", label: "💧 -5% 이상 급락" },
-                  ] as { key: ChangeRangeFilter; label: string }[]
-                ).map((cf) => (
-                  <button
-                    key={cf.key}
-                    type="button"
-                    onClick={() => setChangeFilter(cf.key)}
-                    className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-extrabold transition ${
-                      changeFilter === cf.key
-                        ? cf.key === "DROP_5"
-                          ? "bg-[#F07868] text-white shadow-xs"
-                          : "bg-[#00A878] text-white shadow-xs"
-                        : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-100"
-                    }`}
-                  >
-                    {cf.label}
-                  </button>
-                ))}
-
-                <button
-                  type="button"
-                  onClick={() => setOnlyWatchlist((v) => !v)}
-                  className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-extrabold transition ${
-                    onlyWatchlist
-                      ? "bg-amber-500 text-white shadow-xs"
-                      : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-100"
-                  }`}
-                >
-                  ⭐ 관심선수만 ({watchlist.length})
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setOnlyHoldings((v) => !v)}
-                  className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-extrabold transition ${
-                    onlyHoldings
-                      ? "bg-[#00A878] text-white shadow-xs"
-                      : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-100"
-                  }`}
-                >
-                  💼 보유 선수만
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setOnlyHighVolume((v) => !v)}
-                  className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-extrabold transition ${
-                    onlyHighVolume
-                      ? "bg-indigo-600 text-white shadow-xs"
-                      : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-100"
-                  }`}
-                >
-                  📊 거래량(변동성) 상위
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setOnlyWonderkid((v) => !v)}
-                  className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-extrabold transition ${
-                    onlyWonderkid
-                      ? "bg-violet-600 text-white shadow-xs"
-                      : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-100"
-                  }`}
-                >
-                  ⚡ 원더키드만
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* 3. Top 15 Player Ranking Section */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-1.5">
-            <TrendingUp className="h-4 w-4 text-[#00A878]" />
-            <h2 className="text-sm font-extrabold text-gray-900">
-              실시간 선수 등락률 랭킹
-            </h2>
-            <span className="rounded-full bg-[#00A878]/10 px-2 py-0.5 font-mono text-[10px] font-extrabold text-[#00A878]">
-              TOP 15
-            </span>
-            {activeFilterCount > 0 && (
-              <span className="text-[11px] font-semibold text-gray-400">
-                (검색 {filteredTotalCount}명 중 상위 {top15Players.length}명)
-              </span>
+            {hasActiveFilter && (
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="inline-flex h-8 items-center gap-1 rounded-xl px-2.5 text-xs font-bold text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span>초기화</span>
+              </button>
             )}
           </div>
 
-          {/* Sort Mode Selector */}
-          <div className="inline-flex rounded-xl bg-gray-100 p-0.5 text-[11px] font-bold">
-            <button
-              type="button"
-              onClick={() => setRankFilter("GAINERS")}
-              className={`rounded-lg px-2 py-1 transition ${
-                rankFilter === "GAINERS"
-                  ? "bg-white text-gray-900 shadow-xs"
-                  : "text-gray-500"
-              }`}
-            >
-              상승률순
-            </button>
-            <button
-              type="button"
-              onClick={() => setRankFilter("LOSERS")}
-              className={`rounded-lg px-2 py-1 transition ${
-                rankFilter === "LOSERS"
-                  ? "bg-white text-gray-900 shadow-xs"
-                  : "text-gray-500"
-              }`}
-            >
-              하락률순
-            </button>
-            <button
-              type="button"
-              onClick={() => setRankFilter("PRICE")}
-              className={`rounded-lg px-2 py-1 transition ${
-                rankFilter === "PRICE"
-                  ? "bg-white text-gray-900 shadow-xs"
-                  : "text-gray-500"
-              }`}
-            >
-              고가순
-            </button>
-            <button
-              type="button"
-              onClick={() => setRankFilter("RATING")}
-              className={`rounded-lg px-2 py-1 transition ${
-                rankFilter === "RATING"
-                  ? "bg-white text-gray-900 shadow-xs"
-                  : "text-gray-500"
-              }`}
-            >
-              평점순
-            </button>
-          </div>
+          <span className="text-[11px] font-semibold text-gray-400">
+            총 {rankedPlayers.length}명
+          </span>
         </div>
 
-        {top15Players.length === 0 ? (
-          <div className="py-10 text-center">
-            <p className="text-xs font-extrabold text-gray-700">
-              조건에 일치하는 선수가 없습니다.
-            </p>
-            <p className="mt-1 text-[11px] text-gray-400">
-              검색어나 축구/투자 필터 조건을 조정해보세요.
+        {/* Real-time Player Ranking List */}
+        {rankedPlayers.length === 0 ? (
+          <div className="py-12 text-center">
+            <p className="text-sm font-bold text-gray-600">
+              조건에 맞는 선수가 없습니다.
             </p>
             <button
               type="button"
               onClick={handleResetFilters}
-              className="mt-3 inline-flex items-center gap-1 rounded-xl bg-gray-900 px-3.5 py-2 text-xs font-extrabold text-white"
+              className="mt-3 rounded-xl bg-[#F7F9F8] px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-200"
             >
-              <RotateCcw className="h-3.5 w-3.5" />
-              <span>필터 전체 초기화</span>
+              필터 초기화
             </button>
           </div>
         ) : (
           <div className="divide-y divide-gray-100">
-            {top15Players.map((player, index) => {
-              const pOpen = player.openPrice ?? player.initialPrice;
-              const diff = calculateDiffFromOpen(player.currentPrice, pOpen);
-              const pct = calculateChangePercentFromOpen(
-                player.currentPrice,
-                pOpen
-              );
+            {rankedPlayers.map((p, idx) => {
+              const open = roundToTen(p.openPrice ?? p.initialPrice);
+              const diff = calculateDiffFromOpen(p.currentPrice, open);
+              const pct = calculateChangePercentFromOpen(p.currentPrice, open);
               const isUp = diff > 0;
               const isDown = diff < 0;
-              const holding = user ? holdings[player.id] : undefined;
-              const isWatched = watchlist.includes(player.id);
+              const isWatched = watchlist.includes(p.id);
+              const isSelected = selectedPlayerId === p.id;
+              const sparkColor = isUp
+                ? "#00A878"
+                : isDown
+                ? "#F07868"
+                : "#A8B2BC";
 
               return (
                 <div
-                  key={player.id}
-                  onClick={() => {
-                    setSelectedPlayerId(player.id);
-                    onSelectPlayerTrade(player, "BUY");
-                  }}
-                  className="flex cursor-pointer items-center justify-between gap-2 py-3 transition hover:bg-gray-50/80"
+                  key={p.id}
+                  onClick={() => onSelectPlayerTrade(p, "BUY")}
+                  className={`flex cursor-pointer items-center justify-between gap-3 px-4 py-3 transition hover:bg-[#F7F9F8] ${
+                    isSelected ? "bg-emerald-50/40" : ""
+                  }`}
                 >
-                  <div className="flex items-center gap-2 min-w-0">
-                    {/* Rank Number */}
-                    <span
-                      className={`w-5 text-center font-mono text-xs font-extrabold ${
-                        index < 3 ? "text-[#00A878]" : "text-gray-400"
-                      }`}
-                    >
-                      {index + 1}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="w-5 text-center font-mono text-xs font-extrabold text-gray-400 tabular-nums">
+                      {idx + 1}
                     </span>
 
-                    {/* One-Touch Watchlist Star Toggle */}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        toggleWatchlist(player.id);
+                        toggleWatchlist(p.id);
                       }}
                       title={isWatched ? "관심선수 해제" : "관심선수 등록"}
-                      className="shrink-0 rounded-full p-1 text-gray-300 transition hover:bg-gray-100 active:scale-90"
+                      className="shrink-0 rounded-full p-1 text-gray-300 hover:bg-gray-100"
                     >
                       <Star
-                        className={`h-4 w-4 ${
+                        className={`h-3.5 w-3.5 ${
                           isWatched
                             ? "fill-amber-400 text-amber-400"
-                            : "text-gray-300 hover:text-gray-400"
+                            : "text-gray-300"
                         }`}
                       />
                     </button>
 
-                    <div
-                      style={{ backgroundColor: player.teamColor }}
-                      className="flex h-9 w-9 shrink-0 flex-col items-center justify-center rounded-xl text-white font-mono"
+                    <span
+                      style={{ backgroundColor: p.teamColor }}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl font-mono text-[11px] font-black text-white"
                     >
-                      <span className="text-[8px] font-semibold opacity-80 leading-none">
-                        {player.teamShort}
-                      </span>
-                      <span className="text-xs font-black">
-                        {player.backNumber}
-                      </span>
-                    </div>
+                      {p.backNumber}
+                    </span>
 
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-sm font-bold text-gray-900 truncate">
-                          {player.name}
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-extrabold text-gray-900">
+                          {p.name}
                         </span>
-                        <span className="rounded bg-gray-100 px-1.5 py-0.2 text-[10px] font-bold text-gray-600">
-                          {player.position}
+                        <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">
+                          {p.position}
                         </span>
-                        {player.tier === "C" && (
-                          <span className="rounded bg-violet-50 px-1.5 py-0.2 text-[9px] font-extrabold text-violet-700 border border-violet-200">
-                            ⚡원더키드
-                          </span>
-                        )}
-                        {holding && holding.quantity > 0 && (
-                          <span className="rounded-full bg-[#00A878]/10 px-1.5 py-0.2 text-[10px] font-bold text-[#00A878]">
-                            {holding.quantity}주
-                          </span>
-                        )}
+                        <span className="hidden sm:inline-block shrink-0 font-mono text-[10px] font-semibold text-gray-400">
+                          ★ {p.stats.rating.toFixed(1)}
+                        </span>
                       </div>
-                      <p className="text-[11px] text-gray-400 truncate">
-                        {player.teamName} · 평점 {player.stats.rating.toFixed(1)} ·{" "}
-                        {player.stats.goals}골 {player.stats.assists}도움
+                      <p className="truncate text-[11px] text-gray-400">
+                        {p.teamName}
                       </p>
                     </div>
                   </div>
 
-                  {/* Right: Price + Standardized Change Badge + [📊 캔들] Button */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="text-right font-mono">
+                  <div className="flex items-center gap-4 shrink-0">
+                    <svg
+                      width="68"
+                      height="22"
+                      viewBox="0 0 72 24"
+                      className="hidden sm:block shrink-0"
+                    >
+                      <polyline
+                        fill="none"
+                        stroke={sparkColor}
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        points={buildSparklinePoints(p.priceHistory)}
+                      />
+                    </svg>
+
+                    <div className="w-24 text-right font-mono tabular-nums">
                       <p className="text-sm font-black text-gray-900">
-                        {player.currentPrice.toLocaleString()} P
+                        {p.currentPrice.toLocaleString()}P
                       </p>
-                      <span
-                        className={`inline-block rounded-md px-1.5 py-0.2 text-[11px] font-extrabold ${
+                      <p
+                        className={`text-[11px] font-bold ${
                           isUp
-                            ? "bg-[#00A878]/10 text-[#00A878]"
+                            ? "text-[#00A878]"
                             : isDown
-                            ? "bg-[#F07868]/10 text-[#F07868]"
-                            : "bg-[#A8B2BC]/15 text-[#A8B2BC]"
+                            ? "text-[#F07868]"
+                            : "text-[#A8B2BC]"
                         }`}
                       >
                         {isUp ? "+" : ""}
                         {pct.toFixed(2)}%
-                      </span>
+                      </p>
                     </div>
 
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setSelectedPlayerId(player.id);
-                        setCandleModalPlayer(player);
+                        onSelectPlayerTrade(p, "BUY");
                       }}
-                      title="실시간 캔들 차트 크게 보기"
-                      className="flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 bg-[#f8f9fa] text-gray-700 transition hover:border-[#00A878] hover:bg-[#00A878]/10 hover:text-[#00A878] active:scale-90"
+                      className="rounded-xl bg-[#00A878]/10 px-3 py-1.5 text-xs font-extrabold text-[#00A878] transition hover:bg-[#00A878] hover:text-white"
                     >
-                      <BarChart2 className="h-4 w-4" />
+                      거래
                     </button>
                   </div>
                 </div>
@@ -1022,15 +677,7 @@ export default function MarketChartTabView({
             })}
           </div>
         )}
-      </div>
-
-      {/* Dedicated Full-Screen Candlestick Chart Modal (Zoom & Pan Supported) */}
-      <FullScreenCandleChartModal
-        player={candleModalPlayer}
-        isOpen={Boolean(candleModalPlayer)}
-        onClose={() => setCandleModalPlayer(null)}
-        onSelectTrade={onSelectPlayerTrade}
-      />
+      </section>
     </div>
   );
 }

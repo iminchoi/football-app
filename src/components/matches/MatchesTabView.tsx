@@ -404,7 +404,7 @@ export default function MatchesTabView({
       {/* FotMob-Style Date Navigation Bar: Left Arrow (<) | Center Date + Calendar Popover | Right Arrow (>) */}
       <div
         ref={calendarRef}
-        className="sticky top-[132px] z-20 border-b border-gray-200/80 bg-white/95 px-4 py-2.5 backdrop-blur-md"
+        className="sticky top-[64px] z-20 border-b border-gray-200/80 bg-[#FFFFFF]/95 px-4 py-2.5"
       >
         <div className="relative flex items-center justify-between gap-2">
           {/* Left: Previous Day Arrow Button */}
