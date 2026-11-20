@@ -757,6 +757,8 @@ interface BatchEvalSummary {
   spreadStd: number;
   maxCellUpperCi95: number;
   worstCellLabel: string;
+  minCellLowerCi95: number;
+  lowestCellLabel: string;
   passHitRate: boolean;
   passSpread: boolean;
   passOverall: boolean;
@@ -781,14 +783,21 @@ function evaluateBatch(
 
   let maxCellUpperCi95 = -Infinity;
   let worstCellLabel = "";
+  let minCellLowerCi95 = Infinity;
+  let lowestCellLabel = "";
   for (const pos of ["FW", "MF", "DF", "GK"] as PosGroup[]) {
     for (const mk of MATCHUP_KEYS) {
       const merged = seedRuns.flatMap((r) => r.cellReturns[pos][mk]);
       const st = meanAndStd(merged);
       const upper = st.mean + st.ci95;
+      const lower = st.mean - st.ci95;
       if (upper > maxCellUpperCi95) {
         maxCellUpperCi95 = upper;
         worstCellLabel = `${pos}/${mk} (n=${merged.length}, ${st.mean >= 0 ? "+" : ""}${st.mean.toFixed(2)}%±${st.ci95.toFixed(2)}%)`;
+      }
+      if (lower < minCellLowerCi95) {
+        minCellLowerCi95 = lower;
+        lowestCellLabel = `${pos}/${mk} (n=${merged.length}, ${st.mean >= 0 ? "+" : ""}${st.mean.toFixed(2)}%±${st.ci95.toFixed(2)}%)`;
       }
     }
   }
@@ -812,6 +821,8 @@ function evaluateBatch(
     spreadStd: spreadStat.std,
     maxCellUpperCi95,
     worstCellLabel,
+    minCellLowerCi95,
+    lowestCellLabel,
     passHitRate,
     passSpread,
     passOverall,
@@ -976,6 +987,9 @@ function main(): void {
   );
   console.log(
     `  [${v25Base.passCells ? "PASS" : "FAIL"}] All Pos x Matchup 95% CI Upper <= ${PASS_MAX_CELL_CI_UPPER_PCT.toFixed(1)}%: max=${v25Base.maxCellUpperCi95.toFixed(2)}% (${v25Base.worstCellLabel})`
+  );
+  console.log(
+    `  [INFO] Lowest Pos x Matchup 95% CI Lower (Report-Only): min=${v25Base.minCellLowerCi95.toFixed(2)}% (${v25Base.lowestCellLabel})`
   );
 
   if (!v25Base.allPass || !allScenariosPass) {

@@ -1,14 +1,14 @@
 ## Current State
-- PitchTrade v2.5 on-pitch expectation deduction implemented (`src/lib/weights.ts` starter-90m `RATES`, `src/lib/priceEngine.ts` `onPitchMinutes * E90 / 90`, `scripts/simulateBalance.ts` starter/sub split at 5,000 matches/seed).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`): `WEIGHTS`, `RATES`, `priceEngine.ts`, and pass/fail constants locked.
 - `npx tsc --noEmit --incremental false` passes (0 errors); `node --test tests/priceEngine.test.ts tests/orderGate.test.ts tests/tradeStore.test.ts` passes (17/17).
-- `WEIGHTS` and pass/fail constants remain unchanged; v2.5 Baseline is **ALL PASS** across both `9001..9005` and default seeds (`20261119..20261523`).
+- Starter population passes all 4 criteria across both `9001..9005` and default seeds (`20261119..20261523`, 5,000 matches/seed).
 
 ## Recent Changes
-- `src/lib/weights.ts`: Redefined `RATES` strictly by formula from simulator 90-min starter probabilities (`4-3-3`, `λ=1.4`).
-- `src/lib/priceEngine.ts`: Added `subOutMinute` on `PlayerContext`; `buildPriceSeries` deducts `onPitchMinutes * E90 / 90` (zero while on bench, stops after sub-out or red card).
-- `tests/priceEngine.test.ts`: Added tests for bench waiting zero deduction, sub-in/sub-out on-pitch deduction, and 90-min `E90` total deduction.
-- `scripts/simulateBalance.ts`: Default `--matches 5000`; separated starter verdict metrics from report-only substitutes; split upper/lower intraday hit rates.
+- `scripts/simulateBalance.ts`: Added report-only `minCellLowerCi95` output for lowest Pos × Matchup 95% CI lower bound.
+- `STATUS.md`: Documented frozen v2.5 state and known limitations (`알려진 한계`).
 
-## Known Issues & Next Steps
-- Under `RATES -20%` sensitivity scenario, `Position Max Spread` is `1.06%p` (`9001..9005`) / `1.10%p` (default seeds), failing `<= 1.0%p` while `RATES Base` and `RATES +20%` are `ALL PASS`.
-- Next: Review whether `v2.5` parameters are ready to freeze for production live feed integration.
+## 알려진 한계 (Known Limitations)
+- **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.
+- **RATES 오차 허용 구간**: 포지션 최대 격차(`<= 1.0%p`) 기준 `RATES` 허용 오차 범위는 약 `-17% ~ +32%` 수준(`-20%` 시나리오에서 `1.06%p`로 소폭 초과).
+- **조기 상한 도달 비중**: `+15%` 상한 도달자의 약 `50%`(`48.5%~50.0%`)가 개별 이벤트 `2개 이하`로 상한에 도달함.
+- **실데이터 연동 시 개선 사항**: 라이브/실데이터 연동 시 `E`를 포지션 평균이 아닌 선수별 실측 발생률(수축 추정, shrinkage estimation)로 교체할 것.
