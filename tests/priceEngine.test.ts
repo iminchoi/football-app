@@ -5,6 +5,7 @@ import {
   calculateCumulativeReturn,
   deriveStatsFromEvents,
   eventDelta,
+  expectedReturn,
 } from "../src/lib/priceEngine.ts";
 import { WEIGHTS } from "../src/lib/weights.ts";
 import type { PlayerContext, PlayerEvent } from "../src/lib/priceEngine.ts";
@@ -125,4 +126,41 @@ test("SSOT alignment: aggregated stats match timeline events and chart markers 1
     chartMarkers.map((m) => m.minute),
     events.map((e) => e.minute)
   );
+});
+
+test("v2.4 expectedReturn=0 produces identical PriceSeries and PRE open price has zero jump", () => {
+  const events: PlayerEvent[] = [
+    { id: "e1", playerId: "p1", minute: 20, type: "GOAL", goalContext: "OPENER" },
+    { id: "e2", playerId: "p1", minute: 65, type: "ASSIST" },
+  ];
+  const baseSeries = buildPriceSeries(10000, events, { position: "ST", playerId: "p1", matchId: "m1" }, 90);
+  const zeroESeries = buildPriceSeries(10000, events, { position: "ST", playerId: "p1", matchId: "m1", expectedReturn: 0 }, 90);
+  assert.deepEqual(zeroESeries, baseSeries);
+
+  const eVal = expectedReturn("ST", 1.35, 1.15);
+  const deductedSeries = buildPriceSeries(10000, events, { position: "ST", playerId: "p1", matchId: "m1", expectedReturn: eVal }, 90);
+  assert.equal(deductedSeries.points[0].minute, 0);
+  assert.equal(deductedSeries.points[0].price, 10000);
+  assert.equal(deductedSeries.points[0].rawReturn, 0);
+});
+
+test("v2.4 full-time deduction equals E at minute 90", () => {
+  const events: PlayerEvent[] = [
+    { id: "e1", playerId: "p2", minute: 30, type: "GOAL", goalContext: "OPENER" },
+  ];
+  const eVal = expectedReturn("ST", 1.35, 1.15);
+  const withoutE = buildPriceSeries(10000, events, { position: "ST", playerId: "p2", matchId: "m2", expectedReturn: 0 }, 90);
+  const withE = buildPriceSeries(10000, events, { position: "ST", playerId: "p2", matchId: "m2", expectedReturn: eVal }, 90);
+
+  const totalDeduction = Number((withoutE.rawReturn - withE.rawReturn).toFixed(4));
+  assert.equal(totalDeduction, eVal);
+});
+
+test("v2.4 expectedReturn is deterministic and increases with favorable matchup", () => {
+  const r1 = expectedReturn("FW", 1.35, 1.15);
+  const r2 = expectedReturn("FW", 1.35, 1.15);
+  assert.equal(r1, r2);
+
+  const weakVsStrong = expectedReturn("FW", 0.72, 0.75);
+  assert.ok(r1 > weakVsStrong);
 });

@@ -14,7 +14,7 @@ import type {
 } from "../types";
 import { getPositionLine } from "../types/index.ts";
 import { getTierConfig } from "../utils/tier.ts";
-import { WEIGHTS } from "./weights.ts";
+import { RATES, WEIGHTS } from "./weights.ts";
 
 export const RETURN_CLAMP_MIN = -WEIGHTS.CAP_LIMIT;
 export const RETURN_CLAMP_MAX = WEIGHTS.CAP_LIMIT;
@@ -64,6 +64,7 @@ export interface PlayerContext {
   subInMinute?: number;
   isBenchUnused?: boolean;
   seedId?: string;
+  expectedReturn?: number;
 }
 
 export interface MatchParticipant {
@@ -243,14 +244,74 @@ export function eventDelta(event: PlayerEvent, ctx: PlayerContext): number {
   }
 }
 
+export type RatesTable = typeof RATES;
+
+export interface ExpectedReturnOptions {
+  teamDefense?: number;
+  oppAttack?: number;
+  rates?: RatesTable;
+}
+
 /**
- * Sum all event deltas before clamping once at [-0.30, +0.30].
+ * Pure pre-match expected return E = WEIGHTS × RATES for a position and matchup strength.
+ * Returns a decimal ratio (e.g. 0.032 for +3.20%).
+ */
+export function expectedReturn(
+  pos: Position | PositionLine | string,
+  teamAttack = 1,
+  oppDefense = 1,
+  options: ExpectedReturnOptions = {}
+): number {
+  const line = getPositionLine(pos);
+  const rates = options.rates ?? RATES;
+  const isDefOrGk = line === "DF" || line === "GK";
+
+  const avgGoalWeight =
+    (WEIGHTS.GOAL.OPENER +
+      WEIGHTS.GOAL.EQUALIZER_OR_GO_AHEAD +
+      WEIGHTS.GOAL.EXTEND_LEAD) /
+      3 +
+    (isDefOrGk ? WEIGHTS.GOAL.DEFENDER_OR_GK_BONUS : 0);
+  const keyActionWeight =
+    line === "GK" ? WEIGHTS.KEY_ACTION.GK : WEIGHTS.KEY_ACTION.OUTFIELD;
+  const concededWeight = isDefOrGk
+    ? WEIGHTS.TEAM_CONCEDED.GK_OR_DF
+    : WEIGHTS.TEAM_CONCEDED.MF_OR_FW;
+
+  const safeTeamAttack = Math.max(0.25, teamAttack);
+  const safeOppDefense = Math.max(0.25, oppDefense);
+  const attackScale = safeTeamAttack * safeOppDefense;
+  const concedeScale =
+    options.teamDefense !== undefined && options.oppAttack !== undefined
+      ? Math.max(0.25, options.teamDefense * options.oppAttack)
+      : 1 / safeTeamAttack;
+  const cleanSheetScale = Math.exp(1 - concedeScale);
+
+  const total =
+    attackScale *
+      (avgGoalWeight * rates.GOAL[line] +
+        WEIGHTS.ASSIST * rates.ASSIST[line] +
+        WEIGHTS.TEAM_GOAL * rates.TEAM_GOAL[line]) +
+    keyActionWeight * rates.KEY_ACTION[line] +
+    concedeScale * concededWeight * rates.TEAM_CONCEDED[line] +
+    cleanSheetScale *
+      (WEIGHTS.CLEAN_SHEET_45 * rates.CLEAN_SHEET_45[line] +
+        WEIGHTS.CLEAN_SHEET_75 * rates.CLEAN_SHEET_75[line]) +
+    WEIGHTS.YELLOW_CARD * rates.YELLOW_CARD[line] +
+    WEIGHTS.RED_CARD * rates.RED_CARD[line];
+
+  return Number(total.toFixed(4));
+}
+
+/**
+ * Sum all event deltas minus optional expectation deduction before clamping once at [-cap, +cap].
  * Exposes both `rawReturn` (for UI inspection) and `clampedReturn` (effective price cap/floor).
  */
 export function calculateCumulativeReturn(
   events: PlayerEvent[],
   ctx: PlayerContext,
-  capLimit: number = RETURN_CLAMP_MAX
+  capLimit: number = RETURN_CLAMP_MAX,
+  deduction = 0
 ): DerivedCumulativeReturn {
   if (ctx.isBenchUnused) {
     return { rawReturn: 0, clampedReturn: 0 };
@@ -261,7 +322,7 @@ export function calculateCumulativeReturn(
     raw += eventDelta(ev, ctx);
   }
   const safeCap = Math.max(0.01, Math.abs(capLimit));
-  const rawReturn = Number(raw.toFixed(4));
+  const rawReturn = Number((raw - deduction).toFixed(4));
   const clampedReturn = Number(
     Math.max(-safeCap, Math.min(safeCap, rawReturn)).toFixed(4)
   );
@@ -475,6 +536,7 @@ export function buildPriceSeries(
   const noiseMatchId = ctx.matchId ?? "default";
 
   let cumulativeRaw = 0;
+  const expectedE = ctx.expectedReturn ?? 0;
   const points: PricePoint[] = [];
 
   for (let m = 0; m <= targetEnd; m++) {
@@ -485,13 +547,18 @@ export function buildPriceSeries(
     }
     cumulativeRaw += stepDelta;
 
+    const elapsedFrac = Math.min(1, Math.max(0, m / 90));
+    const deductionAtMinute = expectedE * elapsedFrac;
+
     // Quiet-interval micro-noise strictly within ±0.15%, seeded deterministically by (playerId, matchId, minute)
     const quietNoise =
       m === 0 || minEvents.length > 0
         ? 0
         : (deterministicNoise(noisePlayerId, noiseMatchId, m) - 0.5) * 0.003; // [-0.0015, +0.0015]
 
-    const rawAtMinute = Number((cumulativeRaw + quietNoise).toFixed(4));
+    const rawAtMinute = Number(
+      (cumulativeRaw - deductionAtMinute + quietNoise).toFixed(4)
+    );
     const clampedAtMinute = Number(
       Math.max(-safeCap, Math.min(safeCap, rawAtMinute)).toFixed(4)
     );
@@ -544,7 +611,13 @@ export function buildPriceSeries(
     }
   }
 
-  const finalReturn = calculateCumulativeReturn(sortedEvents, ctx, safeCap);
+  const finalDeduction = expectedE * Math.min(1, Math.max(0, targetEnd / 90));
+  const finalReturn = calculateCumulativeReturn(
+    sortedEvents,
+    ctx,
+    safeCap,
+    finalDeduction
+  );
   const currentPrice = round10(safeBase * (1 + finalReturn.clampedReturn));
 
   return {

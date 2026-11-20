@@ -1,6 +1,7 @@
 import {
   buildPriceSeries,
   eventDelta,
+  expectedReturn,
   fanOutTeamEventsToPlayers,
 } from "../src/lib/priceEngine.ts";
 import type {
@@ -17,7 +18,7 @@ const PASS_HIT_RATE_MIN_PCT = 0.5;
 const PASS_HIT_RATE_MAX_PCT = 10.0;
 const PASS_MAX_POS_SPREAD_PCT = 1.0;
 const PASS_ABS_OVERALL_MEAN_PCT = 0.5;
-const PASS_BEST_STRATEGY_MEAN_PCT = 1.0;
+const PASS_MAX_CELL_CI_UPPER_PCT = 1.0;
 
 interface CliOptions {
   matches: number;
@@ -218,6 +219,49 @@ function sampleTeamStrength(rng: () => number): TeamStrength {
   return { tier: "WEAK", attack: 0.72, defense: 1.15 };
 }
 
+type TierShort = "S" | "M" | "W";
+type MatchupKey = `${TierShort}-${TierShort}`;
+const MATCHUP_KEYS: MatchupKey[] = [
+  "S-W",
+  "S-M",
+  "S-S",
+  "M-W",
+  "M-M",
+  "M-S",
+  "W-W",
+  "W-M",
+  "W-S",
+];
+
+function tierShort(tier: TeamTier): TierShort {
+  return tier === "STRONG" ? "S" : tier === "MID" ? "M" : "W";
+}
+
+function emptyCellMap(): Record<PosGroup, Record<MatchupKey, number[]>> {
+  const makeMatchups = (): Record<MatchupKey, number[]> => ({
+    "S-W": [],
+    "S-M": [],
+    "S-S": [],
+    "M-W": [],
+    "M-M": [],
+    "M-S": [],
+    "W-W": [],
+    "W-M": [],
+    "W-S": [],
+  });
+  return {
+    FW: makeMatchups(),
+    MF: makeMatchups(),
+    DF: makeMatchups(),
+    GK: makeMatchups(),
+  };
+}
+
+interface SeedRunOptions {
+  useExpectationDeduction?: boolean;
+  rateMultiplier?: number;
+}
+
 interface SeedMetrics {
   seed: number;
   participants: number;
@@ -234,13 +278,17 @@ interface SeedMetrics {
   maxSpreadPct: number;
   maxAbsCumReturnsAsc: number[];
   contribMeanByPos: Record<PosGroup, Record<ContribBucket, number>>;
+  cellReturns: Record<PosGroup, Record<MatchupKey, number[]>>;
 }
 
 function runSingleSeed(
   seed: number,
   matchCount: number,
-  capLimit: number
+  capLimit: number,
+  simOpts: SeedRunOptions = {}
 ): SeedMetrics {
+  const useDeduction = simOpts.useExpectationDeduction ?? true;
+  const rateMult = simOpts.rateMultiplier ?? 1.0;
   const rng = createRng(seed);
   const BASE_PRICE = 10000;
 
@@ -252,6 +300,7 @@ function runSingleSeed(
   const allReturns: number[] = [];
   const bestStrategyReturns: number[] = [];
   const maxAbsCumReturns: number[] = [];
+  const cellReturns = emptyCellMap();
   const groupReturns: Record<PosGroup, number[]> = {
     FW: [],
     MF: [],
@@ -334,8 +383,12 @@ function runSingleSeed(
 
     const homeStrength = sampleTeamStrength(rng);
     const awayStrength = sampleTeamStrength(rng);
-    const homeLambda = Math.min(2.2, Math.max(0.8, 1.4 * homeStrength.attack * awayStrength.defense));
-    const awayLambda = Math.min(2.2, Math.max(0.8, 1.4 * awayStrength.attack * homeStrength.defense));
+    const homeLambda =
+      Math.min(2.2, Math.max(0.8, 1.4 * homeStrength.attack * awayStrength.defense)) *
+      rateMult;
+    const awayLambda =
+      Math.min(2.2, Math.max(0.8, 1.4 * awayStrength.attack * homeStrength.defense)) *
+      rateMult;
     const homeGoals = samplePoisson(homeLambda, rng);
     const awayGoals = samplePoisson(awayLambda, rng);
     const goalTimeline: { minute: number; side: "HOME" | "AWAY" }[] = [];
@@ -423,7 +476,7 @@ function runSingleSeed(
       const activeAtMid = participants.filter((p) => p.teamSide === side && p.isStarter);
       const gk = activeAtMid.find((p) => p.position === "GK");
       if (gk) {
-        const saves = 1 + Math.floor(rng() * 3);
+        const saves = samplePoisson(2.0 * rateMult, rng);
         for (let s = 0; s < saves; s++) {
           teamEvents.push({
             id: `${matchId}-ev-${evSeq++}`,
@@ -435,7 +488,7 @@ function runSingleSeed(
         }
       }
       const outfield = activeAtMid.filter((p) => p.position !== "GK");
-      const outfieldActions = 2 + Math.floor(rng() * 4);
+      const outfieldActions = samplePoisson(3.5 * rateMult, rng);
       for (let k = 0; k < outfieldActions; k++) {
         const actor = pickByPositionShare(
           outfield,
@@ -457,7 +510,7 @@ function runSingleSeed(
       const minEnd = subOutMinute.get(p.playerId) ?? 89;
       if (minEnd <= minStart) continue;
       const posGroup = toPosGroup(p.position as Position);
-      if (rng() < YELLOW_CARD_PROB_BY_POS[posGroup]) {
+      if (rng() < YELLOW_CARD_PROB_BY_POS[posGroup] * rateMult) {
         teamEvents.push({
           id: `${matchId}-ev-${evSeq++}`,
           minute: minStart + Math.floor(rng() * Math.max(1, minEnd - minStart)),
@@ -466,7 +519,7 @@ function runSingleSeed(
           actorPlayerId: p.playerId,
         });
       }
-      if (rng() < 0.005) {
+      if (rng() < 0.005 * rateMult) {
         teamEvents.push({
           id: `${matchId}-ev-${evSeq++}`,
           minute: minStart + Math.floor(rng() * Math.max(1, minEnd - minStart)),
@@ -480,12 +533,21 @@ function runSingleSeed(
     const fanned = fanOutTeamEventsToPlayers(participants, teamEvents);
     for (const p of participants) {
       const evs = fanned[p.playerId] ?? [];
+      const ownStrength = p.teamSide === "HOME" ? homeStrength : awayStrength;
+      const oppStrength = p.teamSide === "HOME" ? awayStrength : homeStrength;
+      const expE = useDeduction
+        ? expectedReturn(p.position, ownStrength.attack, oppStrength.defense, {
+            teamDefense: ownStrength.defense,
+            oppAttack: oppStrength.attack,
+          })
+        : 0;
       const ctx = {
         position: p.position,
         playerId: p.playerId,
         matchId,
         isStarter: p.isStarter,
         subInMinute: p.subInMinute,
+        expectedReturn: expE,
       };
       const series = buildPriceSeries(
         BASE_PRICE,
@@ -550,6 +612,12 @@ function runSingleSeed(
       const retPct = series.clampedReturn * 100;
       allReturns.push(retPct);
       groupReturns[posGroup].push(retPct);
+      if (p.isStarter) {
+        const matchupKey: MatchupKey = `${tierShort(ownStrength.tier)}-${tierShort(
+          oppStrength.tier
+        )}`;
+        cellReturns[posGroup][matchupKey].push(retPct);
+      }
       if (
         p.isStarter &&
         posGroup === "FW" &&
@@ -618,6 +686,77 @@ function runSingleSeed(
       Math.min(posMeans.FW, posMeans.MF, posMeans.DF, posMeans.GK),
     maxAbsCumReturnsAsc: maxAbsCumReturns,
     contribMeanByPos,
+    cellReturns,
+  };
+}
+
+interface BatchEvalSummary {
+  intradayMean: number;
+  intradayStd: number;
+  closeMean: number;
+  overallMean: number;
+  overallStd: number;
+  spreadMean: number;
+  spreadStd: number;
+  maxCellUpperCi95: number;
+  worstCellLabel: string;
+  passHitRate: boolean;
+  passSpread: boolean;
+  passOverall: boolean;
+  passCells: boolean;
+  allPass: boolean;
+  seedRuns: SeedMetrics[];
+}
+
+function evaluateBatch(
+  seedList: number[],
+  matches: number,
+  cap: number,
+  simOpts: SeedRunOptions
+): BatchEvalSummary {
+  const seedRuns = seedList.map((s) => runSingleSeed(s, matches, cap, simOpts));
+  const intradayStat = meanAndStd(seedRuns.map((r) => r.intradayHitPct));
+  const closeStat = meanAndStd(seedRuns.map((r) => r.closeHitPct));
+  const overallStat = meanAndStd(seedRuns.map((r) => r.overallMeanPct));
+  const spreadStat = meanAndStd(seedRuns.map((r) => r.maxSpreadPct));
+
+  let maxCellUpperCi95 = -Infinity;
+  let worstCellLabel = "";
+  for (const pos of ["FW", "MF", "DF", "GK"] as PosGroup[]) {
+    for (const mk of MATCHUP_KEYS) {
+      const merged = seedRuns.flatMap((r) => r.cellReturns[pos][mk]);
+      const st = meanAndStd(merged);
+      const upper = st.mean + st.ci95;
+      if (upper > maxCellUpperCi95) {
+        maxCellUpperCi95 = upper;
+        worstCellLabel = `${pos}/${mk} (n=${merged.length}, ${st.mean >= 0 ? "+" : ""}${st.mean.toFixed(2)}%±${st.ci95.toFixed(2)}%)`;
+      }
+    }
+  }
+
+  const passHitRate =
+    intradayStat.mean >= PASS_HIT_RATE_MIN_PCT &&
+    intradayStat.mean <= PASS_HIT_RATE_MAX_PCT;
+  const passSpread = spreadStat.mean <= PASS_MAX_POS_SPREAD_PCT;
+  const passOverall = Math.abs(overallStat.mean) <= PASS_ABS_OVERALL_MEAN_PCT;
+  const passCells = maxCellUpperCi95 <= PASS_MAX_CELL_CI_UPPER_PCT;
+
+  return {
+    intradayMean: intradayStat.mean,
+    intradayStd: intradayStat.std,
+    closeMean: closeStat.mean,
+    overallMean: overallStat.mean,
+    overallStd: overallStat.std,
+    spreadMean: spreadStat.mean,
+    spreadStd: spreadStat.std,
+    maxCellUpperCi95,
+    worstCellLabel,
+    passHitRate,
+    passSpread,
+    passOverall,
+    passCells,
+    allPass: passHitRate && passSpread && passOverall && passCells,
+    seedRuns,
   };
 }
 
@@ -702,37 +841,67 @@ function main(): void {
     );
   }
 
-  console.log("\n[4] Cap Comparison Table (0.15 / 0.20 / 0.30 on Seed 1):");
-  console.log("  Cap     | IntradayHit% | CloseHit% | OverallMean% | MaxSpread%p");
-  for (const cmpCap of [0.15, 0.2, 0.3]) {
-    const cRes = runSingleSeed(seedList[0], opts.matches, cmpCap);
+  console.log("\n[4] Pos x Matchup PRE-Open Return Table (95% CI across all seeds, Starters):");
+  const headerCells = MATCHUP_KEYS.map((k) => k.padStart(13)).join(" | ");
+  console.log(`  Pos | ${headerCells}`);
+  for (const pos of ["FW", "MF", "DF", "GK"] as PosGroup[]) {
+    const rowCells = MATCHUP_KEYS.map((mk) => {
+      const merged = seedRuns.flatMap((r) => r.cellReturns[pos][mk]);
+      const st = meanAndStd(merged);
+      const cellStr = `${st.mean >= 0 ? "+" : ""}${st.mean.toFixed(2)}±${st.ci95.toFixed(2)}`;
+      return cellStr.padStart(13);
+    }).join(" | ");
+    console.log(`  ${pos.padEnd(3)} | ${rowCells}`);
+  }
+
+  const v24Base = evaluateBatch(seedList, opts.matches, opts.cap, {
+    useExpectationDeduction: true,
+    rateMultiplier: 1.0,
+  });
+  const v23Base = evaluateBatch(seedList, opts.matches, opts.cap, {
+    useExpectationDeduction: false,
+    rateMultiplier: 1.0,
+  });
+
+  console.log("\n[5] v2.3 vs v2.4 Comparison Table:");
+  console.log("  Version | IntradayHit% | CloseHit% | OverallMean% | MaxSpread%p | MaxCellUpperCI% | Verdict");
+  console.log(
+    `  v2.3    | ${v23Base.intradayMean.toFixed(2).padStart(11)}% | ${v23Base.closeMean.toFixed(2).padStart(8)}% | ${(v23Base.overallMean >= 0 ? "+" : "") + v23Base.overallMean.toFixed(2).padStart(10)}% | ${v23Base.spreadMean.toFixed(2).padStart(10)}%p | ${(v23Base.maxCellUpperCi95 >= 0 ? "+" : "") + v23Base.maxCellUpperCi95.toFixed(2).padStart(13)}% | ${v23Base.allPass ? "ALL PASS" : "FAIL"}`
+  );
+  console.log(
+    `  v2.4    | ${v24Base.intradayMean.toFixed(2).padStart(11)}% | ${v24Base.closeMean.toFixed(2).padStart(8)}% | ${(v24Base.overallMean >= 0 ? "+" : "") + v24Base.overallMean.toFixed(2).padStart(10)}% | ${v24Base.spreadMean.toFixed(2).padStart(10)}%p | ${(v24Base.maxCellUpperCi95 >= 0 ? "+" : "") + v24Base.maxCellUpperCi95.toFixed(2).padStart(13)}% | ${v24Base.allPass ? "ALL PASS" : "FAIL"}`
+  );
+
+  console.log("\n[6] RATES ±20% Sensitivity Evaluation (v2.4):");
+  console.log("  Scenario      | IntradayHit% | OverallMean% | MaxSpread%p | MaxCellUpperCI% | Verdict");
+  let allScenariosPass = true;
+  for (const mult of [0.8, 1.0, 1.2]) {
+    const sc = evaluateBatch(seedList, opts.matches, opts.cap, {
+      useExpectationDeduction: true,
+      rateMultiplier: mult,
+    });
+    if (!sc.allPass) allScenariosPass = false;
+    const label = mult === 0.8 ? "RATES -20%" : mult === 1.0 ? "RATES Base" : "RATES +20%";
     console.log(
-      `  ±${(cmpCap * 100).toFixed(0).padStart(2, "0")}%   | ${cRes.intradayHitPct.toFixed(2).padStart(11)}% | ${cRes.closeHitPct.toFixed(2).padStart(8)}% | ${(cRes.overallMeanPct >= 0 ? "+" : "") + cRes.overallMeanPct.toFixed(2).padStart(10)}% | ${cRes.maxSpreadPct.toFixed(2).padStart(10)}%p`
+      `  ${label.padEnd(13)} | ${sc.intradayMean.toFixed(2).padStart(11)}% | ${(sc.overallMean >= 0 ? "+" : "") + sc.overallMean.toFixed(2).padStart(10)}% | ${sc.spreadMean.toFixed(2).padStart(10)}%p | ${(sc.maxCellUpperCi95 >= 0 ? "+" : "") + sc.maxCellUpperCi95.toFixed(2).padStart(13)}% | ${sc.allPass ? "ALL PASS" : "FAIL"}`
     );
   }
 
-  const passHitRate =
-    intradayStat.mean >= PASS_HIT_RATE_MIN_PCT &&
-    intradayStat.mean <= PASS_HIT_RATE_MAX_PCT;
-  const passSpread = spreadStat.mean <= PASS_MAX_POS_SPREAD_PCT;
-  const passOverall = Math.abs(overallStat.mean) <= PASS_ABS_OVERALL_MEAN_PCT;
-  const passBestStrategy = bestStratStat.mean <= PASS_BEST_STRATEGY_MEAN_PCT;
-
-  console.log("\n[5] Verification Verdict:");
+  console.log("\n[7] Verification Verdict (v2.4 Baseline):");
   console.log(
-    `  [${passHitRate ? "PASS" : "FAIL"}] Intraday ±${(opts.cap * 100).toFixed(0)}% Hit Rate in [${PASS_HIT_RATE_MIN_PCT}%, ${PASS_HIT_RATE_MAX_PCT}%]: ${intradayStat.mean.toFixed(2)}%`
+    `  [${v24Base.passHitRate ? "PASS" : "FAIL"}] Intraday ±${(opts.cap * 100).toFixed(0)}% Hit Rate in [${PASS_HIT_RATE_MIN_PCT}%, ${PASS_HIT_RATE_MAX_PCT}%]: ${v24Base.intradayMean.toFixed(2)}%`
   );
   console.log(
-    `  [${passSpread ? "PASS" : "FAIL"}] Position Max Spread <= ${PASS_MAX_POS_SPREAD_PCT.toFixed(1)}%p: ${spreadStat.mean.toFixed(2)}%p`
+    `  [${v24Base.passSpread ? "PASS" : "FAIL"}] Position Max Spread <= ${PASS_MAX_POS_SPREAD_PCT.toFixed(1)}%p: ${v24Base.spreadMean.toFixed(2)}%p`
   );
   console.log(
-    `  [${passOverall ? "PASS" : "FAIL"}] |Overall Mean Return| <= ${PASS_ABS_OVERALL_MEAN_PCT.toFixed(1)}%: ${Math.abs(overallStat.mean).toFixed(2)}%`
+    `  [${v24Base.passOverall ? "PASS" : "FAIL"}] |Overall Mean Return| <= ${PASS_ABS_OVERALL_MEAN_PCT.toFixed(1)}%: ${Math.abs(v24Base.overallMean).toFixed(2)}%`
   );
   console.log(
-    `  [${passBestStrategy ? "PASS" : "FAIL"}] Best Strategy (Strong FW vs Weak) Mean Return <= ${PASS_BEST_STRATEGY_MEAN_PCT.toFixed(1)}%: ${bestStratStat.mean >= 0 ? "+" : ""}${bestStratStat.mean.toFixed(2)}%`
+    `  [${v24Base.passCells ? "PASS" : "FAIL"}] All Pos x Matchup 95% CI Upper <= ${PASS_MAX_CELL_CI_UPPER_PCT.toFixed(1)}%: max=${v24Base.maxCellUpperCi95.toFixed(2)}% (${v24Base.worstCellLabel})`
   );
 
-  if (!passHitRate || !passSpread || !passOverall || !passBestStrategy) {
+  if (!v24Base.allPass || !allScenariosPass) {
     process.exitCode = 1;
   }
 }
