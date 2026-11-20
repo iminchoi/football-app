@@ -1156,9 +1156,67 @@ export function buildTeamLineupForMatch(
     }
   }
 
+  const applySelectedMatchContext = (p: Player): Player => {
+    const isMatchUpcoming =
+      match.status === "UPCOMING" ||
+      match.rawStatus === "TIMED" ||
+      match.rawStatus === "SCHEDULED";
+    const base = roundToTen(
+      p.basePrice ?? p.openPrice ?? p.initialPrice ?? p.currentPrice ?? 10000
+    );
+
+    if (isMatchUpcoming) {
+      return {
+        ...p,
+        matchId: match.id,
+        teamId: activeTeam.id,
+        teamName: activeTeam.name,
+        teamShort: activeTeam.shortName,
+        teamColor: activeTeam.color,
+        basePrice: base,
+        openPrice: base,
+        initialPrice: base,
+        previousPrice: base,
+        currentPrice: base,
+        highPrice: base,
+        lowPrice: base,
+        events: [],
+        priceHistory: [
+          {
+            minute: 0,
+            timeLabel: "0'",
+            price: base,
+            changePercentFromOpen: 0,
+          },
+        ],
+        stats: {
+          rating: p.stats?.rating ?? 7.5,
+          goals: 0,
+          assists: 0,
+          shotsOnTarget: 0,
+          keyPasses: 0,
+        },
+        lastEvent: {
+          text: "⏰ 킥오프 대기 중 · 기준 시가",
+          sentiment: "neutral",
+          minute: 0,
+        },
+      };
+    }
+
+    return {
+      ...p,
+      matchId: match.id,
+      teamId: activeTeam.id,
+      teamName: activeTeam.name,
+      teamShort: activeTeam.shortName,
+      teamColor: activeTeam.color,
+    };
+  };
+
   return {
-    startingLineup: starters.slice(0, 11),
-    benchLineup: bench.slice(0, 5),
+    startingLineup: starters.slice(0, 11).map(applySelectedMatchContext),
+    benchLineup: bench.slice(0, 5).map(applySelectedMatchContext),
     formation,
   };
 }

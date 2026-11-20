@@ -467,6 +467,14 @@ export default function MatchesTabView({
         const allFinished =
           resolvedMatches.length > 0 &&
           resolvedMatches.every((m) => m.status === "FT");
+        const allUpcoming =
+          resolvedMatches.length > 0 &&
+          resolvedMatches.every(
+            (m) =>
+              m.status === "UPCOMING" ||
+              m.rawStatus === "TIMED" ||
+              m.rawStatus === "SCHEDULED"
+          );
         return (
           <div className="mx-4 mt-3.5 space-y-2">
             <div className="flex items-center justify-between rounded-xl bg-emerald-50/90 border border-emerald-200/70 px-3.5 py-2 text-xs text-emerald-900">
@@ -475,7 +483,11 @@ export default function MatchesTabView({
                 <span>
                   {allFinished ? (
                     <>
-                      <strong>경기 종료 · 정산 완료</strong> (최종 종가 및 경기 이벤트 확인 가능)
+                      <strong>경기 종료 · 거래 마감</strong> (최종 종가 및 경기 이벤트 확인 가능)
+                    </>
+                  ) : allUpcoming ? (
+                    <>
+                      경기 예정! <strong>기준 시가</strong>로 킥오프 전 선수를 미리 선점해보세요.
                     </>
                   ) : (
                     <>
@@ -486,7 +498,9 @@ export default function MatchesTabView({
               </div>
               <span className="shrink-0 rounded-md bg-white/80 px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#00985f] border border-emerald-200">
                 {allFinished
-                  ? "경기 종료 · 정산 완료"
+                  ? "경기 종료 · 거래 마감"
+                  : allUpcoming
+                  ? "장전 프리마켓 (PRE)"
                   : dataSource === "FOOTBALL_DATA_API"
                   ? "LIVE API"
                   : dataSource === "AMATCH_FALLBACK"

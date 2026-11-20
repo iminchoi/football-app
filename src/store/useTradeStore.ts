@@ -877,19 +877,48 @@ export const useTradeStore = create<TradeStoreState>()(
               ? newPlayer.teamColor
               : existing.teamColor;
 
+          const isMatchChanged =
+            Boolean(newPlayer.matchId) && newPlayer.matchId !== existing.matchId;
+          const targetMatch = get().matches.find(
+            (m) => m.id === newPlayer.matchId
+          );
+          const isIncomingUpcoming =
+            targetMatch?.status === "UPCOMING" ||
+            targetMatch?.rawStatus === "TIMED" ||
+            targetMatch?.rawStatus === "SCHEDULED" ||
+            (isMatchChanged &&
+              Array.isArray(newPlayer.events) &&
+              newPlayer.events.length === 0 &&
+              newPlayer.currentPrice === newPlayer.previousPrice);
+
           if (
             existing.teamName !== nextTeamName ||
             existing.teamId !== nextTeamId ||
-            existing.nationalTeam !== incomingNat
+            existing.nationalTeam !== incomingNat ||
+            isMatchChanged
           ) {
             const nextPlayers = [...players];
             nextPlayers[existingIdx] = {
               ...existing,
+              ...(newPlayer.matchId ? { matchId: newPlayer.matchId } : {}),
               teamName: nextTeamName,
               teamId: nextTeamId,
               teamShort: nextTeamShort,
               teamColor: nextTeamColor,
               nationalTeam: incomingNat,
+              ...(isIncomingUpcoming
+                ? {
+                    openPrice: newPlayer.openPrice ?? existing.basePrice ?? existing.initialPrice,
+                    previousPrice: newPlayer.previousPrice ?? newPlayer.openPrice ?? existing.basePrice ?? existing.initialPrice,
+                    currentPrice: newPlayer.currentPrice,
+                    highPrice: newPlayer.highPrice ?? newPlayer.currentPrice,
+                    lowPrice: newPlayer.lowPrice ?? newPlayer.currentPrice,
+                    events: [],
+                    priceHistory: newPlayer.priceHistory,
+                    stats: newPlayer.stats,
+                    lastEvent: newPlayer.lastEvent,
+                  }
+                : {}),
             };
             set({ players: nextPlayers });
           }

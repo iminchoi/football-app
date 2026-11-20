@@ -1,11 +1,11 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`): `WEIGHTS`, `RATES`, `priceEngine.ts`, and pass/fail constants locked.
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); UI pitch-view player selection now overrides selected match context (`PRE` open-price alignment) and displays `"장전 프리마켓 (PRE)"` when all matches on the selected date are upcoming.
 - `npx tsc --noEmit --incremental false` passes (0 errors); `node --test tests/priceEngine.test.ts tests/orderGate.test.ts tests/tradeStore.test.ts` passes (17/17).
-- Starter population passes all 4 criteria across both `9001..9005` and default seeds (`20261119..20261523`, 5,000 matches/seed).
 
 ## Recent Changes
-- `scripts/simulateBalance.ts`: Added report-only `minCellLowerCi95` output for lowest Pos × Matchup 95% CI lower bound.
-- `STATUS.md`: Documented frozen v2.5 state and known limitations (`알려진 한계`).
+- `src/components/matches/FormationPitchModal.tsx`: Added `applySelectedMatchContext` to `buildTeamLineupForMatch` so all 11 starters and 5 bench players inherit the selected match's `matchId`, team metadata, and clean `PRE` baseline (`events: []`, `0.00%`).
+- `src/store/useTradeStore.ts`: Updated `ensurePlayerInStore` to sync `matchId` and `PRE` baseline fields when an existing `dummyData` player is opened from another match context.
+- `src/components/matches/MatchesTabView.tsx`: Added `allUpcoming` branch to show `"장전 프리마켓 (PRE)"` instead of `"LIVE API"` when all listed matches are upcoming.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.
