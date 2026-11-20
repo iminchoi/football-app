@@ -1,10 +1,10 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); UI trading panels (`RightTradeDockPanel`, `TradeBottomSheet`, `MatchTimelineChart`) bind directly to `useTradeStore.activeMatchContext`.
-- `TradeBottomSheet.tsx` Rules of Hooks order fixed (`useTradeStore((s) => s.activeMatchContext)` moved above early `return null`).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); all player avatars across pitch view, market rankings, portfolio holdings, right trade dock, mobile trade sheet, and player detail modal now render via `PlayerAvatar`.
 - `npx tsc --noEmit --incremental false` passes (0 errors); `node --test tests/priceEngine.test.ts tests/orderGate.test.ts tests/tradeStore.test.ts` passes (17/17).
 
 ## Recent Changes
-- `src/components/TradeBottomSheet.tsx`: Moved `activeMatchContext` selector hook above `if (!playerId || !player) return null` to keep React hook call order invariant across renders.
+- `src/components/portfolio/PortfolioTabView.tsx`: Replaced custom square `teamShort + backNumber` badge on holding cards with `<PlayerAvatar player={player} size={44} />`.
+- `src/components/TradeBottomSheet.tsx`: Added `<PlayerAvatar player={player} size={44} />` to the top header and removed the redundant `#backNumber` dark pill badge.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

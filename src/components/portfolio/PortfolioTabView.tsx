@@ -18,6 +18,7 @@ import {
 import { useTradeStore, roundToTen } from "@/store/useTradeStore";
 import { INITIAL_CASH } from "@/data/dummyData";
 import { Player, TradeType } from "@/types";
+import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface PortfolioTabViewProps {
   onSelectPlayerTrade: (player: Player, type: TradeType) => void;
@@ -346,17 +347,7 @@ export default function PortfolioTabView({
                     {/* Top Row: 선수 프로필 + 보유 주수 & 평가 손익 */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <div
-                          style={{ backgroundColor: player.teamColor }}
-                          className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-xl text-white font-mono shadow-sm"
-                        >
-                          <span className="text-[9px] font-semibold opacity-85 leading-none">
-                            {player.teamShort}
-                          </span>
-                          <span className="text-xs font-black mt-0.5">
-                            {player.backNumber}
-                          </span>
-                        </div>
+                        <PlayerAvatar player={player} size={44} />
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <h3 className="text-sm font-extrabold text-gray-900 truncate">

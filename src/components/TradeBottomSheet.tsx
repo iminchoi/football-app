@@ -33,6 +33,7 @@ import { WEIGHTS } from "@/lib/weights";
 import { Player, TradeType, getPositionLine } from "@/types";
 import PlayerDetailModal from "@/components/PlayerDetailModal";
 import MatchTimelineChart from "@/components/market/MatchTimelineChart";
+import PlayerAvatar from "@/components/PlayerAvatar";
 import FullScreenCandleChartModal from "@/components/market/FullScreenCandleChartModal";
 
 interface TradeBottomSheetProps {
@@ -838,35 +839,35 @@ export default function TradeBottomSheet({
         {/* Sticky Top Header: Player Profile + Watchlist Star + Live Price + Buy/Sell Mode Switch */}
         <div className="shrink-0 border-b border-gray-100 px-5 pb-2.5 pt-1">
           <div className="flex items-start justify-between gap-2">
-            <div>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="rounded-md bg-gray-900 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white">
-                  #{player.backNumber}
-                </span>
-                <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-700">
-                  {player.position}
-                </span>
-                <span
-                  className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] font-black ${
-                    playerTier === "S"
-                      ? "bg-amber-100 text-amber-800 border border-amber-300"
-                      : playerTier === "A"
-                      ? "bg-[#00A878]/10 text-[#00A878] border border-[#00A878]/25"
-                      : "bg-gray-100 text-gray-600"
-                  }`}
-                >
-                  {playerTier}티어
-                </span>
-                <span className="text-xs font-semibold text-gray-500">
-                  {player.teamName}
-                </span>
-                <span className="rounded-md bg-[#00A878]/10 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-[#00A878]">
-                  ★ {(player.stats?.rating ?? 7.0).toFixed(1)}
-                </span>
+            <div className="flex items-center gap-3 min-w-0">
+              <PlayerAvatar player={player} size={44} />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-700">
+                    {player.position}
+                  </span>
+                  <span
+                    className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] font-black ${
+                      playerTier === "S"
+                        ? "bg-amber-100 text-amber-800 border border-amber-300"
+                        : playerTier === "A"
+                        ? "bg-[#00A878]/10 text-[#00A878] border border-[#00A878]/25"
+                        : "bg-gray-100 text-gray-600"
+                    }`}
+                  >
+                    {playerTier}티어
+                  </span>
+                  <span className="text-xs font-semibold text-gray-500">
+                    {player.teamName}
+                  </span>
+                  <span className="rounded-md bg-[#00A878]/10 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-[#00A878]">
+                    ★ {(player.stats?.rating ?? 7.0).toFixed(1)}
+                  </span>
+                </div>
+                <h3 className="mt-0.5 truncate text-lg font-black tracking-tight text-gray-900">
+                  {player.name}
+                </h3>
               </div>
-              <h3 className="mt-0.5 text-lg font-black tracking-tight text-gray-900">
-                {player.name}
-              </h3>
             </div>
 
             <div className="flex items-center gap-1.5">
