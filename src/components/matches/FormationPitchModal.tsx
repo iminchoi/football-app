@@ -1557,20 +1557,11 @@ export function FormationPitchContent({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5">
-        {isUpcoming && (
-          <div className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200/80 px-3 py-1 text-[11px] font-bold text-amber-900">
-            예상 선발 · 킥오프 45분 전 공식 라인업 확정
-          </div>
-        )}
-        {(match.usesDummyLineup ||
-          !activeTeam.lineup ||
-          activeTeam.lineup.length === 0) && (
-          <div className="inline-flex items-center rounded-full bg-slate-100 border border-slate-200 px-3 py-1 text-[11px] font-bold text-slate-700">
-            예상/더미 라인업 (무료 API 라인업 미제공)
-          </div>
-        )}
-      </div>
+      {isUpcoming && (
+        <div className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200/80 px-3 py-1 text-[11px] font-bold text-amber-900">
+          예상 선발 · 킥오프 45분 전 공식 라인업 확정
+        </div>
+      )}
 
       {/* Guide Pill */}
       <div className="flex items-center justify-between gap-2 text-[11px] sm:text-xs text-gray-500 px-1">

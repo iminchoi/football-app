@@ -1,13 +1,9 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `MatchDataProvider` architecture (`ScoreOnlyLiveProvider`, `FixtureReplayProvider`, `SimulatedEventsProvider`, `DeepDataLiveProvider`) implemented under `src/lib/providers/`.
-- `PlayerEvent.source` (`'REAL' | 'SIMULATED'`) preserved across adapter, `priceEngine.ts`, UI badges, and tests; `.cache/ledger.json` ledger persists simulated `GOAL`/`ASSIST` events without recalculation.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --test tests/priceEngine.test.ts tests/orderGate.test.ts tests/tradeStore.test.ts tests/providerLedger.test.ts` passes (20/20).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `MatchDataProvider` architecture (`ScoreOnlyLiveProvider`, `FixtureReplayProvider`, `SimulatedEventsProvider`, `DeepDataLiveProvider`) active.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --test` passes (20/20).
 
 ## Recent Changes
-- `src/lib/providers/*`: Added `MatchDataProvider` interface, `ScoreOnlyLiveProvider` (default), `FixtureReplayProvider`, `SimulatedEventsProvider` (server secret seed + `.cache/ledger.json`), `DeepDataLiveProvider` (stub), and pure `diffScoreSnapshotsToTeamEvents`.
-- `src/lib/priceEngine.ts`, `src/types/index.ts`, `src/app/api/matches/route.ts`: Added `source: 'REAL' | 'SIMULATED'`, `{ estimated: true }` metadata, `providerMode`, and `usesDummyLineup`.
-- `src/components/*`: Added `"시뮬레이션 이벤트 포함"`, `"예상/더미 라인업 (무료 API 라인업 미제공)"`, and `"데이터 없음 (실제 스코어 전용 모드)"` notices.
-- `tests/providerLedger.test.ts`, `scripts/simulateBalance.ts`: Added 3 ledger/VAR/whitelist unit tests and `ScoreOnly` vs `Simulated` balance simulation evaluation.
+- `src/components/matches/FormationPitchModal.tsx`: Removed redundant `"예상/더미 라인업 (무료 API 라인업 미제공)"` gray badge while preserving `"예상 선발 · 킥오프 45분 전 공식 라인업 확정"`.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.
