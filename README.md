@@ -48,7 +48,7 @@ tests/                 # 가격 엔진 및 주문 가드 단위 테스트
 
 🚀 시작하기
 # 1. 저장소 클론 및 패키지 설치
-git clone [https://github.com/your-username/pitchtrade.git](https://github.com/your-username/pitchtrade.git)
+git clone [https://github.com/iminchoi/pitchtrade.git](https://github.com/iminchoi/pitchtrade.git)
 cd pitchtrade
 npm install
 
