@@ -17,6 +17,7 @@ import AdminPanel from "@/components/AdminPanel";
 export default function HomePage() {
   const activeTab = useTradeStore((state) => state.activeTab);
   const selectPlayer = useTradeStore((state) => state.selectPlayer);
+  const fetchTodayMatches = useTradeStore((state) => state.fetchTodayMatches);
 
   const [mounted, setMounted] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
@@ -29,7 +30,8 @@ export default function HomePage() {
 
   useEffect(() => {
     setMounted(true);
-  }, []);
+    void fetchTodayMatches();
+  }, [fetchTodayMatches]);
 
   const handleOpenTradeSheet = (
     player: Player,

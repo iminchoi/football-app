@@ -125,36 +125,19 @@ export default function MarketChartTabView({
 }: MarketChartTabViewProps) {
   const players = useTradeStore((s) => s.players);
   const matches = useTradeStore((s) => s.matches);
+  const todayMatches = useTradeStore((s) => s.todayMatches);
+  const isLoadingTodayMatches = useTradeStore((s) => s.isLoadingTodayMatches);
+  const hasFetchedTodayMatches = useTradeStore((s) => s.hasFetchedTodayMatches);
+  const fetchTodayMatches = useTradeStore((s) => s.fetchTodayMatches);
   const watchlist = useTradeStore((s) => s.watchlist);
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
   const setActiveTab = useTradeStore((s) => s.setActiveTab);
-  const [apiTodayMatches, setApiTodayMatches] = useState<Match[] | null>(null);
 
   useEffect(() => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, "0");
-    const d = String(now.getDate()).padStart(2, "0");
-    const todayStr = `${y}-${m}-${d}`;
-    let cancelled = false;
-
-    fetch(`/api/matches?date=${encodeURIComponent(todayStr)}`, {
-      cache: "no-store",
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!cancelled && data && Array.isArray(data.matches) && data.matches.length > 0) {
-          setApiTodayMatches(data.matches as Match[]);
-        }
-      })
-      .catch(() => {
-        // Ignore network errors and fall back to store matches
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (!hasFetchedTodayMatches) {
+      void fetchTodayMatches();
+    }
+  }, [hasFetchedTodayMatches, fetchTodayMatches]);
 
   // 1-Line Slim Quick Filter Bar States
   const [sortMode, setSortMode] = useState<SortMode>("GAINERS");
@@ -171,12 +154,8 @@ export default function MarketChartTabView({
   }, [players]);
 
   const todayKeyMatches = useMemo(() => {
-    if (apiTodayMatches && apiTodayMatches.length > 0) {
-      return apiTodayMatches.slice(0, 4);
-    }
-    const todayMatches = matches.filter((m) => m.dateKey === "TODAY");
-    return (todayMatches.length > 0 ? todayMatches : matches).slice(0, 4);
-  }, [apiTodayMatches, matches]);
+    return todayMatches.slice(0, 4);
+  }, [todayMatches]);
 
   const doesPlayerMatchLeague = (
     player: Player,
@@ -424,7 +403,25 @@ export default function MarketChartTabView({
           </div>
 
           <div className="flex-1 space-y-2">
-            {todayKeyMatches.map((m) => {
+            {(isLoadingTodayMatches || !hasFetchedTodayMatches) &&
+            todayKeyMatches.length === 0 ? (
+              <div className="space-y-2">
+                {[1, 2, 3, 4].map((n) => (
+                  <div
+                    key={n}
+                    className="h-9 animate-pulse rounded-xl border border-gray-100 bg-[#F7F9F8]"
+                  />
+                ))}
+                <p className="pt-1 text-center text-[11px] font-semibold text-gray-400">
+                  경기 일정을 불러오는 중...
+                </p>
+              </div>
+            ) : todayKeyMatches.length === 0 ? (
+              <div className="flex h-full min-h-[120px] items-center justify-center rounded-xl border border-gray-100 bg-[#F7F9F8] px-3 text-center text-xs font-semibold text-gray-400">
+                오늘 예정된 주요 경기가 없습니다.
+              </div>
+            ) : (
+              todayKeyMatches.map((m) => {
               const statusLabel =
                 m.status === "LIVE"
                   ? `${m.minute ?? 45}'`
@@ -463,7 +460,8 @@ export default function MarketChartTabView({
                   </span>
                 </button>
               );
-            })}
+            })
+            )}
           </div>
         </div>
       </section>

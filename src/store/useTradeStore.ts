@@ -85,6 +85,9 @@ interface TradeStoreState {
   cash: number;
   realizedPnL: number;
   matches: Match[];
+  todayMatches: Match[];
+  isLoadingTodayMatches: boolean;
+  hasFetchedTodayMatches: boolean;
   players: Player[];
   playerPrices: Record<string, PersistedPlayerPrice>;
   holdings: Record<string, Holding>;
@@ -111,6 +114,7 @@ interface TradeStoreState {
     matchContext?: ActiveMatchContext | null
   ) => void;
   syncPlayersFromMatches: (matches: Match[]) => void;
+  fetchTodayMatches: () => Promise<void>;
   tickMarket: () => void;
   buyPlayer: (playerId: string, quantity: number) => TradeExecutionResult;
   sellPlayer: (playerId: string, quantity: number) => TradeExecutionResult;
@@ -584,6 +588,8 @@ function applyPersistedPrices(
   });
 }
 
+let inFlightTodayMatchesPromise: Promise<void> | null = null;
+
 export const useTradeStore = create<TradeStoreState>()(
   persist(
     (set, get) => ({
@@ -592,6 +598,9 @@ export const useTradeStore = create<TradeStoreState>()(
       cash: INITIAL_CASH,
       realizedPnL: 0,
       matches: INITIAL_MATCHES,
+      todayMatches: [],
+      isLoadingTodayMatches: true,
+      hasFetchedTodayMatches: false,
       players: NORMALIZED_INITIAL_PLAYERS,
       playerPrices: {},
       holdings: {},
@@ -1015,6 +1024,52 @@ export const useTradeStore = create<TradeStoreState>()(
             },
           },
         });
+      },
+
+      fetchTodayMatches: async () => {
+        if (inFlightTodayMatchesPromise) {
+          return inFlightTodayMatchesPromise;
+        }
+        set({ isLoadingTodayMatches: true });
+
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, "0");
+        const d = String(now.getDate()).padStart(2, "0");
+        const todayStr = `${y}-${m}-${d}`;
+
+        inFlightTodayMatchesPromise = fetch(
+          `/api/matches?date=${encodeURIComponent(todayStr)}`,
+          { cache: "no-store" }
+        )
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data && Array.isArray(data.matches)) {
+              const fetched = data.matches as Match[];
+              set({
+                todayMatches: fetched,
+                isLoadingTodayMatches: false,
+                hasFetchedTodayMatches: true,
+              });
+              get().syncPlayersFromMatches(fetched);
+            } else {
+              set({
+                isLoadingTodayMatches: false,
+                hasFetchedTodayMatches: true,
+              });
+            }
+          })
+          .catch(() => {
+            set({
+              isLoadingTodayMatches: false,
+              hasFetchedTodayMatches: true,
+            });
+          })
+          .finally(() => {
+            inFlightTodayMatchesPromise = null;
+          });
+
+        return inFlightTodayMatchesPromise;
       },
 
       syncPlayersFromMatches: (incomingMatches) => {

@@ -1,9 +1,11 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `MatchDataProvider` architecture (`ScoreOnlyLiveProvider`, `FixtureReplayProvider`, `SimulatedEventsProvider`, `DeepDataLiveProvider`) active.
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `todayMatches` pre-fetched on app mount (`page.tsx`) into `useTradeStore` and rendered in `MarketChartTabView` with loading skeleton instead of stale dummy fixtures.
 - `npx tsc --noEmit --incremental false` passes (0 errors); `node --test` passes (20/20).
 
 ## Recent Changes
-- `src/components/matches/FormationPitchModal.tsx`: Removed redundant `"예상/더미 라인업 (무료 API 라인업 미제공)"` gray badge while preserving `"예상 선발 · 킥오프 45분 전 공식 라인업 확정"`.
+- `src/store/useTradeStore.ts`: Added `todayMatches`, `isLoadingTodayMatches`, `hasFetchedTodayMatches`, and deduplicated `fetchTodayMatches` action.
+- `src/app/page.tsx`: Triggered `fetchTodayMatches()` immediately on app mount.
+- `src/components/market/MarketChartTabView.tsx`: Subscribed directly to store `todayMatches`; removed old `INITIAL_MATCHES` fallback and rendered loading skeleton (`경기 일정을 불러오는 중...`) until loaded.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.
