@@ -1225,7 +1225,7 @@ export default function TradeBottomSheet({
           {/* Finished Match Settlement Banner */}
           {isMatchFinished && (
             <div className="flex items-center justify-between rounded-xl bg-slate-100 border border-slate-200 px-3 py-1.5 text-[11px] font-extrabold text-slate-700">
-              <span>🏁 경기 종료 · 정산 완료 (주문 마감)</span>
+              <span>🏁 경기 종료 · 거래 마감 (주문 마감)</span>
             </div>
           )}
 
@@ -1275,7 +1275,7 @@ export default function TradeBottomSheet({
             {!user
               ? "[🔒 로그인 후 거래하기]"
               : isMatchFinished
-              ? "경기 종료 · 정산 완료"
+              ? "경기 종료 · 거래 마감"
               : isBuyBlockedByCap
               ? "상한가 도달 · 매수 제한"
               : isSellBlockedByFloor

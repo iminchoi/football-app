@@ -9,6 +9,12 @@ import {
   PricePoint,
 } from "@/types";
 import { getTierConfig } from "@/utils/tier";
+import {
+  derivePlayerMarketData,
+  deriveStatsFromEvents,
+  extractInitialMatchEvents,
+  type PlayerEvent,
+} from "@/lib/priceEngine";
 
 export const INITIAL_CASH = 100000;
 
@@ -543,7 +549,7 @@ function createSquadPlayer(seed: SquadPlayerSeed): Player {
   };
 }
 
-export const INITIAL_PLAYERS: Player[] = [
+const RAW_INITIAL_PLAYERS: Player[] = [
   // Match 1: TOT vs ARS
   {
     id: "p-son",
@@ -2770,6 +2776,66 @@ export const INITIAL_PLAYERS: Player[] = [
     rating: 7.6,
   }),
 ];
+
+function finalizeDummyPlayer(
+  raw: Player,
+  matchById: Map<string, Match>
+): Player {
+  const match = matchById.get(raw.matchId);
+  const status = match?.status ?? "LIVE";
+  const currentMinute = match?.minute ?? 60;
+  const openBase = raw.openPrice ?? raw.basePrice ?? raw.initialPrice;
+  const initialEvents = extractInitialMatchEvents(raw, status);
+  const market = derivePlayerMarketData({
+    playerId: raw.id,
+    openPrice: openBase,
+    basePrice: openBase,
+    events: initialEvents,
+    currentMinute,
+    matchStatus: status,
+  });
+  const playerEvents: PlayerEvent[] = market.events.map((ev) => ({
+    id: ev.id,
+    playerId: ev.playerId,
+    minute: ev.minute,
+    type: ev.type,
+    description: ev.description,
+    impactPercent: ev.priceImpactPercent,
+  }));
+  const derivedStats = deriveStatsFromEvents(playerEvents);
+
+  return {
+    ...raw,
+    openPrice: market.openPrice,
+    basePrice: openBase,
+    initialPrice: openBase,
+    currentPrice: market.currentPrice,
+    previousPrice: market.previousPrice,
+    ...(market.closePrice !== undefined
+      ? { closePrice: market.closePrice }
+      : {}),
+    highPrice: market.highPrice,
+    lowPrice: market.lowPrice,
+    volume: market.volume,
+    events: market.events,
+    priceHistory: market.priceHistory,
+    stats: {
+      rating: raw.stats?.rating ?? 7.5,
+      goals: derivedStats.goals,
+      assists: derivedStats.assists,
+      shotsOnTarget: derivedStats.shotsOnTarget,
+      keyPasses: derivedStats.keyPasses,
+    },
+  };
+}
+
+const INITIAL_MATCH_MAP = new Map<string, Match>(
+  INITIAL_MATCHES.map((m) => [m.id, m])
+);
+
+export const INITIAL_PLAYERS: Player[] = RAW_INITIAL_PLAYERS.map((p) =>
+  finalizeDummyPlayer(p, INITIAL_MATCH_MAP)
+);
 
 export const DUMMY_PLAYERS: Player[] = INITIAL_PLAYERS;
 

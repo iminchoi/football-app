@@ -43,7 +43,10 @@ import {
   sanitizeEventTypeForPosition,
   isNegativeEventType,
 } from "@/lib/priceEngine";
-import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
+import {
+  getCircuitBreakerRemainingSec,
+  validateTradeOrder,
+} from "@/lib/orderGate";
 import { WEIGHTS } from "@/lib/weights";
 
 export {
@@ -1768,40 +1771,27 @@ export const useTradeStore = create<TradeStoreState>()(
         }
 
         const matchCtx = resolvePlayerMatchContext(player, matches);
-        if (matchCtx.status === "FT") {
-          return {
-            success: false,
-            message: "경기 종료 · 정산 완료된 종목은 주문할 수 없습니다.",
-          };
-        }
-
-        const cbSec = getCircuitBreakerRemainingSec(player.lastMajorEventAt);
-        if (cbSec > 0) {
-          return {
-            success: false,
-            message: `서킷 브레이커 작동 중입니다. (${cbSec}초 후 주문 가능)`,
-          };
-        }
-
         const basePrice = roundToTen(
           player.basePrice ?? player.initialPrice ?? player.currentPrice
         );
-        const capPrice = roundToTen(basePrice * (1 + WEIGHTS.CAP_LIMIT));
-        const executedPrice = roundToTen(player.currentPrice);
-        if (executedPrice >= capPrice) {
+        const gate = validateTradeOrder({
+          side: "BUY",
+          matchStatus: matchCtx.status,
+          basePrice,
+          currentPrice: player.currentPrice,
+          quantity,
+          cash,
+          lastMajorEventAt: player.lastMajorEventAt,
+        });
+        if (!gate.allowed) {
           return {
             success: false,
-            message: "상한가(+15%) 도달 · 매수 제한 (매도만 가능)",
+            message: gate.message ?? "주문을 실행할 수 없습니다.",
           };
         }
 
+        const executedPrice = gate.executedPrice;
         const totalCost = roundToTen(executedPrice * quantity);
-        if (totalCost > cash) {
-          return {
-            success: false,
-            message: `보유 포인트가 부족합니다. (필요: ${totalCost.toLocaleString()} P)`,
-          };
-        }
 
         const prev = holdings[playerId];
         const prevQty = prev ? prev.quantity : 0;
@@ -1883,42 +1873,27 @@ export const useTradeStore = create<TradeStoreState>()(
         }
 
         const matchCtx = resolvePlayerMatchContext(player, matches);
-        if (matchCtx.status === "FT") {
-          return {
-            success: false,
-            message: "경기 종료 · 정산 완료된 종목은 주문할 수 없습니다.",
-          };
-        }
-
-        const cbSec = getCircuitBreakerRemainingSec(player.lastMajorEventAt);
-        if (cbSec > 0) {
-          return {
-            success: false,
-            message: `서킷 브레이커 작동 중입니다. (${cbSec}초 후 주문 가능)`,
-          };
-        }
-
+        const prev = holdings[playerId];
         const basePrice = roundToTen(
           player.basePrice ?? player.initialPrice ?? player.currentPrice
         );
-        const floorPrice = roundToTen(basePrice * (1 - WEIGHTS.CAP_LIMIT));
-        const executedPriceCheck = roundToTen(player.currentPrice);
-        if (executedPriceCheck <= floorPrice) {
+        const gate = validateTradeOrder({
+          side: "SELL",
+          matchStatus: matchCtx.status,
+          basePrice,
+          currentPrice: player.currentPrice,
+          quantity,
+          holdingQuantity: prev?.quantity ?? 0,
+          lastMajorEventAt: player.lastMajorEventAt,
+        });
+        if (!gate.allowed || !prev) {
           return {
             success: false,
-            message: "하한가(-15%) 도달 · 매도 제한 (매수만 가능)",
+            message: gate.message ?? "주문을 실행할 수 없습니다.",
           };
         }
 
-        const prev = holdings[playerId];
-        if (!prev || prev.quantity < quantity) {
-          return {
-            success: false,
-            message: `보유 수량이 부족합니다. (현재 보유: ${prev?.quantity ?? 0}주)`,
-          };
-        }
-
-        const executedPrice = roundToTen(player.currentPrice);
+        const executedPrice = gate.executedPrice;
         const totalProceeds = roundToTen(executedPrice * quantity);
         const txRealizedPnL = roundToTen(
           (executedPrice - prev.avgBuyPrice) * quantity

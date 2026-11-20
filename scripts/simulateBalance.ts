@@ -17,12 +17,14 @@ const PASS_HIT_RATE_MIN_PCT = 0.5;
 const PASS_HIT_RATE_MAX_PCT = 10.0;
 const PASS_MAX_POS_SPREAD_PCT = 1.0;
 const PASS_ABS_OVERALL_MEAN_PCT = 0.5;
+const PASS_BEST_STRATEGY_MEAN_PCT = 1.0;
 
 interface CliOptions {
   matches: number;
   seeds: number;
   baseSeed: number;
   cap: number;
+  seedList?: number[];
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
@@ -30,6 +32,7 @@ function parseCliOptions(argv: string[]): CliOptions {
   let seeds = 5;
   let baseSeed = 20261119;
   let cap = 0.15;
+  let seedList: number[] | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -49,6 +52,18 @@ function parseCliOptions(argv: string[]): CliOptions {
     } else if (arg === "--seed" && next) {
       baseSeed = Math.floor(Number(next));
       i++;
+    } else if (arg.startsWith("--seed-list=")) {
+      seedList = arg
+        .slice("--seed-list=".length)
+        .split(",")
+        .map((s) => Math.floor(Number(s.trim())))
+        .filter((n) => Number.isFinite(n));
+    } else if (arg === "--seed-list" && next) {
+      seedList = next
+        .split(",")
+        .map((s) => Math.floor(Number(s.trim())))
+        .filter((n) => Number.isFinite(n));
+      i++;
     } else if (arg.startsWith("--cap=")) {
       cap = Math.max(0.05, Number(arg.slice("--cap=".length)));
     } else if (arg === "--cap" && next) {
@@ -56,7 +71,7 @@ function parseCliOptions(argv: string[]): CliOptions {
       i++;
     }
   }
-  return { matches, seeds, baseSeed, cap };
+  return { matches, seeds, baseSeed, cap, seedList };
 }
 
 function createRng(seed: number): () => number {
@@ -184,14 +199,36 @@ const YELLOW_CARD_PROB_BY_POS: Record<PosGroup, number> = {
   FW: 0.1,
 };
 
+type TeamTier = "STRONG" | "MID" | "WEAK";
+
+interface TeamStrength {
+  tier: TeamTier;
+  attack: number;
+  defense: number;
+}
+
+function sampleTeamStrength(rng: () => number): TeamStrength {
+  const u = rng();
+  if (u < 0.2) {
+    return { tier: "STRONG", attack: 1.35, defense: 0.75 };
+  }
+  if (u < 0.8) {
+    return { tier: "MID", attack: 1.0, defense: 1.0 };
+  }
+  return { tier: "WEAK", attack: 0.72, defense: 1.15 };
+}
+
 interface SeedMetrics {
   seed: number;
   participants: number;
+  intradayHits: number;
   intradayHitPct: number;
   closeHitPct: number;
   upperHitCount: number;
   earlyUpperHitCount: number;
   overallMeanPct: number;
+  bestStrategyMeanPct: number;
+  bestStrategyCount: number;
   posMeans: Record<PosGroup, number>;
   posCi95: Record<PosGroup, number>;
   maxSpreadPct: number;
@@ -213,6 +250,7 @@ function runSingleSeed(
   let upperHitCount = 0;
   let earlyUpperHitCount = 0;
   const allReturns: number[] = [];
+  const bestStrategyReturns: number[] = [];
   const maxAbsCumReturns: number[] = [];
   const groupReturns: Record<PosGroup, number[]> = {
     FW: [],
@@ -294,8 +332,12 @@ function runSingleSeed(
       return p.subInMinute !== undefined && min >= p.subInMinute;
     };
 
-    const homeGoals = samplePoisson(1.4, rng);
-    const awayGoals = samplePoisson(1.4, rng);
+    const homeStrength = sampleTeamStrength(rng);
+    const awayStrength = sampleTeamStrength(rng);
+    const homeLambda = Math.min(2.2, Math.max(0.8, 1.4 * homeStrength.attack * awayStrength.defense));
+    const awayLambda = Math.min(2.2, Math.max(0.8, 1.4 * awayStrength.attack * homeStrength.defense));
+    const homeGoals = samplePoisson(homeLambda, rng);
+    const awayGoals = samplePoisson(awayLambda, rng);
     const goalTimeline: { minute: number; side: "HOME" | "AWAY" }[] = [];
     for (let g = 0; g < homeGoals; g++) {
       goalTimeline.push({ minute: 2 + Math.floor(rng() * 88), side: "HOME" });
@@ -508,6 +550,18 @@ function runSingleSeed(
       const retPct = series.clampedReturn * 100;
       allReturns.push(retPct);
       groupReturns[posGroup].push(retPct);
+      if (
+        p.isStarter &&
+        posGroup === "FW" &&
+        ((p.teamSide === "HOME" &&
+          homeStrength.tier === "STRONG" &&
+          awayStrength.tier === "WEAK") ||
+          (p.teamSide === "AWAY" &&
+            awayStrength.tier === "STRONG" &&
+            homeStrength.tier === "WEAK"))
+      ) {
+        bestStrategyReturns.push(retPct);
+      }
     }
   }
 
@@ -518,6 +572,7 @@ function runSingleSeed(
   const dfStat = meanAndStd(groupReturns.DF);
   const gkStat = meanAndStd(groupReturns.GK);
   const overallStat = meanAndStd(allReturns);
+  const bestStrategyStat = meanAndStd(bestStrategyReturns);
 
   const posMeans: Record<PosGroup, number> = {
     FW: fwStat.mean,
@@ -548,11 +603,14 @@ function runSingleSeed(
   return {
     seed,
     participants: totalParticipants,
+    intradayHits,
     intradayHitPct: (intradayHits / totalParticipants) * 100,
     closeHitPct: (closeHits / totalParticipants) * 100,
     upperHitCount,
     earlyUpperHitCount,
     overallMeanPct: overallStat.mean,
+    bestStrategyMeanPct: bestStrategyStat.mean,
+    bestStrategyCount: bestStrategyReturns.length,
     posMeans,
     posCi95,
     maxSpreadPct:
@@ -565,10 +623,13 @@ function runSingleSeed(
 
 function main(): void {
   const opts = parseCliOptions(process.argv.slice(2));
-  const seedList = Array.from({ length: opts.seeds }, (_, idx) => opts.baseSeed + idx * 101);
+  const seedList =
+    opts.seedList && opts.seedList.length > 0
+      ? opts.seedList
+      : Array.from({ length: opts.seeds }, (_, idx) => opts.baseSeed + idx * 101);
 
   console.log(
-    `=== PitchTrade Balance Verification (matches=${opts.matches}/seed, seeds=${opts.seeds}, cap=±${(
+    `=== PitchTrade Balance Verification (matches=${opts.matches}/seed, seeds=${seedList.join(",")}, cap=±${(
       opts.cap * 100
     ).toFixed(0)}%) ===`
   );
@@ -578,7 +639,7 @@ function main(): void {
   console.log("\n[1] Per-Seed Breakdown:");
   for (const r of seedRuns) {
     console.log(
-      `  Seed ${r.seed}: IntradayHit=${r.intradayHitPct.toFixed(2)}% | CloseHit=${r.closeHitPct.toFixed(2)}% | Overall=${r.overallMeanPct >= 0 ? "+" : ""}${r.overallMeanPct.toFixed(2)}% | Spread=${r.maxSpreadPct.toFixed(2)}%p`
+      `  Seed ${r.seed}: IntradayHit=${r.intradayHitPct.toFixed(2)}% (${r.intradayHits}/${r.participants}) | CloseHit=${r.closeHitPct.toFixed(2)}% | Overall=${r.overallMeanPct >= 0 ? "+" : ""}${r.overallMeanPct.toFixed(2)}% | Spread=${r.maxSpreadPct.toFixed(2)}%p | BestStrat=${r.bestStrategyMeanPct >= 0 ? "+" : ""}${r.bestStrategyMeanPct.toFixed(2)}% (n=${r.bestStrategyCount})`
     );
   }
 
@@ -586,6 +647,11 @@ function main(): void {
   const closeStat = meanAndStd(seedRuns.map((r) => r.closeHitPct));
   const overallStat = meanAndStd(seedRuns.map((r) => r.overallMeanPct));
   const spreadStat = meanAndStd(seedRuns.map((r) => r.maxSpreadPct));
+  const bestStratStat = meanAndStd(seedRuns.map((r) => r.bestStrategyMeanPct));
+
+  const totalParticipantsAll = seedRuns.reduce((s, r) => s + r.participants, 0);
+  const totalIntradayHitsAll = seedRuns.reduce((s, r) => s + r.intradayHits, 0);
+  const totalBestStratAll = seedRuns.reduce((s, r) => s + r.bestStrategyCount, 0);
 
   const combinedMaxAbs = seedRuns
     .flatMap((r) => r.maxAbsCumReturnsAsc)
@@ -593,7 +659,7 @@ function main(): void {
 
   console.log("\n[2] Aggregate Across Seeds (Mean ± SD):");
   console.log(
-    `  Intraday Cap Hit Rate : ${intradayStat.mean.toFixed(2)}% ± ${intradayStat.std.toFixed(2)}%`
+    `  Intraday Cap Hit Rate : ${intradayStat.mean.toFixed(2)}% ± ${intradayStat.std.toFixed(2)}% (formula: totalIntradayHits / totalParticipants = ${totalIntradayHitsAll} / ${totalParticipantsAll} = ${((totalIntradayHitsAll / totalParticipantsAll) * 100).toFixed(2)}%)`
   );
   console.log(
     `  Close Cap Hit Rate    : ${closeStat.mean.toFixed(2)}% ± ${closeStat.std.toFixed(2)}%`
@@ -603,6 +669,9 @@ function main(): void {
   );
   console.log(
     `  Position Max Spread   : ${spreadStat.mean.toFixed(2)}%p ± ${spreadStat.std.toFixed(2)}%p`
+  );
+  console.log(
+    `  Best Strategy (Strong FW vs Weak) : ${bestStratStat.mean >= 0 ? "+" : ""}${bestStratStat.mean.toFixed(2)}% ± ${bestStratStat.std.toFixed(2)}% (n=${totalBestStratAll})`
   );
   console.log(
     `  Max Intraday |Return| : p50=${percentile(combinedMaxAbs, 50).toFixed(2)}% | p90=${percentile(combinedMaxAbs, 90).toFixed(2)}% | p99=${percentile(combinedMaxAbs, 99).toFixed(2)}%`
@@ -620,7 +689,7 @@ function main(): void {
   const totalEarlyUpper = seedRuns.reduce((s, r) => s + r.earlyUpperHitCount, 0);
   const earlyUpperPct = totalUpper > 0 ? (totalEarlyUpper / totalUpper) * 100 : 0;
   console.log(
-    `\n[3b] Early Upper-Cap Hit (<=2 individual events among +${(opts.cap * 100).toFixed(0)}% hits): ${earlyUpperPct.toFixed(2)}% (${totalEarlyUpper}/${totalUpper})`
+    `\n[3b] Early Upper-Cap Hit (<=2 individual events among +${(opts.cap * 100).toFixed(0)}% hits): ${earlyUpperPct.toFixed(2)}% (numerator=${totalEarlyUpper} / denominator=${totalUpper} upper-cap hitters)`
   );
 
   console.log("\n[3c] Event Contribution by Position (%p, Seed 1):");
@@ -636,7 +705,7 @@ function main(): void {
   console.log("\n[4] Cap Comparison Table (0.15 / 0.20 / 0.30 on Seed 1):");
   console.log("  Cap     | IntradayHit% | CloseHit% | OverallMean% | MaxSpread%p");
   for (const cmpCap of [0.15, 0.2, 0.3]) {
-    const cRes = runSingleSeed(opts.baseSeed, opts.matches, cmpCap);
+    const cRes = runSingleSeed(seedList[0], opts.matches, cmpCap);
     console.log(
       `  ±${(cmpCap * 100).toFixed(0).padStart(2, "0")}%   | ${cRes.intradayHitPct.toFixed(2).padStart(11)}% | ${cRes.closeHitPct.toFixed(2).padStart(8)}% | ${(cRes.overallMeanPct >= 0 ? "+" : "") + cRes.overallMeanPct.toFixed(2).padStart(10)}% | ${cRes.maxSpreadPct.toFixed(2).padStart(10)}%p`
     );
@@ -647,6 +716,7 @@ function main(): void {
     intradayStat.mean <= PASS_HIT_RATE_MAX_PCT;
   const passSpread = spreadStat.mean <= PASS_MAX_POS_SPREAD_PCT;
   const passOverall = Math.abs(overallStat.mean) <= PASS_ABS_OVERALL_MEAN_PCT;
+  const passBestStrategy = bestStratStat.mean <= PASS_BEST_STRATEGY_MEAN_PCT;
 
   console.log("\n[5] Verification Verdict:");
   console.log(
@@ -658,8 +728,11 @@ function main(): void {
   console.log(
     `  [${passOverall ? "PASS" : "FAIL"}] |Overall Mean Return| <= ${PASS_ABS_OVERALL_MEAN_PCT.toFixed(1)}%: ${Math.abs(overallStat.mean).toFixed(2)}%`
   );
+  console.log(
+    `  [${passBestStrategy ? "PASS" : "FAIL"}] Best Strategy (Strong FW vs Weak) Mean Return <= ${PASS_BEST_STRATEGY_MEAN_PCT.toFixed(1)}%: ${bestStratStat.mean >= 0 ? "+" : ""}${bestStratStat.mean.toFixed(2)}%`
+  );
 
-  if (!passHitRate || !passSpread || !passOverall) {
+  if (!passHitRate || !passSpread || !passOverall || !passBestStrategy) {
     process.exitCode = 1;
   }
 }

@@ -133,7 +133,7 @@ export default function RightTradeDockPanel({
       if (isMatchFinished) {
         setFeedback({
           type: "error",
-          text: "경기 종료 · 정산 완료된 종목은 주문할 수 없습니다.",
+          text: "경기 종료 · 거래 마감된 종목은 주문할 수 없습니다.",
         });
         return;
       }
@@ -153,7 +153,7 @@ export default function RightTradeDockPanel({
       if (isMatchFinished) {
         setFeedback({
           type: "error",
-          text: "경기 종료 · 정산 완료된 종목은 주문할 수 없습니다.",
+          text: "경기 종료 · 거래 마감된 종목은 주문할 수 없습니다.",
         });
         return;
       }
@@ -291,7 +291,7 @@ export default function RightTradeDockPanel({
             {/* Finished Match Settlement Notice */}
             {isMatchFinished && (
               <div className="flex items-center gap-1.5 rounded-xl bg-slate-100 border border-slate-200 px-3 py-2 text-[11px] font-bold text-slate-700">
-                <span>🏁 경기 종료 · 정산 완료 (주문 마감)</span>
+                <span>🏁 경기 종료 · 거래 마감 (주문 마감)</span>
               </div>
             )}
 
@@ -434,7 +434,7 @@ export default function RightTradeDockPanel({
                 }`}
               >
                 {isMatchFinished
-                  ? "경기 종료 · 정산 완료"
+                  ? "경기 종료 · 거래 마감"
                   : tradeType === "BUY"
                   ? isAtUpperLimit
                     ? "상한가 도달 · 매수 제한"

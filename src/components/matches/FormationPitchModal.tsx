@@ -29,6 +29,7 @@ import {
   calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import { getTierConfig } from "@/utils/tier";
+import { WEIGHTS } from "@/lib/weights";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface FormationPitchModalProps {
@@ -1179,11 +1180,11 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
 }: PitchPlayerNodeProps) {
   const base = player.openPrice ?? player.basePrice ?? player.initialPrice;
   const displayPrice = isUpcoming
-    ? Math.round((base * 1.01) / 10) * 10
+    ? Math.round((base * (1 + WEIGHTS.LINEUP_CONFIRMED)) / 10) * 10
     : player.currentPrice;
   const diff = displayPrice - base;
   const pct = isUpcoming
-    ? "1.00"
+    ? (WEIGHTS.LINEUP_CONFIRMED * 100).toFixed(2)
     : calculateChangePercentFromOpen(displayPrice, base).toFixed(2);
   const isUp = diff > 0;
   const isDown = diff < 0;
@@ -1266,13 +1267,13 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
   const hasPlayed = (sub.events?.length ?? 0) > 0;
   // Pre-match bench exclusion: -2.00%; unused bench during LIVE/FT: fixed 0.00%
   const displayPrice = isUpcoming
-    ? Math.round((base * 0.98) / 10) * 10
+    ? Math.round((base * (1 + WEIGHTS.LINEUP_EXCLUDED)) / 10) * 10
     : hasPlayed
     ? sub.currentPrice
     : base;
   const diff = displayPrice - base;
   const pct = isUpcoming
-    ? "-2.00"
+    ? (WEIGHTS.LINEUP_EXCLUDED * 100).toFixed(2)
     : hasPlayed
     ? calculateChangePercentFromOpen(displayPrice, base).toFixed(2)
     : "0.00";
