@@ -1,10 +1,9 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); all player avatars across pitch view, market rankings, portfolio holdings, right trade dock, mobile trade sheet, and player detail modal now render via `PlayerAvatar`.
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); responsive layout for Hot Player Spotlight (`1 -> 2 -> 3` cols, 3-tier vertical card layout) and section headers updated in `MarketChartTabView.tsx`.
 - `npx tsc --noEmit --incremental false` passes (0 errors); `node --test tests/priceEngine.test.ts tests/orderGate.test.ts tests/tradeStore.test.ts` passes (17/17).
 
 ## Recent Changes
-- `src/components/portfolio/PortfolioTabView.tsx`: Replaced custom square `teamShort + backNumber` badge on holding cards with `<PlayerAvatar player={player} size={44} />`.
-- `src/components/TradeBottomSheet.tsx`: Added `<PlayerAvatar player={player} size={44} />` to the top header and removed the redundant `#backNumber` dark pill badge.
+- `src/components/market/MarketChartTabView.tsx`: Changed Spotlight grid to `grid-cols-1 sm:grid-cols-2 xl:grid-cols-3`, redesigned each card into a 3-tier vertical layout (avatar+sparkline / name+pos·team / price+pct), and added `whitespace-nowrap break-keep` on section headers.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.
