@@ -45,6 +45,8 @@ src/
 scripts/
 └── simulateBalance.ts # 50,000경기 몬테카를로 경제 밸런스 검증 시뮬레이터
 tests/                 # 가격 엔진 및 주문 가드 단위 테스트
+```
+---
 
 🚀 시작하기
 # 1. 저장소 클론 및 패키지 설치
@@ -58,6 +60,7 @@ echo "FOOTBALL_DATA_API_KEY=your_api_key_here" > .env.local
 # 3. 개발 서버 실행
 npm run dev
 
+---
 🧪 테스트 및 밸런스 시뮬레이션 실행
 # 단위 테스트 실행
 node --test tests/*.test.ts
