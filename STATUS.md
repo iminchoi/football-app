@@ -1,12 +1,10 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); UI trading panels (`RightTradeDockPanel`, `TradeBottomSheet`, `MatchTimelineChart`) now bind directly to `useTradeStore.activeMatchContext` from every click path (summary list and pitch view).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); UI trading panels (`RightTradeDockPanel`, `TradeBottomSheet`, `MatchTimelineChart`) bind directly to `useTradeStore.activeMatchContext`.
+- `TradeBottomSheet.tsx` Rules of Hooks order fixed (`useTradeStore((s) => s.activeMatchContext)` moved above early `return null`).
 - `npx tsc --noEmit --incremental false` passes (0 errors); `node --test tests/priceEngine.test.ts tests/orderGate.test.ts tests/tradeStore.test.ts` passes (17/17).
 
 ## Recent Changes
-- `src/types/index.ts`: Added `ActiveMatchContext` and `buildActiveMatchContext`.
-- `src/store/useTradeStore.ts`, `src/app/page.tsx`: Added `activeMatchContext` state and `selectPlayer(player, matchContext?)`; enforced `activeMatchContext` status in `buyPlayer`/`sellPlayer`.
-- `src/components/matches/MatchAccordionCard.tsx`, `FormationPitchModal.tsx`, `MatchesTabView.tsx`: Passed `buildActiveMatchContext(match)` on both summary list and pitch view clicks; disabled `FT` summary `매수` buttons as `마감`.
-- `src/components/market/MatchTimelineChart.tsx`, `RightTradeDockPanel.tsx`, `TradeBottomSheet.tsx`: Rendered header/status from `activeMatchContext` first and reset `PRE` price/events/chart to flat baseline (`0P / 0.00%`).
+- `src/components/TradeBottomSheet.tsx`: Moved `activeMatchContext` selector hook above `if (!playerId || !player) return null` to keep React hook call order invariant across renders.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

@@ -447,6 +447,7 @@ export default function TradeBottomSheet({
   const user = useTradeStore((state) => state.user);
   const players = useTradeStore((state) => state.players);
   const matches = useTradeStore((state) => state.matches);
+  const activeMatchContext = useTradeStore((state) => state.activeMatchContext);
   const cash = useTradeStore((state) => state.cash);
   const holdings = useTradeStore((state) => state.holdings);
   const accounts = useTradeStore((state) => state.accounts);
@@ -529,7 +530,6 @@ export default function TradeBottomSheet({
     player.openPrice ?? player.priceHistory[0]?.price ?? basePrice
   );
   const ctx = resolvePlayerMatchContext(player, matches);
-  const activeMatchContext = useTradeStore((s) => s.activeMatchContext);
   const effectiveStatus = activeMatchContext
     ? activeMatchContext.status === "PRE"
       ? "UPCOMING"
