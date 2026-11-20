@@ -1,5 +1,6 @@
 import {
   buildPriceSeries,
+  eventDelta,
   fanOutTeamEventsToPlayers,
 } from "../src/lib/priceEngine.ts";
 import type {
@@ -28,7 +29,7 @@ function parseCliOptions(argv: string[]): CliOptions {
   let matches = 1000;
   let seeds = 5;
   let baseSeed = 20261119;
-  let cap = 0.3;
+  let cap = 0.15;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -157,16 +158,45 @@ function meanAndStd(arr: number[]): { mean: number; std: number; ci95: number } 
   return { mean, std, ci95 };
 }
 
+type ContribBucket =
+  | "GOAL"
+  | "ASSIST"
+  | "KEY_ACTION"
+  | "TEAM_GOAL"
+  | "TEAM_CONCEDED"
+  | "CLEAN_SHEET"
+  | "CARD";
+
+const CONTRIB_BUCKETS: ContribBucket[] = [
+  "GOAL",
+  "ASSIST",
+  "KEY_ACTION",
+  "TEAM_GOAL",
+  "TEAM_CONCEDED",
+  "CLEAN_SHEET",
+  "CARD",
+];
+
+const YELLOW_CARD_PROB_BY_POS: Record<PosGroup, number> = {
+  GK: 0.02,
+  DF: 0.18,
+  MF: 0.15,
+  FW: 0.1,
+};
+
 interface SeedMetrics {
   seed: number;
   participants: number;
   intradayHitPct: number;
   closeHitPct: number;
+  upperHitCount: number;
+  earlyUpperHitCount: number;
   overallMeanPct: number;
   posMeans: Record<PosGroup, number>;
   posCi95: Record<PosGroup, number>;
   maxSpreadPct: number;
   maxAbsCumReturnsAsc: number[];
+  contribMeanByPos: Record<PosGroup, Record<ContribBucket, number>>;
 }
 
 function runSingleSeed(
@@ -180,6 +210,8 @@ function runSingleSeed(
   let totalParticipants = 0;
   let intradayHits = 0;
   let closeHits = 0;
+  let upperHitCount = 0;
+  let earlyUpperHitCount = 0;
   const allReturns: number[] = [];
   const maxAbsCumReturns: number[] = [];
   const groupReturns: Record<PosGroup, number[]> = {
@@ -187,6 +219,12 @@ function runSingleSeed(
     MF: [],
     DF: [],
     GK: [],
+  };
+  const contribSums: Record<PosGroup, Record<ContribBucket, number>> = {
+    FW: { GOAL: 0, ASSIST: 0, KEY_ACTION: 0, TEAM_GOAL: 0, TEAM_CONCEDED: 0, CLEAN_SHEET: 0, CARD: 0 },
+    MF: { GOAL: 0, ASSIST: 0, KEY_ACTION: 0, TEAM_GOAL: 0, TEAM_CONCEDED: 0, CLEAN_SHEET: 0, CARD: 0 },
+    DF: { GOAL: 0, ASSIST: 0, KEY_ACTION: 0, TEAM_GOAL: 0, TEAM_CONCEDED: 0, CLEAN_SHEET: 0, CARD: 0 },
+    GK: { GOAL: 0, ASSIST: 0, KEY_ACTION: 0, TEAM_GOAL: 0, TEAM_CONCEDED: 0, CLEAN_SHEET: 0, CARD: 0 },
   };
 
   for (let m = 0; m < matchCount; m++) {
@@ -376,7 +414,8 @@ function runSingleSeed(
       const minStart = p.isStarter ? 3 : p.subInMinute ?? 60;
       const minEnd = subOutMinute.get(p.playerId) ?? 89;
       if (minEnd <= minStart) continue;
-      if (rng() < 0.15) {
+      const posGroup = toPosGroup(p.position as Position);
+      if (rng() < YELLOW_CARD_PROB_BY_POS[posGroup]) {
         teamEvents.push({
           id: `${matchId}-ev-${evSeq++}`,
           minute: minStart + Math.floor(rng() * Math.max(1, minEnd - minStart)),
@@ -398,35 +437,77 @@ function runSingleSeed(
 
     const fanned = fanOutTeamEventsToPlayers(participants, teamEvents);
     for (const p of participants) {
+      const evs = fanned[p.playerId] ?? [];
+      const ctx = {
+        position: p.position,
+        playerId: p.playerId,
+        matchId,
+        isStarter: p.isStarter,
+        subInMinute: p.subInMinute,
+      };
       const series = buildPriceSeries(
         BASE_PRICE,
-        fanned[p.playerId] ?? [],
-        {
-          position: p.position,
-          playerId: p.playerId,
-          matchId,
-          isStarter: p.isStarter,
-          subInMinute: p.subInMinute,
-        },
+        evs,
+        ctx,
         90,
         capLimit
       );
 
       totalParticipants += 1;
+      const posGroup = toPosGroup(p.position as Position);
+
+      for (const ev of evs) {
+        const dPct = eventDelta(ev, ctx) * 100;
+        if (dPct === 0) continue;
+        if (ev.type === "GOAL") contribSums[posGroup].GOAL += dPct;
+        else if (ev.type === "ASSIST") contribSums[posGroup].ASSIST += dPct;
+        else if (ev.type === "KEY_ACTION" || ev.type === "SAVE" || ev.type === "DEFENSIVE_ACTION" || ev.type === "KEY_PLAY") {
+          contribSums[posGroup].KEY_ACTION += dPct;
+        } else if (ev.type === "TEAM_GOAL") contribSums[posGroup].TEAM_GOAL += dPct;
+        else if (ev.type === "TEAM_CONCEDED" || ev.type === "CONCEDED") {
+          contribSums[posGroup].TEAM_CONCEDED += dPct;
+        } else if (ev.type === "CLEAN_SHEET_45" || ev.type === "CLEAN_SHEET_75") {
+          contribSums[posGroup].CLEAN_SHEET += dPct;
+        } else if (ev.type === "YELLOW_CARD" || ev.type === "RED_CARD") {
+          contribSums[posGroup].CARD += dPct;
+        }
+      }
+
       let maxAbsRaw = 0;
       let hitIntraday = false;
+      let firstUpperHitMin = -1;
       for (const pt of series.points) {
         const rr = Math.abs(pt.rawReturn ?? 0);
         if (rr > maxAbsRaw) maxAbsRaw = rr;
-        if (Math.abs(pt.clampedReturn ?? 0) >= capLimit) hitIntraday = true;
+        const cr = pt.clampedReturn ?? 0;
+        if (Math.abs(cr) >= capLimit) hitIntraday = true;
+        if (firstUpperHitMin === -1 && cr >= capLimit) {
+          firstUpperHitMin = pt.minute;
+        }
       }
       if (hitIntraday) intradayHits += 1;
       if (Math.abs(series.clampedReturn) >= capLimit) closeHits += 1;
 
+      if (firstUpperHitMin !== -1) {
+        upperHitCount += 1;
+        const indivCount = evs.filter(
+          (e) =>
+            e.minute <= firstUpperHitMin &&
+            (e.type === "GOAL" ||
+              e.type === "ASSIST" ||
+              e.type === "KEY_ACTION" ||
+              e.type === "YELLOW_CARD" ||
+              e.type === "RED_CARD")
+        ).length;
+        if (indivCount <= 2) {
+          earlyUpperHitCount += 1;
+        }
+      }
+
       maxAbsCumReturns.push(maxAbsRaw * 100);
       const retPct = series.clampedReturn * 100;
       allReturns.push(retPct);
-      groupReturns[toPosGroup(p.position as Position)].push(retPct);
+      groupReturns[posGroup].push(retPct);
     }
   }
 
@@ -451,11 +532,26 @@ function runSingleSeed(
     GK: gkStat.ci95,
   };
 
+  const contribMeanByPos: Record<PosGroup, Record<ContribBucket, number>> = {
+    FW: { GOAL: 0, ASSIST: 0, KEY_ACTION: 0, TEAM_GOAL: 0, TEAM_CONCEDED: 0, CLEAN_SHEET: 0, CARD: 0 },
+    MF: { GOAL: 0, ASSIST: 0, KEY_ACTION: 0, TEAM_GOAL: 0, TEAM_CONCEDED: 0, CLEAN_SHEET: 0, CARD: 0 },
+    DF: { GOAL: 0, ASSIST: 0, KEY_ACTION: 0, TEAM_GOAL: 0, TEAM_CONCEDED: 0, CLEAN_SHEET: 0, CARD: 0 },
+    GK: { GOAL: 0, ASSIST: 0, KEY_ACTION: 0, TEAM_GOAL: 0, TEAM_CONCEDED: 0, CLEAN_SHEET: 0, CARD: 0 },
+  };
+  for (const pos of ["FW", "MF", "DF", "GK"] as PosGroup[]) {
+    const cnt = Math.max(1, groupReturns[pos].length);
+    for (const b of CONTRIB_BUCKETS) {
+      contribMeanByPos[pos][b] = contribSums[pos][b] / cnt;
+    }
+  }
+
   return {
     seed,
     participants: totalParticipants,
     intradayHitPct: (intradayHits / totalParticipants) * 100,
     closeHitPct: (closeHits / totalParticipants) * 100,
+    upperHitCount,
+    earlyUpperHitCount,
     overallMeanPct: overallStat.mean,
     posMeans,
     posCi95,
@@ -463,6 +559,7 @@ function runSingleSeed(
       Math.max(posMeans.FW, posMeans.MF, posMeans.DF, posMeans.GK) -
       Math.min(posMeans.FW, posMeans.MF, posMeans.DF, posMeans.GK),
     maxAbsCumReturnsAsc: maxAbsCumReturns,
+    contribMeanByPos,
   };
 }
 
@@ -516,6 +613,23 @@ function main(): void {
   for (const pos of ["FW", "MF", "DF", "GK"] as PosGroup[]) {
     console.log(
       `  ${pos}: ${ref.posMeans[pos] >= 0 ? "+" : ""}${ref.posMeans[pos].toFixed(2)}% ± ${ref.posCi95[pos].toFixed(2)}% (95% CI)`
+    );
+  }
+
+  const totalUpper = seedRuns.reduce((s, r) => s + r.upperHitCount, 0);
+  const totalEarlyUpper = seedRuns.reduce((s, r) => s + r.earlyUpperHitCount, 0);
+  const earlyUpperPct = totalUpper > 0 ? (totalEarlyUpper / totalUpper) * 100 : 0;
+  console.log(
+    `\n[3b] Early Upper-Cap Hit (<=2 individual events among +${(opts.cap * 100).toFixed(0)}% hits): ${earlyUpperPct.toFixed(2)}% (${totalEarlyUpper}/${totalUpper})`
+  );
+
+  console.log("\n[3c] Event Contribution by Position (%p, Seed 1):");
+  console.log("  Pos |   GOAL  |  ASSIST | KEY_ACT | TM_GOAL | TM_CONC |  CLN_SH |   CARD");
+  for (const pos of ["FW", "MF", "DF", "GK"] as PosGroup[]) {
+    const c = ref.contribMeanByPos[pos];
+    const fmt = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}`.padStart(7);
+    console.log(
+      `  ${pos.padEnd(3)} | ${fmt(c.GOAL)} | ${fmt(c.ASSIST)} | ${fmt(c.KEY_ACTION)} | ${fmt(c.TEAM_GOAL)} | ${fmt(c.TEAM_CONCEDED)} | ${fmt(c.CLEAN_SHEET)} | ${fmt(c.CARD)}`
     );
   }
 

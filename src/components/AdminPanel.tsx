@@ -11,6 +11,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { useTradeStore, roundToTen } from "@/store/useTradeStore";
+import { WEIGHTS } from "@/lib/weights";
 import { ChartEventType } from "@/types";
 
 export default function AdminPanel() {
@@ -52,7 +53,7 @@ export default function AdminPanel() {
     }
     if (res.capped) {
       showTempLog(
-        `🔥 ${res.player.name} 이미 상한가(+30% · ${res.nextPrice.toLocaleString()}P) 도달! 득점(+1골) 및 경기 스코어 반영됨`
+        `🔥 ${res.player.name} 이미 상한가(+15% · ${res.nextPrice.toLocaleString()}P) 도달! 득점(+1골) 및 경기 스코어 반영됨`
       );
       return;
     }
@@ -127,7 +128,8 @@ export default function AdminPanel() {
               {players.map((p) => {
                 const owned = holdings[p.id]?.quantity ?? 0;
                 const base = roundToTen(p.basePrice ?? p.initialPrice ?? 10000);
-                const isAtCap = p.currentPrice >= roundToTen(base * 1.3);
+                const isAtCap =
+              p.currentPrice >= roundToTen(base * (1 + WEIGHTS.CAP_LIMIT));
                 return (
                   <option key={p.id} value={p.id}>
                     {p.name} ({p.teamShort}) · {p.currentPrice.toLocaleString()}P

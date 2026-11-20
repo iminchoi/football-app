@@ -44,6 +44,7 @@ import {
   isNegativeEventType,
 } from "@/lib/priceEngine";
 import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
+import { WEIGHTS } from "@/lib/weights";
 
 export {
   getAvailableShares,
@@ -1753,7 +1754,7 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         }
 
-        const { user, cash, players, holdings, accounts, transactions } = get();
+        const { user, cash, players, matches, holdings, accounts, transactions } = get();
         if (!user) {
           return {
             success: false,
@@ -1764,6 +1765,14 @@ export const useTradeStore = create<TradeStoreState>()(
         const player = players.find((p) => p.id === playerId);
         if (!player) {
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
+        }
+
+        const matchCtx = resolvePlayerMatchContext(player, matches);
+        if (matchCtx.status === "FT") {
+          return {
+            success: false,
+            message: "경기 종료 · 정산 완료된 종목은 주문할 수 없습니다.",
+          };
         }
 
         const cbSec = getCircuitBreakerRemainingSec(player.lastMajorEventAt);
@@ -1777,12 +1786,12 @@ export const useTradeStore = create<TradeStoreState>()(
         const basePrice = roundToTen(
           player.basePrice ?? player.initialPrice ?? player.currentPrice
         );
-        const capPrice = roundToTen(basePrice * 1.3);
+        const capPrice = roundToTen(basePrice * (1 + WEIGHTS.CAP_LIMIT));
         const executedPrice = roundToTen(player.currentPrice);
         if (executedPrice >= capPrice) {
           return {
             success: false,
-            message: "상한가 도달 — 추가 매수 불가 (매도만 가능)",
+            message: "상한가(+15%) 도달 · 매수 제한 (매도만 가능)",
           };
         }
 
@@ -1859,7 +1868,7 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         }
 
-        const { user, cash, realizedPnL, players, holdings, transactions } =
+        const { user, cash, realizedPnL, players, matches, holdings, transactions } =
           get();
         if (!user) {
           return {
@@ -1873,11 +1882,31 @@ export const useTradeStore = create<TradeStoreState>()(
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
         }
 
+        const matchCtx = resolvePlayerMatchContext(player, matches);
+        if (matchCtx.status === "FT") {
+          return {
+            success: false,
+            message: "경기 종료 · 정산 완료된 종목은 주문할 수 없습니다.",
+          };
+        }
+
         const cbSec = getCircuitBreakerRemainingSec(player.lastMajorEventAt);
         if (cbSec > 0) {
           return {
             success: false,
             message: `서킷 브레이커 작동 중입니다. (${cbSec}초 후 주문 가능)`,
+          };
+        }
+
+        const basePrice = roundToTen(
+          player.basePrice ?? player.initialPrice ?? player.currentPrice
+        );
+        const floorPrice = roundToTen(basePrice * (1 - WEIGHTS.CAP_LIMIT));
+        const executedPriceCheck = roundToTen(player.currentPrice);
+        if (executedPriceCheck <= floorPrice) {
+          return {
+            success: false,
+            message: "하한가(-15%) 도달 · 매도 제한 (매수만 가능)",
           };
         }
 
@@ -2011,7 +2040,7 @@ export const useTradeStore = create<TradeStoreState>()(
           const pool = heldCandidates.length > 0 ? heldCandidates : players;
           const nonCapped = pool.filter((p) => {
             const base = roundToTen(p.basePrice ?? p.initialPrice ?? 10000);
-            return p.currentPrice < roundToTen(base * 1.3);
+            return p.currentPrice < roundToTen(base * (1 + WEIGHTS.CAP_LIMIT));
           });
           const pickFrom = nonCapped.length > 0 ? nonCapped : pool;
           target = pickFrom[Math.floor(Math.random() * pickFrom.length)];
@@ -2027,8 +2056,8 @@ export const useTradeStore = create<TradeStoreState>()(
           basePrice
         );
         const tierCfg = getTierConfig(basePrice);
-        const capPrice = roundToTen(basePrice * 1.3);
-        const floorPrice = roundToTen(basePrice * 0.7);
+        const capPrice = roundToTen(basePrice * (1 + WEIGHTS.CAP_LIMIT));
+        const floorPrice = roundToTen(basePrice * (1 - WEIGHTS.CAP_LIMIT));
         const prevPrice = clampToPriceLimit(target.currentPrice, basePrice);
 
         const eventMetaMap: Record<

@@ -463,30 +463,47 @@ export default function MatchesTabView({
       </div>
 
       {/* API Data Source / Guide Banner */}
-      <div className="mx-4 mt-3.5 space-y-2">
-        <div className="flex items-center justify-between rounded-xl bg-emerald-50/90 border border-emerald-200/70 px-3.5 py-2 text-xs text-emerald-900">
-          <div className="flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5 text-[#00985f] shrink-0" />
-            <span>
-              경기를 눌러 출전 선수의 <strong>실시간 시세</strong>를 확인하고 거래해보세요!
-            </span>
-          </div>
-          <span className="shrink-0 rounded-md bg-white/80 px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#00985f] border border-emerald-200">
-            {dataSource === "FOOTBALL_DATA_API"
-              ? "LIVE API"
-              : dataSource === "AMATCH_FALLBACK"
-              ? "A-MATCH MODE"
-              : "DEMO MODE"}
-          </span>
-        </div>
+      {(() => {
+        const allFinished =
+          resolvedMatches.length > 0 &&
+          resolvedMatches.every((m) => m.status === "FT");
+        return (
+          <div className="mx-4 mt-3.5 space-y-2">
+            <div className="flex items-center justify-between rounded-xl bg-emerald-50/90 border border-emerald-200/70 px-3.5 py-2 text-xs text-emerald-900">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-[#00985f] shrink-0" />
+                <span>
+                  {allFinished ? (
+                    <>
+                      <strong>경기 종료 · 정산 완료</strong> (최종 종가 및 경기 이벤트 확인 가능)
+                    </>
+                  ) : (
+                    <>
+                      경기를 눌러 출전 선수의 <strong>실시간 시세</strong>를 확인하고 거래해보세요!
+                    </>
+                  )}
+                </span>
+              </div>
+              <span className="shrink-0 rounded-md bg-white/80 px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#00985f] border border-emerald-200">
+                {allFinished
+                  ? "경기 종료 · 정산 완료"
+                  : dataSource === "FOOTBALL_DATA_API"
+                  ? "LIVE API"
+                  : dataSource === "AMATCH_FALLBACK"
+                  ? "A-MATCH MODE"
+                  : "DEMO MODE"}
+              </span>
+            </div>
 
-        {statusMessage && (
-          <div className="flex items-start gap-1.5 rounded-xl bg-gray-100 border border-gray-200/80 px-3 py-2 text-[11px] text-gray-600">
-            <Info className="h-3.5 w-3.5 text-gray-400 shrink-0 mt-0.5" />
-            <span>{statusMessage}</span>
+            {statusMessage && (
+              <div className="flex items-start gap-1.5 rounded-xl bg-gray-100 border border-gray-200/80 px-3 py-2 text-[11px] text-gray-600">
+                <Info className="h-3.5 w-3.5 text-gray-400 shrink-0 mt-0.5" />
+                <span>{statusMessage}</span>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        );
+      })()}
 
       {/* Loading Skeleton or Empty State or League Grouped Match Cards */}
       {isLoading ? (

@@ -29,6 +29,7 @@ import {
 } from "@/lib/priceEngine";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
 import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
+import { WEIGHTS } from "@/lib/weights";
 import { Player, TradeType, getPositionLine } from "@/types";
 import PlayerDetailModal from "@/components/PlayerDetailModal";
 import MatchTimelineChart from "@/components/market/MatchTimelineChart";
@@ -64,8 +65,8 @@ interface ToastNotificationState {
   visible: boolean;
 }
 
-const MAX_PRICE_MULTIPLIER = 1.3;
-const MIN_PRICE_MULTIPLIER = 0.7;
+const MAX_PRICE_MULTIPLIER = 1 + WEIGHTS.CAP_LIMIT;
+const MIN_PRICE_MULTIPLIER = 1 - WEIGHTS.CAP_LIMIT;
 
 const PERIOD_TABS: { key: ChartPeriod; label: string; desc: string }[] = [
   { key: "TICK", label: "실시간 틱", desc: "5초 단위 실시간 체결 추이" },
@@ -588,6 +589,8 @@ export default function TradeBottomSheet({
   const isAtUpperLimit = currentPrice >= maxCapPrice;
   const isAtLowerLimit = currentPrice <= minFloorPrice;
   const isBuyBlockedByCap = tradeType === "BUY" && isAtUpperLimit;
+  const isSellBlockedByFloor = tradeType === "SELL" && isAtLowerLimit;
+  const isMatchFinished = ctx.status === "FT";
 
   // Period chart series
   const series = buildPeriodSeries(player, period);
@@ -621,7 +624,11 @@ export default function TradeBottomSheet({
   // When unauthenticated (user === null), button is always clickable to open AuthModal immediately
   const canExecute = !user
     ? true
-    : isCircuitLocked || isBuyBlockedByCap || isBuySoldOut
+    : isMatchFinished ||
+      isCircuitLocked ||
+      isBuyBlockedByCap ||
+      isSellBlockedByFloor ||
+      isBuySoldOut
     ? false
     : quantity >= 1 &&
       (tradeType === "BUY" ? totalAmount <= cash : quantity <= ownedQty);
@@ -1215,23 +1222,30 @@ export default function TradeBottomSheet({
             </div>
           </div>
 
+          {/* Finished Match Settlement Banner */}
+          {isMatchFinished && (
+            <div className="flex items-center justify-between rounded-xl bg-slate-100 border border-slate-200 px-3 py-1.5 text-[11px] font-extrabold text-slate-700">
+              <span>🏁 경기 종료 · 정산 완료 (주문 마감)</span>
+            </div>
+          )}
+
           {/* 30s Circuit Breaker Banner */}
-          {isCircuitLocked && (
+          {!isMatchFinished && isCircuitLocked && (
             <div className="flex items-center justify-between rounded-xl bg-amber-50 border border-amber-200 px-3 py-1.5 text-[11px] font-extrabold text-amber-800">
               <span>⚡ 서킷 브레이커 작동 중 ({cbRemainingSec}초 후 주문 가능)</span>
             </div>
           )}
 
-          {/* Upper (+30%) / Lower (-30%) Price Limit Notice Banner */}
+          {/* Upper (+15%) / Lower (-15%) Price Limit Notice Banner */}
           {isAtUpperLimit && (
             <div className="flex items-center justify-between rounded-xl bg-rose-50 border border-rose-200 px-3 py-1.5 text-[11px] font-extrabold text-rose-600">
-              <span>🔥 상한가(+30%) 도달 — 추가 매수 불가 (매도만 가능)</span>
+              <span>🔥 상한가(+15%) 도달 · 매수 제한 (매도만 가능)</span>
               <span className="font-mono">{maxCapPrice.toLocaleString()}P</span>
             </div>
           )}
           {isAtLowerLimit && (
             <div className="flex items-center justify-between rounded-xl bg-sky-50 border border-sky-200 px-3 py-1.5 text-[11px] font-extrabold text-sky-700">
-              <span>❄️ 하한가(-30%) 도달 — 가격 하한선 보호 적용 중</span>
+              <span>❄️ 하한가(-15%) 도달 · 매도 제한 (매수만 가능)</span>
               <span className="font-mono">{minFloorPrice.toLocaleString()}P</span>
             </div>
           )}
@@ -1260,8 +1274,12 @@ export default function TradeBottomSheet({
           >
             {!user
               ? "[🔒 로그인 후 거래하기]"
+              : isMatchFinished
+              ? "경기 종료 · 정산 완료"
               : isBuyBlockedByCap
-              ? "상한가 도달 — 추가 매수 불가 (매도만 가능)"
+              ? "상한가 도달 · 매수 제한"
+              : isSellBlockedByFloor
+              ? "하한가 도달 · 매도 제한"
               : isBuySoldOut
               ? "물량 소진 (Sold Out)"
               : tradeType === "BUY"

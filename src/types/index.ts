@@ -230,7 +230,7 @@ export interface Player {
   tier: PlayerTier;
   totalShares: number; // 총 발행 주식 수 (S티어 500, A티어 1000, B티어 2500, C티어 5000)
   marketSupply: number; // 초기 시장 잔여 한도 (정적 기준값)
-  basePrice?: number; // Permanent initial reference price for ±30% cap/floor
+  basePrice?: number; // Permanent initial reference price for ±15% cap/floor
   openPrice?: number; // 경기 시작(minute: 0) 시점의 시가
   closePrice?: number; // 경기 종료(FT, minute: 90) 시점의 확정 종가
   initialPrice: number;

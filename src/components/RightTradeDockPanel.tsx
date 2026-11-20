@@ -18,6 +18,8 @@ import {
   calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
+import { resolvePlayerMatchContext } from "@/lib/priceEngine";
+import { WEIGHTS } from "@/lib/weights";
 import { TradeType } from "@/types";
 import { getTierConfig } from "@/utils/tier";
 import MatchTimelineChart from "@/components/market/MatchTimelineChart";
@@ -43,6 +45,7 @@ export default function RightTradeDockPanel({
   const user = useTradeStore((s) => s.user);
   const cash = useTradeStore((s) => s.cash);
   const players = useTradeStore((s) => s.players);
+  const matches = useTradeStore((s) => s.matches);
   const holdings = useTradeStore((s) => s.holdings);
   const watchlist = useTradeStore((s) => s.watchlist);
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
@@ -94,10 +97,12 @@ export default function RightTradeDockPanel({
   const openPrice = roundToTen(
     player.openPrice ?? player.priceHistory[0]?.price ?? basePrice
   );
-  const capPrice = roundToTen(basePrice * 1.3);
-  const floorPrice = roundToTen(basePrice * 0.7);
+  const capPrice = roundToTen(basePrice * (1 + WEIGHTS.CAP_LIMIT));
+  const floorPrice = roundToTen(basePrice * (1 - WEIGHTS.CAP_LIMIT));
   const isAtUpperLimit = player.currentPrice >= capPrice;
   const isAtLowerLimit = player.currentPrice <= floorPrice;
+  const matchCtx = resolvePlayerMatchContext(player, matches);
+  const isMatchFinished = matchCtx.status === "FT";
 
   const diff = calculateDiffFromOpen(player.currentPrice, openPrice);
   const pct = calculateChangePercentFromOpen(player.currentPrice, openPrice);
@@ -125,10 +130,17 @@ export default function RightTradeDockPanel({
       return;
     }
     if (tradeType === "BUY") {
+      if (isMatchFinished) {
+        setFeedback({
+          type: "error",
+          text: "경기 종료 · 정산 완료된 종목은 주문할 수 없습니다.",
+        });
+        return;
+      }
       if (isAtUpperLimit) {
         setFeedback({
           type: "error",
-          text: "상한가(+30%) 도달로 추가 매수가 제한됩니다.",
+          text: "상한가(+15%) 도달 · 매수 제한",
         });
         return;
       }
@@ -138,10 +150,17 @@ export default function RightTradeDockPanel({
         text: res.message,
       });
     } else {
+      if (isMatchFinished) {
+        setFeedback({
+          type: "error",
+          text: "경기 종료 · 정산 완료된 종목은 주문할 수 없습니다.",
+        });
+        return;
+      }
       if (isAtLowerLimit) {
         setFeedback({
           type: "error",
-          text: "하한가(-30%) 도달로 매도가 제한됩니다.",
+          text: "하한가(-15%) 도달 · 매도 제한",
         });
         return;
       }
@@ -269,8 +288,15 @@ export default function RightTradeDockPanel({
               </button>
             </div>
 
+            {/* Finished Match Settlement Notice */}
+            {isMatchFinished && (
+              <div className="flex items-center gap-1.5 rounded-xl bg-slate-100 border border-slate-200 px-3 py-2 text-[11px] font-bold text-slate-700">
+                <span>🏁 경기 종료 · 정산 완료 (주문 마감)</span>
+              </div>
+            )}
+
             {/* 30s Circuit Breaker Guard Notice */}
-            {isCircuitLocked && (
+            {!isMatchFinished && isCircuitLocked && (
               <div className="flex items-center gap-1.5 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] font-bold text-amber-800">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                 <span>
@@ -286,8 +312,8 @@ export default function RightTradeDockPanel({
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                 <span>
                   {tradeType === "BUY"
-                    ? `상한가(+30%, ${capPrice.toLocaleString()}P) 도달로 매수가 제한됩니다.`
-                    : `하한가(-30%, ${floorPrice.toLocaleString()}P) 도달로 매도가 제한됩니다.`}
+                    ? `상한가(+15%, ${capPrice.toLocaleString()}P) 도달 · 매수 제한`
+                    : `하한가(-15%, ${floorPrice.toLocaleString()}P) 도달 · 매도 제한`}
                 </span>
               </div>
             )}
@@ -394,6 +420,7 @@ export default function RightTradeDockPanel({
               <button
                 type="button"
                 disabled={
+                  isMatchFinished ||
                   isCircuitLocked ||
                   (tradeType === "BUY" && isAtUpperLimit) ||
                   (tradeType === "SELL" &&
@@ -406,8 +433,14 @@ export default function RightTradeDockPanel({
                     : "bg-[#F07868] hover:bg-[#e56756]"
                 }`}
               >
-                {tradeType === "BUY"
-                  ? `${quantity}주 매수하기`
+                {isMatchFinished
+                  ? "경기 종료 · 정산 완료"
+                  : tradeType === "BUY"
+                  ? isAtUpperLimit
+                    ? "상한가 도달 · 매수 제한"
+                    : `${quantity}주 매수하기`
+                  : isAtLowerLimit
+                  ? "하한가 도달 · 매도 제한"
                   : `${quantity}주 매도하기`}
               </button>
             ) : (

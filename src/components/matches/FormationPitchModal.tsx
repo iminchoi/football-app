@@ -1166,6 +1166,7 @@ interface PitchPlayerNodeProps {
   player: Player;
   teamColor: string;
   holdingQty: number;
+  isUpcoming?: boolean;
   onSelect: (player: Player, type: TradeType) => void;
 }
 
@@ -1173,11 +1174,17 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
   player,
   teamColor,
   holdingQty,
+  isUpcoming = false,
   onSelect,
 }: PitchPlayerNodeProps) {
   const base = player.openPrice ?? player.basePrice ?? player.initialPrice;
-  const diff = calculateDiffFromOpen(player.currentPrice, base);
-  const pct = calculateChangePercentFromOpen(player.currentPrice, base).toFixed(1);
+  const displayPrice = isUpcoming
+    ? Math.round((base * 1.01) / 10) * 10
+    : player.currentPrice;
+  const diff = displayPrice - base;
+  const pct = isUpcoming
+    ? "1.00"
+    : calculateChangePercentFromOpen(displayPrice, base).toFixed(2);
   const isUp = diff > 0;
   const isDown = diff < 0;
 
@@ -1221,7 +1228,7 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
       {/* Bottom: Current Price + Change % */}
       <div className="mt-0.5 flex max-w-full items-center gap-0.5 sm:gap-1 font-mono text-[8.5px] sm:text-[9.5px] font-bold tabular-nums">
         <span className="truncate text-gray-800">
-          {player.currentPrice.toLocaleString()}
+          {displayPrice.toLocaleString()}
         </span>
         <span
           className={`shrink-0 ${
@@ -1233,7 +1240,7 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
           }`}
         >
           {isUp ? "+" : isDown ? "-" : ""}
-          {Math.abs(Number(pct)).toFixed(1)}%
+          {Math.abs(Number(pct)).toFixed(2)}%
         </span>
       </div>
     </button>
@@ -1244,6 +1251,7 @@ interface BenchPlayerRowProps {
   sub: Player;
   teamColor: string;
   holdingQty: number;
+  isUpcoming?: boolean;
   onSelect: (player: Player, type: TradeType) => void;
 }
 
@@ -1251,11 +1259,23 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
   sub,
   teamColor,
   holdingQty,
+  isUpcoming = false,
   onSelect,
 }: BenchPlayerRowProps) {
   const base = sub.openPrice ?? sub.basePrice ?? sub.initialPrice;
-  const diff = calculateDiffFromOpen(sub.currentPrice, base);
-  const pct = calculateChangePercentFromOpen(sub.currentPrice, base).toFixed(1);
+  const hasPlayed = (sub.events?.length ?? 0) > 0;
+  // Pre-match bench exclusion: -2.00%; unused bench during LIVE/FT: fixed 0.00%
+  const displayPrice = isUpcoming
+    ? Math.round((base * 0.98) / 10) * 10
+    : hasPlayed
+    ? sub.currentPrice
+    : base;
+  const diff = displayPrice - base;
+  const pct = isUpcoming
+    ? "-2.00"
+    : hasPlayed
+    ? calculateChangePercentFromOpen(displayPrice, base).toFixed(2)
+    : "0.00";
   const isUp = diff > 0;
   const isDown = diff < 0;
 
@@ -1291,7 +1311,7 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
       <div className="flex items-center gap-2 shrink-0">
         <div className="text-right font-mono text-xs">
           <span className="font-black text-gray-900">
-            {sub.currentPrice.toLocaleString()}P
+            {displayPrice.toLocaleString()}P
           </span>
           <span
             className={`ml-1.5 text-[11px] font-bold ${
@@ -1504,6 +1524,7 @@ export function FormationPitchContent({
                   player={player}
                   teamColor={activeTeam.color}
                   holdingQty={holdings[player.id]?.quantity ?? 0}
+                  isUpcoming={isUpcoming}
                   onSelect={onSelectPlayerTrade}
                 />
               ))}
@@ -1543,6 +1564,7 @@ export function FormationPitchContent({
                 sub={sub}
                 teamColor={activeTeam.color}
                 holdingQty={holdings[sub.id]?.quantity ?? 0}
+                isUpcoming={isUpcoming}
                 onSelect={onSelectPlayerTrade}
               />
             ))}

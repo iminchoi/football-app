@@ -759,8 +759,8 @@ export function sanitizeEventForPosition(
 export const roundToTen = (val: number): number => Math.round(val / 10) * 10;
 
 export const clampToPriceLimit = (price: number, basePrice: number): number => {
-  const floorPrice = roundToTen(basePrice * 0.7);
-  const capPrice = roundToTen(basePrice * 1.3);
+  const floorPrice = roundToTen(basePrice * (1 - WEIGHTS.CAP_LIMIT));
+  const capPrice = roundToTen(basePrice * (1 + WEIGHTS.CAP_LIMIT));
   const rounded = roundToTen(price);
   return Math.max(floorPrice, Math.min(capPrice, rounded));
 };
