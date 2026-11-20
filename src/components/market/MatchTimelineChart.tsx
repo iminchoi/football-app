@@ -459,6 +459,15 @@ export default function MatchTimelineChart({
 
   const isViewingLastMatch = matchStatus === "UPCOMING" && preMatchMode === "LAST_FT" && Boolean(lastMatchReview);
 
+  const hasSimulatedEvents = useMemo(() => {
+    if (playerMatch?.providerMode === "SIMULATED_EVENTS") return true;
+    if ((player.events ?? []).some((e) => e.source === "SIMULATED")) return true;
+    if ((playerMatch?.events ?? []).some((e) => e.source === "SIMULATED")) {
+      return true;
+    }
+    return ssotData.events.some((e) => e.source === "SIMULATED");
+  }, [player.events, playerMatch?.events, playerMatch?.providerMode, ssotData.events]);
+
   const openPrice = isViewingLastMatch && lastMatchReview
     ? lastMatchReview.openPrice
     : player.openPrice ?? ssotData.openPrice;
@@ -610,41 +619,48 @@ export default function MatchTimelineChart({
         )}
       </div>
 
-      {/* 2. Slim 1-Line Match Subheader + Optional PRE/LAST_FT Toggle */}
-      <div className="mt-2 flex items-center justify-between gap-2 px-0.5">
-        <p className="truncate text-[11px] font-semibold text-gray-500">
-          {isViewingLastMatch && lastMatchReview ? (
-            <span className="text-slate-700">{lastMatchReview.matchLabel}</span>
-          ) : activeMatchContext ? (
-            <>
-              <span>{activeMatchContext.competition}</span>
-              <span className="mx-1 text-gray-300">·</span>
-              <span className="font-mono font-bold text-gray-800">
-                {activeMatchContext.homeTeam}{" "}
-                {activeMatchContext.status === "PRE"
-                  ? "vs"
-                  : `${activeMatchContext.homeScore} : ${activeMatchContext.awayScore}`}{" "}
-                {activeMatchContext.awayTeam}
-              </span>
-            </>
-          ) : playerMatch ? (
-            <>
-              <span>{playerMatch.leagueName}</span>
-              <span className="mx-1 text-gray-300">·</span>
-              <span className="font-mono font-bold text-gray-800">
-                {playerMatch.homeTeam.shortName}{" "}
-                {playerMatch.status === "UPCOMING"
-                  ? "vs"
-                  : `${playerMatch.homeTeam.score ?? 0} : ${
-                      playerMatch.awayTeam.score ?? 0
-                    }`}{" "}
-                {playerMatch.awayTeam.shortName}
-              </span>
-            </>
-          ) : (
-            <span>매치 타임라인 시세</span>
+      {/* 2. Slim 1-Line Match Subheader + Simulation Source Badge + Optional PRE/LAST_FT Toggle */}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-0.5">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="truncate text-[11px] font-semibold text-gray-500">
+            {isViewingLastMatch && lastMatchReview ? (
+              <span className="text-slate-700">{lastMatchReview.matchLabel}</span>
+            ) : activeMatchContext ? (
+              <>
+                <span>{activeMatchContext.competition}</span>
+                <span className="mx-1 text-gray-300">·</span>
+                <span className="font-mono font-bold text-gray-800">
+                  {activeMatchContext.homeTeam}{" "}
+                  {activeMatchContext.status === "PRE"
+                    ? "vs"
+                    : `${activeMatchContext.homeScore} : ${activeMatchContext.awayScore}`}{" "}
+                  {activeMatchContext.awayTeam}
+                </span>
+              </>
+            ) : playerMatch ? (
+              <>
+                <span>{playerMatch.leagueName}</span>
+                <span className="mx-1 text-gray-300">·</span>
+                <span className="font-mono font-bold text-gray-800">
+                  {playerMatch.homeTeam.shortName}{" "}
+                  {playerMatch.status === "UPCOMING"
+                    ? "vs"
+                    : `${playerMatch.homeTeam.score ?? 0} : ${
+                        playerMatch.awayTeam.score ?? 0
+                      }`}{" "}
+                  {playerMatch.awayTeam.shortName}
+                </span>
+              </>
+            ) : (
+              <span>매치 타임라인 시세</span>
+            )}
+          </p>
+          {hasSimulatedEvents && (
+            <span className="shrink-0 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-800">
+              시뮬레이션 이벤트 포함
+            </span>
           )}
-        </p>
+        </div>
 
         {matchStatus === "UPCOMING" && viewMode === "MATCH_TIMELINE" && (
           <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 text-[10px] font-bold">

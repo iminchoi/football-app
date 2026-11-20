@@ -2799,6 +2799,7 @@ function finalizeDummyPlayer(
     playerId: ev.playerId,
     minute: ev.minute,
     type: ev.type,
+    source: ev.source ?? "REAL",
     description: ev.description,
     impactPercent: ev.priceImpactPercent,
   }));

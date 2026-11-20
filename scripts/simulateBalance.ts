@@ -260,6 +260,7 @@ function emptyCellMap(): Record<PosGroup, Record<MatchupKey, number[]>> {
 interface SeedRunOptions {
   useExpectationDeduction?: boolean;
   rateMultiplier?: number;
+  providerFilter?: "FULL" | "SCORE_ONLY" | "SIMULATED";
 }
 
 interface SeedMetrics {
@@ -549,7 +550,54 @@ function runSingleSeed(
       }
     }
 
-    const fanned = fanOutTeamEventsToPlayers(participants, teamEvents);
+    const providerFilter = simOpts.providerFilter ?? "FULL";
+    let filteredTeamEvents: TeamMatchRawEvent[] = teamEvents;
+    if (providerFilter === "SCORE_ONLY") {
+      filteredTeamEvents = [];
+      for (const ev of teamEvents) {
+        if (ev.kind === "GOAL") {
+          filteredTeamEvents.push({
+            id: `${ev.id}-tgoal`,
+            minute: ev.minute,
+            teamSide: ev.teamSide,
+            kind: "TEAM_GOAL",
+            source: "REAL",
+          });
+          filteredTeamEvents.push({
+            id: `${ev.id}-tconc`,
+            minute: ev.minute,
+            teamSide: ev.teamSide === "HOME" ? "AWAY" : "HOME",
+            kind: "TEAM_CONCEDED",
+            source: "REAL",
+          });
+        } else if (
+          ev.kind === "CLEAN_SHEET_45" ||
+          ev.kind === "CLEAN_SHEET_75" ||
+          ev.kind === "LINEUP_CONFIRMED" ||
+          ev.kind === "SUB_IN"
+        ) {
+          filteredTeamEvents.push({ ...ev, source: "REAL" });
+        }
+      }
+    } else if (providerFilter === "SIMULATED") {
+      filteredTeamEvents = teamEvents
+        .filter(
+          (ev) =>
+            ev.kind === "GOAL" ||
+            ev.kind === "ASSIST" ||
+            ev.kind === "CLEAN_SHEET_45" ||
+            ev.kind === "CLEAN_SHEET_75" ||
+            ev.kind === "LINEUP_CONFIRMED" ||
+            ev.kind === "SUB_IN"
+        )
+        .map((ev) => ({
+          ...ev,
+          source:
+            ev.kind === "GOAL" || ev.kind === "ASSIST" ? "SIMULATED" : "REAL",
+        }));
+    }
+
+    const fanned = fanOutTeamEventsToPlayers(participants, filteredTeamEvents);
     for (const p of participants) {
       const evs = fanned[p.playerId] ?? [];
       const ownStrength = p.teamSide === "HOME" ? homeStrength : awayStrength;
@@ -972,6 +1020,20 @@ function main(): void {
     const label = mult === 0.8 ? "RATES -20%" : mult === 1.0 ? "RATES Base" : "RATES +20%";
     console.log(
       `  ${label.padEnd(13)} | ${sc.intradayMean.toFixed(2).padStart(6)}% (${sc.upperIntradayMean.toFixed(2)}% / ${sc.lowerIntradayMean.toFixed(2)}%) | ${(sc.overallMean >= 0 ? "+" : "") + sc.overallMean.toFixed(2).padStart(10)}% | ${sc.spreadMean.toFixed(2).padStart(10)}%p | ${(sc.maxCellUpperCi95 >= 0 ? "+" : "") + sc.maxCellUpperCi95.toFixed(2).padStart(13)}% | ${sc.allPass ? "ALL PASS" : "FAIL"}`
+    );
+  }
+
+  console.log("\n[6b] Provider Mode Evaluation (ScoreOnly vs Simulated, v2.5 RATES unchanged):");
+  console.log("  Provider      | IntradayHit% (Up / Down)   | OverallMean% | MaxSpread%p | MaxCellUpperCI% | Verdict");
+  for (const pMode of ["SCORE_ONLY", "SIMULATED"] as const) {
+    const pEval = evaluateBatch(seedList, opts.matches, opts.cap, {
+      useExpectationDeduction: true,
+      rateMultiplier: 1.0,
+      providerFilter: pMode,
+    });
+    const pLabel = pMode === "SCORE_ONLY" ? "ScoreOnly" : "Simulated";
+    console.log(
+      `  ${pLabel.padEnd(13)} | ${pEval.intradayMean.toFixed(2).padStart(6)}% (${pEval.upperIntradayMean.toFixed(2)}% / ${pEval.lowerIntradayMean.toFixed(2)}%) | ${(pEval.overallMean >= 0 ? "+" : "") + pEval.overallMean.toFixed(2).padStart(10)}% | ${pEval.spreadMean.toFixed(2).padStart(10)}%p | ${(pEval.maxCellUpperCi95 >= 0 ? "+" : "") + pEval.maxCellUpperCi95.toFixed(2).padStart(13)}% | ${pEval.allPass ? "ALL PASS" : "FAIL"}`
     );
   }
 

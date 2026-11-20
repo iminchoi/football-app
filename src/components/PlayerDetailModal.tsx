@@ -23,6 +23,7 @@ import {
   getPositionLine,
   normalizeDetailedPosition,
 } from "@/types";
+import { useTradeStore } from "@/store/useTradeStore";
 import {
   PLAYER_DETAILED_PROFILES,
   PlayerDetailedProfile,
@@ -371,12 +372,18 @@ export default function PlayerDetailModal({
   isOpen,
   onClose,
 }: PlayerDetailModalProps) {
+  const matches = useTradeStore((s) => s.matches);
   const profile = useMemo(
     () => (player ? buildDetailedProfileForPlayer(player) : null),
     [player]
   );
 
   if (!isOpen || !player || !profile) return null;
+
+  const activeMatch = matches.find((m) => m.id === player.matchId);
+  const isScoreOnlyRealMode =
+    activeMatch?.providerMode === "SCORE_ONLY" &&
+    !(player.events ?? []).some((e) => e.source === "SIMULATED");
 
   const radarData = [
     {
@@ -700,90 +707,95 @@ export default function PlayerDetailModal({
               </span>
             </div>
 
-            {/* 8-Item Grid (2 rows x 4 cols) */}
-            <div className="grid grid-cols-4 gap-2 text-center">
-              {/* 1. 득점 */}
-              <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
-                <span className="block text-[10px] font-semibold text-gray-400">
-                  득점
-                </span>
-                <strong className="mt-1 block font-mono text-base font-black text-gray-900">
-                  {profile.seasonSummary.goals}
-                </strong>
+            {isScoreOnlyRealMode ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-center text-xs font-bold text-slate-600">
+                데이터 없음 (실제 스코어 전용 모드)
               </div>
+            ) : (
+              <div className="grid grid-cols-4 gap-2 text-center">
+                {/* 1. 득점 */}
+                <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
+                  <span className="block text-[10px] font-semibold text-gray-400">
+                    득점
+                  </span>
+                  <strong className="mt-1 block font-mono text-base font-black text-gray-900">
+                    {profile.seasonSummary.goals}
+                  </strong>
+                </div>
 
-              {/* 2. 어시스트 */}
-              <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
-                <span className="block text-[10px] font-semibold text-gray-400">
-                  어시스트
-                </span>
-                <strong className="mt-1 block font-mono text-base font-black text-gray-900">
-                  {profile.seasonSummary.assists}
-                </strong>
-              </div>
+                {/* 2. 어시스트 */}
+                <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
+                  <span className="block text-[10px] font-semibold text-gray-400">
+                    어시스트
+                  </span>
+                  <strong className="mt-1 block font-mono text-base font-black text-gray-900">
+                    {profile.seasonSummary.assists}
+                  </strong>
+                </div>
 
-              {/* 3. 선발 */}
-              <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
-                <span className="block text-[10px] font-semibold text-gray-400">
-                  선발 출전
-                </span>
-                <strong className="mt-1 block font-mono text-base font-black text-gray-900">
-                  {profile.seasonSummary.starts}
-                </strong>
-              </div>
+                {/* 3. 선발 */}
+                <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
+                  <span className="block text-[10px] font-semibold text-gray-400">
+                    선발 출전
+                  </span>
+                  <strong className="mt-1 block font-mono text-base font-black text-gray-900">
+                    {profile.seasonSummary.starts}
+                  </strong>
+                </div>
 
-              {/* 4. 경기 수 */}
-              <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
-                <span className="block text-[10px] font-semibold text-gray-400">
-                  총 경기 수
-                </span>
-                <strong className="mt-1 block font-mono text-base font-black text-gray-900">
-                  {profile.seasonSummary.appearances}
-                </strong>
-              </div>
+                {/* 4. 경기 수 */}
+                <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
+                  <span className="block text-[10px] font-semibold text-gray-400">
+                    총 경기 수
+                  </span>
+                  <strong className="mt-1 block font-mono text-base font-black text-gray-900">
+                    {profile.seasonSummary.appearances}
+                  </strong>
+                </div>
 
-              {/* 5. 출전 시간 */}
-              <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
-                <span className="block text-[10px] font-semibold text-gray-400">
-                  출전 시간
-                </span>
-                <strong className="mt-1 block font-mono text-xs font-black text-gray-900">
-                  {profile.seasonSummary.minutesPlayed.toLocaleString()}&apos;
-                </strong>
-              </div>
+                {/* 5. 출전 시간 */}
+                <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
+                  <span className="block text-[10px] font-semibold text-gray-400">
+                    출전 시간
+                  </span>
+                  <strong className="mt-1 block font-mono text-xs font-black text-gray-900">
+                    {profile.seasonSummary.minutesPlayed.toLocaleString()}&apos;
+                  </strong>
+                </div>
 
-              {/* 6. 시즌 평균 평점 (FotMob Green Badge) */}
-              <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5 flex flex-col items-center justify-center">
-                <span className="block text-[10px] font-semibold text-gray-400">
-                  시즌 평점
-                </span>
-                <span className="mt-1 inline-flex items-center gap-0.5 rounded bg-emerald-500 px-2 py-0.5 font-mono text-xs font-bold text-white shadow-sm">
-                  ★ {profile.seasonSummary.avgRating.toFixed(2)}
-                </span>
-              </div>
+                {/* 6. 시즌 평균 평점 (FotMob Green Badge) */}
+                <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5 flex flex-col items-center justify-center">
+                  <span className="block text-[10px] font-semibold text-gray-400">
+                    시즌 평점
+                  </span>
+                  <span className="mt-1 inline-flex items-center gap-0.5 rounded bg-emerald-500 px-2 py-0.5 font-mono text-xs font-bold text-white shadow-sm">
+                    ★ {profile.seasonSummary.avgRating.toFixed(2)}
+                  </span>
+                </div>
 
-              {/* 7. 경고 */}
-              <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
-                <span className="block text-[10px] font-semibold text-gray-400">
-                  경고 (옐로)
-                </span>
-                <strong className="mt-1 inline-flex items-center justify-center gap-1 font-mono text-sm font-black text-amber-600">
-                  <span className="inline-block h-3 w-2 rounded-[2px] bg-amber-400" />
-                  {profile.seasonSummary.yellowCards}
-                </strong>
-              </div>
+                {/* 7. 경고 */}
+                <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
+                  <span className="block text-[10px] font-semibold text-gray-400">
+                    경고 (옐로)
+                  </span>
+                  <strong className="mt-1 inline-flex items-center justify-center gap-1 font-mono text-sm font-black text-amber-600">
+                    <span className="inline-block h-3 w-2 rounded-[2px] bg-amber-400" />
+                    {profile.seasonSummary.yellowCards}
+                  </strong>
+                </div>
 
-              {/* 8. 퇴장 */}
-              <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
-                <span className="block text-[10px] font-semibold text-gray-400">
-                  퇴장 (레드)
-                </span>
-                <strong className="mt-1 inline-flex items-center justify-center gap-1 font-mono text-sm font-black text-rose-600">
-                  <span className="inline-block h-3 w-2 rounded-[2px] bg-rose-500" />
-                  {profile.seasonSummary.redCards}
-                </strong>
+                {/* 8. 퇴장 */}
+                <div className="rounded-xl bg-[#f8f9fa] border border-gray-100 p-2.5">
+                  <span className="block text-[10px] font-semibold text-gray-400">
+                    퇴장 (레드)
+                  </span>
+                  <strong className="mt-1 inline-flex items-center justify-center gap-1 font-mono text-sm font-black text-rose-600">
+                    <span className="inline-block h-3 w-2 rounded-[2px] bg-rose-500" />
+                    {profile.seasonSummary.redCards}
+                  </strong>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* 4) 통산/시즌별 경력 테이블 (Career Table) */}

@@ -162,6 +162,14 @@ export type MatchEventType =
 
 export type ChartEventType = MatchEventType | "SUB_OUT";
 
+export type EventSource = "REAL" | "SIMULATED";
+
+export type ProviderMode =
+  | "SCORE_ONLY"
+  | "FIXTURE_REPLAY"
+  | "SIMULATED_EVENTS"
+  | "DEEP_DATA";
+
 export interface MatchEvent {
   id: string;
   playerId: string;
@@ -170,12 +178,16 @@ export interface MatchEvent {
   description: string;
   priceImpactPercent: number;
   triggeredAt?: number; // Epoch ms when major event occurred (for 30s circuit breaker)
+  source?: EventSource;
+  estimated?: boolean;
+  metadata?: { estimated?: boolean };
 }
 
 export interface ChartEventMarker {
   type: ChartEventType;
   label: string; // 예: "⚽ 득점 (+8.5%)"
   impactPercent: number;
+  source?: EventSource;
 }
 
 export interface PricePoint {
@@ -276,6 +288,9 @@ export interface ApiMatchEvent {
   playerId?: string;
   playerName: string;
   teamName?: string;
+  source?: EventSource;
+  estimated?: boolean;
+  metadata?: { estimated?: boolean };
 }
 
 export interface TeamInfo {
@@ -307,6 +322,8 @@ export interface Match {
   awayTeam: TeamInfo;
   highlightText?: string;
   events?: ApiMatchEvent[];
+  providerMode?: ProviderMode;
+  usesDummyLineup?: boolean;
 }
 
 export interface Holding {

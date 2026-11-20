@@ -998,39 +998,46 @@ export default function TradeBottomSheet({
               </span>
             </div>
 
-            <div className="space-y-1.5">
-              {fotMobStats.map((stat, idx) => (
-                <div
-                  key={idx}
-                  className="grid grid-cols-[1.3fr_auto_1fr] items-center gap-2 text-xs"
-                >
-                  {/* Left: Stat Label */}
-                  <span className="truncate text-[11px] font-medium text-gray-600">
-                    {stat.label}
-                  </span>
-
-                  {/* Center: Numeric Value (Right-aligned next to vertical divider like FotMob) */}
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-[52px] text-right font-mono text-[11px] font-extrabold text-gray-900">
-                      {stat.valueText}
+            {ctx.match?.providerMode === "SCORE_ONLY" &&
+            !(player.events ?? []).some((e) => e.source === "SIMULATED") ? (
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-xs font-bold text-slate-600">
+                데이터 없음 (실제 스코어 전용 모드)
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {fotMobStats.map((stat, idx) => (
+                  <div
+                    key={idx}
+                    className="grid grid-cols-[1.3fr_auto_1fr] items-center gap-2 text-xs"
+                  >
+                    {/* Left: Stat Label */}
+                    <span className="truncate text-[11px] font-medium text-gray-600">
+                      {stat.label}
                     </span>
-                    <span className="h-3 w-[1px] bg-gray-200" />
-                  </div>
 
-                  {/* Right: FotMob Horizontal Gauge Bar */}
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200/80">
-                    <div
-                      style={{
-                        width: `${Math.max(5, Math.min(100, stat.percent))}%`,
-                      }}
-                      className={`h-full rounded-full transition-all duration-500 ${getGaugeBarColor(
-                        stat.tier
-                      )}`}
-                    />
+                    {/* Center: Numeric Value (Right-aligned next to vertical divider like FotMob) */}
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-[52px] text-right font-mono text-[11px] font-extrabold text-gray-900">
+                        {stat.valueText}
+                      </span>
+                      <span className="h-3 w-[1px] bg-gray-200" />
+                    </div>
+
+                    {/* Right: FotMob Horizontal Gauge Bar */}
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200/80">
+                      <div
+                        style={{
+                          width: `${Math.max(5, Math.min(100, stat.percent))}%`,
+                        }}
+                        className={`h-full rounded-full transition-all duration-500 ${getGaugeBarColor(
+                          stat.tier
+                        )}`}
+                      />
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
 
             {/* Entry Button to Open Player Detail Modal */}
             <button

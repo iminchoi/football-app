@@ -14,19 +14,19 @@ test("goal context priority is mutually exclusive: OPENER, EQUALIZER/GO_AHEAD, E
   const fwCtx: PlayerContext = { position: "ST", isStarter: true };
 
   const opener = eventDelta(
-    { id: "g1", playerId: "p1", minute: 12, type: "GOAL", goalContext: "OPENER" },
+    { id: "g1", playerId: "p1", minute: 12, type: "GOAL", source: "REAL", goalContext: "OPENER" },
     fwCtx
   );
   const equalizer = eventDelta(
-    { id: "g2", playerId: "p1", minute: 40, type: "GOAL", goalContext: "EQUALIZER" },
+    { id: "g2", playerId: "p1", minute: 40, type: "GOAL", source: "REAL", goalContext: "EQUALIZER" },
     fwCtx
   );
   const goAhead = eventDelta(
-    { id: "g3", playerId: "p1", minute: 65, type: "GOAL", goalContext: "GO_AHEAD" },
+    { id: "g3", playerId: "p1", minute: 65, type: "GOAL", source: "REAL", goalContext: "GO_AHEAD" },
     fwCtx
   );
   const extendLead = eventDelta(
-    { id: "g4", playerId: "p1", minute: 80, type: "GOAL", goalContext: "EXTEND_LEAD" },
+    { id: "g4", playerId: "p1", minute: 80, type: "GOAL", source: "REAL", goalContext: "EXTEND_LEAD" },
     fwCtx
   );
 
@@ -39,10 +39,10 @@ test("goal context priority is mutually exclusive: OPENER, EQUALIZER/GO_AHEAD, E
 test("clamping preserves rawReturn while bounding clampedReturn within [-CAP_LIMIT, +CAP_LIMIT]", () => {
   const ctx: PlayerContext = { position: "ST", playerId: "p-hat", matchId: "m1" };
   const hatTrickEvents: PlayerEvent[] = [
-    { id: "e1", playerId: "p-hat", minute: 15, type: "GOAL", goalContext: "OPENER" },
-    { id: "e2", playerId: "p-hat", minute: 35, type: "GOAL", goalContext: "GO_AHEAD" },
-    { id: "e3", playerId: "p-hat", minute: 60, type: "GOAL", goalContext: "EXTEND_LEAD" },
-    { id: "e4", playerId: "p-hat", minute: 75, type: "ASSIST" },
+    { id: "e1", playerId: "p-hat", minute: 15, type: "GOAL", source: "REAL", goalContext: "OPENER" },
+    { id: "e2", playerId: "p-hat", minute: 35, type: "GOAL", source: "REAL", goalContext: "GO_AHEAD" },
+    { id: "e3", playerId: "p-hat", minute: 60, type: "GOAL", source: "REAL", goalContext: "EXTEND_LEAD" },
+    { id: "e4", playerId: "p-hat", minute: 75, type: "ASSIST", source: "REAL" },
   ];
 
   const expectedRaw = Number(
@@ -72,8 +72,8 @@ test("unused bench player stays strictly at 0.00% regardless of team events", ()
     matchId: "m1",
   };
   const events: PlayerEvent[] = [
-    { id: "e1", playerId: "p-bench", minute: 20, type: "TEAM_GOAL" },
-    { id: "e2", playerId: "p-bench", minute: 50, type: "GOAL", goalContext: "OPENER" },
+    { id: "e1", playerId: "p-bench", minute: 20, type: "TEAM_GOAL", source: "REAL" },
+    { id: "e2", playerId: "p-bench", minute: 50, type: "GOAL", source: "REAL", goalContext: "OPENER" },
   ];
 
   const series = buildPriceSeries(10000, events, benchCtx, 90);
@@ -90,9 +90,9 @@ test("determinism: identical inputs always produce identical PricePoint[] series
     isStarter: true,
   };
   const events: PlayerEvent[] = [
-    { id: "e1", playerId: "p-kim", minute: 27, type: "KEY_ACTION", description: "결정적 태클" },
-    { id: "e2", playerId: "p-kim", minute: 45, type: "CLEAN_SHEET_45" },
-    { id: "e3", playerId: "p-kim", minute: 70, type: "YELLOW_CARD" },
+    { id: "e1", playerId: "p-kim", minute: 27, type: "KEY_ACTION", source: "REAL", description: "결정적 태클" },
+    { id: "e2", playerId: "p-kim", minute: 45, type: "CLEAN_SHEET_45", source: "REAL" },
+    { id: "e3", playerId: "p-kim", minute: 70, type: "YELLOW_CARD", source: "REAL" },
   ];
 
   const run1 = buildPriceSeries(12000, events, ctx, 90);
@@ -108,9 +108,9 @@ test("SSOT alignment: aggregated stats match timeline events and chart markers 1
     isStarter: true,
   };
   const events: PlayerEvent[] = [
-    { id: "e1", playerId: "p-son", minute: 18, type: "GOAL", goalContext: "OPENER", description: "선제골" },
-    { id: "e2", playerId: "p-son", minute: 42, type: "YELLOW_CARD", description: "경고" },
-    { id: "e3", playerId: "p-son", minute: 67, type: "ASSIST", description: "도움" },
+    { id: "e1", playerId: "p-son", minute: 18, type: "GOAL", source: "REAL", goalContext: "OPENER", description: "선제골" },
+    { id: "e2", playerId: "p-son", minute: 42, type: "YELLOW_CARD", source: "REAL", description: "경고" },
+    { id: "e3", playerId: "p-son", minute: 67, type: "ASSIST", source: "REAL", description: "도움" },
   ];
 
   const stats = deriveStatsFromEvents(events);
@@ -130,8 +130,8 @@ test("SSOT alignment: aggregated stats match timeline events and chart markers 1
 
 test("v2.4 expectedReturn=0 produces identical PriceSeries and PRE open price has zero jump", () => {
   const events: PlayerEvent[] = [
-    { id: "e1", playerId: "p1", minute: 20, type: "GOAL", goalContext: "OPENER" },
-    { id: "e2", playerId: "p1", minute: 65, type: "ASSIST" },
+    { id: "e1", playerId: "p1", minute: 20, type: "GOAL", source: "REAL", goalContext: "OPENER" },
+    { id: "e2", playerId: "p1", minute: 65, type: "ASSIST", source: "REAL" },
   ];
   const baseSeries = buildPriceSeries(10000, events, { position: "ST", playerId: "p1", matchId: "m1" }, 90);
   const zeroESeries = buildPriceSeries(10000, events, { position: "ST", playerId: "p1", matchId: "m1", expectedReturn: 0 }, 90);
@@ -146,7 +146,7 @@ test("v2.4 expectedReturn=0 produces identical PriceSeries and PRE open price ha
 
 test("v2.4 full-time deduction equals E at minute 90", () => {
   const events: PlayerEvent[] = [
-    { id: "e1", playerId: "p2", minute: 30, type: "GOAL", goalContext: "OPENER" },
+    { id: "e1", playerId: "p2", minute: 30, type: "GOAL", source: "REAL", goalContext: "OPENER" },
   ];
   const eVal = expectedReturn("ST", 1.35, 1.15);
   const withoutE = buildPriceSeries(10000, events, { position: "ST", playerId: "p2", matchId: "m2", expectedReturn: 0 }, 90);

@@ -1,10 +1,13 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); fixed portfolio holdings fallback for dynamic/persisted players, 2-col compact mobile Spotlight grid with ±15% capped display, and live today-date match sync in `MarketChartTabView.tsx`.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --test tests/priceEngine.test.ts tests/orderGate.test.ts tests/tradeStore.test.ts` passes (17/17).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `MatchDataProvider` architecture (`ScoreOnlyLiveProvider`, `FixtureReplayProvider`, `SimulatedEventsProvider`, `DeepDataLiveProvider`) implemented under `src/lib/providers/`.
+- `PlayerEvent.source` (`'REAL' | 'SIMULATED'`) preserved across adapter, `priceEngine.ts`, UI badges, and tests; `.cache/ledger.json` ledger persists simulated `GOAL`/`ASSIST` events without recalculation.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --test tests/priceEngine.test.ts tests/orderGate.test.ts tests/tradeStore.test.ts tests/providerLedger.test.ts` passes (20/20).
 
 ## Recent Changes
-- `src/components/portfolio/PortfolioTabView.tsx`: Added name/playerPrices/holding fallback so every holding with `quantity > 0` renders in holdings, valuation, invested cost, and unrealized PnL even if absent from `INITIAL_PLAYERS`.
-- `src/components/market/MarketChartTabView.tsx`: Updated Spotlight grid to `grid-cols-2 xl:grid-cols-3`, clamped displayed change% to `±WEIGHTS.CAP_LIMIT * 100`, and fetched `/api/matches?date=today` for `todayKeyMatches`.
+- `src/lib/providers/*`: Added `MatchDataProvider` interface, `ScoreOnlyLiveProvider` (default), `FixtureReplayProvider`, `SimulatedEventsProvider` (server secret seed + `.cache/ledger.json`), `DeepDataLiveProvider` (stub), and pure `diffScoreSnapshotsToTeamEvents`.
+- `src/lib/priceEngine.ts`, `src/types/index.ts`, `src/app/api/matches/route.ts`: Added `source: 'REAL' | 'SIMULATED'`, `{ estimated: true }` metadata, `providerMode`, and `usesDummyLineup`.
+- `src/components/*`: Added `"시뮬레이션 이벤트 포함"`, `"예상/더미 라인업 (무료 API 라인업 미제공)"`, and `"데이터 없음 (실제 스코어 전용 모드)"` notices.
+- `tests/providerLedger.test.ts`, `scripts/simulateBalance.ts`: Added 3 ledger/VAR/whitelist unit tests and `ScoreOnly` vs `Simulated` balance simulation evaluation.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

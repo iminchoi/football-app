@@ -45,15 +45,20 @@ export type PlayerEventType =
   | "SUB_IN"
   | "PENALTY";
 
+export type EventSource = "REAL" | "SIMULATED";
+
 export interface PlayerEvent {
   id: string;
   playerId: string;
   minute: number;
   type: PlayerEventType;
+  source: EventSource;
   description?: string;
   goalContext?: GoalContext;
   detectedAt?: number; // Epoch ms when API/feed detected event (used by orderGate)
   triggeredAt?: number; // Legacy alias for detectedAt
+  estimated?: boolean;
+  metadata?: { estimated?: boolean };
 }
 
 export interface PlayerContext {
@@ -94,6 +99,8 @@ export interface TeamMatchRawEvent {
     | "PENALTY"
     | "CLEAN_SHEET_45"
     | "CLEAN_SHEET_75"
+    | "TEAM_GOAL"
+    | "TEAM_CONCEDED"
     | "LINEUP_CONFIRMED"
     | "LINEUP_EXCLUDED"
     | "SUB_IN";
@@ -101,6 +108,9 @@ export interface TeamMatchRawEvent {
   goalContext?: GoalContext;
   description?: string;
   triggeredAt?: number;
+  source?: EventSource;
+  estimated?: boolean;
+  metadata?: { estimated?: boolean };
 }
 
 export interface DerivedCumulativeReturn {
@@ -394,6 +404,11 @@ export function fanOutTeamEventsToPlayers(
   const sortedTeamEvents = [...teamEvents].sort((a, b) => a.minute - b.minute);
 
   for (const raw of sortedTeamEvents) {
+    const rawSource: EventSource = raw.source ?? "REAL";
+    const extraMeta = {
+      ...(raw.estimated !== undefined ? { estimated: raw.estimated } : {}),
+      ...(raw.metadata !== undefined ? { metadata: raw.metadata } : {}),
+    };
     for (const p of participants) {
       if (p.isBenchUnused) continue;
 
@@ -409,7 +424,9 @@ export function fanOutTeamEventsToPlayers(
           playerId: p.playerId,
           minute: raw.minute,
           type: raw.kind,
+          source: rawSource,
           description: raw.description,
+          ...extraMeta,
         });
         continue;
       }
@@ -421,13 +438,45 @@ export function fanOutTeamEventsToPlayers(
             playerId: p.playerId,
             minute: raw.minute,
             type: "SUB_IN",
+            source: rawSource,
             description: raw.description ?? "교체 투입",
+            ...extraMeta,
           });
         }
         continue;
       }
 
       if (!onPitchAtMinute) continue;
+
+      if (raw.kind === "TEAM_GOAL") {
+        if (raw.teamSide === p.teamSide) {
+          result[p.playerId].push({
+            id: `${raw.id}-tgoal-${p.playerId}`,
+            playerId: p.playerId,
+            minute: raw.minute,
+            type: "TEAM_GOAL",
+            source: rawSource,
+            description: raw.description ?? "팀 득점 보너스",
+            ...extraMeta,
+          });
+        }
+        continue;
+      }
+
+      if (raw.kind === "TEAM_CONCEDED") {
+        if (raw.teamSide === p.teamSide) {
+          result[p.playerId].push({
+            id: `${raw.id}-tconc-${p.playerId}`,
+            playerId: p.playerId,
+            minute: raw.minute,
+            type: "TEAM_CONCEDED",
+            source: rawSource,
+            description: raw.description ?? "팀 실점 반영",
+            ...extraMeta,
+          });
+        }
+        continue;
+      }
 
       if (raw.kind === "GOAL") {
         if (raw.actorPlayerId === p.playerId) {
@@ -436,9 +485,11 @@ export function fanOutTeamEventsToPlayers(
             playerId: p.playerId,
             minute: raw.minute,
             type: "GOAL",
+            source: rawSource,
             goalContext: raw.goalContext ?? "OPENER",
             description: raw.description ?? "득점 성공",
             triggeredAt: raw.triggeredAt,
+            ...extraMeta,
           });
         } else if (raw.teamSide === p.teamSide) {
           result[p.playerId].push({
@@ -446,7 +497,9 @@ export function fanOutTeamEventsToPlayers(
             playerId: p.playerId,
             minute: raw.minute,
             type: "TEAM_GOAL",
+            source: "REAL",
             description: "팀 득점 보너스",
+            ...extraMeta,
           });
         } else {
           result[p.playerId].push({
@@ -454,7 +507,9 @@ export function fanOutTeamEventsToPlayers(
             playerId: p.playerId,
             minute: raw.minute,
             type: "TEAM_CONCEDED",
+            source: "REAL",
             description: "팀 실점 반영",
+            ...extraMeta,
           });
         }
         continue;
@@ -468,10 +523,12 @@ export function fanOutTeamEventsToPlayers(
             playerId: p.playerId,
             minute: raw.minute,
             type: raw.kind,
+            source: rawSource,
             description:
               raw.kind === "CLEAN_SHEET_45"
                 ? "전반 무실점 클린시트 보상"
                 : "75분 무실점 클린시트 보상",
+            ...extraMeta,
           });
         }
         continue;
@@ -484,8 +541,10 @@ export function fanOutTeamEventsToPlayers(
           playerId: p.playerId,
           minute: raw.minute,
           type: raw.kind,
+          source: rawSource,
           description: raw.description,
           triggeredAt: raw.triggeredAt,
+          ...extraMeta,
         });
       }
     }
@@ -619,6 +678,7 @@ export function buildPriceSeries(
                   primaryPct >= 0 ? "+" : ""
                 }${primaryPct.toFixed(1)}%)`,
                 impactPercent: primaryPct,
+                source: primaryEv.source ?? "REAL",
               },
             }
           : {}),
@@ -931,6 +991,7 @@ export function toChartEventMarker(ev: MatchEvent): ChartEventMarker {
     type: ev.type,
     label: `${meta.icon} ${ev.description} (${sign}${ev.priceImpactPercent.toFixed(1)}%)`,
     impactPercent: Number(ev.priceImpactPercent.toFixed(1)),
+    source: ev.source ?? "REAL",
   };
 }
 
@@ -954,6 +1015,9 @@ export function normalizeMatchEvents(
       type,
       description: desc,
       priceImpactPercent: impact,
+      source: ev.source ?? "REAL",
+      ...(ev.estimated !== undefined ? { estimated: ev.estimated } : {}),
+      ...(ev.metadata !== undefined ? { metadata: ev.metadata } : {}),
     };
     byMinute.set(
       min,

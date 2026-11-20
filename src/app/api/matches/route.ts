@@ -11,6 +11,7 @@ import {
   INITIAL_MATCHES,
   NATIONAL_TEAM_DUMMY_MATCHES,
 } from "@/data/dummyData";
+import { getActiveMatchDataProvider } from "@/lib/providers";
 
 const FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4/matches";
 
@@ -631,106 +632,149 @@ export async function GET(request: NextRequest) {
       return orderA - orderB;
     });
 
-    const normalizedMatches: Match[] = finalRawMatches.map((m) => {
-      const compCode = String(m.competition?.code || "").toUpperCase();
-      const compIdStr = String(m.competition?.id || "");
-      const koLeague =
-        LEAGUE_KO_MAP[compCode] || LEAGUE_KO_MAP[compIdStr];
-      const status = mapApiStatus(String(m.status || ""));
+    const activeProvider = getActiveMatchDataProvider();
 
-      const isInternational =
-        INTERNATIONAL_COMPETITION_CODES.has(compCode) ||
-        INTERNATIONAL_COMPETITION_IDS.has(compIdStr) ||
-        Boolean(koLeague?.country?.includes("A매치"));
+    const normalizedMatches: Match[] = await Promise.all(
+      finalRawMatches.map(async (m) => {
+        const compCode = String(m.competition?.code || "").toUpperCase();
+        const compIdStr = String(m.competition?.id || "");
+        const koLeague =
+          LEAGUE_KO_MAP[compCode] || LEAGUE_KO_MAP[compIdStr];
+        const status = mapApiStatus(String(m.status || ""));
 
-      const homeScore =
-        m.score?.fullTime?.home ?? m.score?.halfTime?.home ?? undefined;
-      const awayScore =
-        m.score?.fullTime?.away ?? m.score?.halfTime?.away ?? undefined;
+        const isInternational =
+          INTERNATIONAL_COMPETITION_CODES.has(compCode) ||
+          INTERNATIONAL_COMPETITION_IDS.has(compIdStr) ||
+          Boolean(koLeague?.country?.includes("A매치"));
 
-      const homeTla =
-        m.homeTeam?.tla ||
-        (m.homeTeam?.shortName || m.homeTeam?.name || "HOM")
-          .slice(0, 3)
-          .toUpperCase();
-      const awayTla =
-        m.awayTeam?.tla ||
-        (m.awayTeam?.shortName || m.awayTeam?.name || "AWY")
-          .slice(0, 3)
-          .toUpperCase();
+        const homeScore =
+          m.score?.fullTime?.home ?? m.score?.halfTime?.home ?? undefined;
+        const awayScore =
+          m.score?.fullTime?.away ?? m.score?.halfTime?.away ?? undefined;
 
-      const homeTeamName = m.homeTeam?.shortName || m.homeTeam?.name || "홈팀";
-      const awayTeamName = m.awayTeam?.shortName || m.awayTeam?.name || "원정팀";
+        const homeTla =
+          m.homeTeam?.tla ||
+          (m.homeTeam?.shortName || m.homeTeam?.name || "HOM")
+            .slice(0, 3)
+            .toUpperCase();
+        const awayTla =
+          m.awayTeam?.tla ||
+          (m.awayTeam?.shortName || m.awayTeam?.name || "AWY")
+            .slice(0, 3)
+            .toUpperCase();
 
-      // Normalize leagueId so PL / 2021 always groups cleanly under "pl-2021"
-      const normalizedLeagueId =
-        compCode === "PL" || compIdStr === "2021"
-          ? "pl-2021"
-          : String(compCode || compIdStr || "other").toLowerCase();
+        const homeTeamName = m.homeTeam?.shortName || m.homeTeam?.name || "홈팀";
+        const awayTeamName = m.awayTeam?.shortName || m.awayTeam?.name || "원정팀";
 
-      const matchId = `fd-${m.id}`;
-      const matchEvents = normalizeMatchEvents(m, matchId);
+        // Normalize leagueId so PL / 2021 always groups cleanly under "pl-2021"
+        const normalizedLeagueId =
+          compCode === "PL" || compIdStr === "2021"
+            ? "pl-2021"
+            : String(compCode || compIdStr || "other").toLowerCase();
 
-      return {
-        id: matchId,
-        utcDate: m.utcDate,
-        leagueId: normalizedLeagueId,
-        leagueName: koLeague?.name || m.competition?.name || "유럽 리그",
-        leagueCountry: koLeague?.country || m.area?.name || "국제",
-        leagueEmblem: m.competition?.emblem || undefined,
-        isInternational,
-        status,
-        rawStatus: String(m.status || ""),
-        minute: status === "LIVE" ? m.minute ?? 45 : undefined,
-        kickoffTime:
-          status === "FT" ? "종료" : formatKstTime(m.utcDate || ""),
-        homeTeam: {
-          id: homeTla.toLowerCase(),
-          name: homeTeamName,
-          shortName: homeTla,
-          color: getColorForId(m.homeTeam?.id || homeTla),
-          crest: m.homeTeam?.crest || undefined,
-          score: homeScore ?? undefined,
-          formation: normalizeFormationCode(m.homeTeam?.formation, "4-3-3"),
-          lineup: normalizeLineupPlayers(
-            m.homeTeam?.lineup,
-            homeTeamName,
-            isInternational
-          ),
-          bench: normalizeLineupPlayers(
-            m.homeTeam?.bench,
-            homeTeamName,
-            isInternational
-          ),
-        },
-        awayTeam: {
-          id: awayTla.toLowerCase(),
-          name: awayTeamName,
-          shortName: awayTla,
-          color: getColorForId(m.awayTeam?.id || awayTla),
-          crest: m.awayTeam?.crest || undefined,
-          score: awayScore ?? undefined,
-          formation: normalizeFormationCode(m.awayTeam?.formation, "4-2-3-1"),
-          lineup: normalizeLineupPlayers(
-            m.awayTeam?.lineup,
-            awayTeamName,
-            isInternational
-          ),
-          bench: normalizeLineupPlayers(
-            m.awayTeam?.bench,
-            awayTeamName,
-            isInternational
-          ),
-        },
-        highlightText:
-          status === "LIVE"
-            ? "실시간 경기 진행 중 · 선수 시세 실시간 변동"
-            : status === "FT"
-            ? `경기 종료 (${homeScore ?? 0} : ${awayScore ?? 0})`
-            : `킥오프 ${formatKstTime(m.utcDate || "")} (KST)`,
-        ...(matchEvents ? { events: matchEvents } : {}),
-      };
-    });
+        const matchId = `fd-${m.id}`;
+        const homeLineup = normalizeLineupPlayers(
+          m.homeTeam?.lineup,
+          homeTeamName,
+          isInternational
+        );
+        const awayLineup = normalizeLineupPlayers(
+          m.awayTeam?.lineup,
+          awayTeamName,
+          isInternational
+        );
+        const usesDummyLineup =
+          (!homeLineup || homeLineup.length === 0) &&
+          (!awayLineup || awayLineup.length === 0);
+
+        let matchEvents = normalizeMatchEvents(m, matchId);
+        if (
+          (!matchEvents || matchEvents.length === 0) &&
+          status !== "UPCOMING" &&
+          ((homeScore ?? 0) > 0 || (awayScore ?? 0) > 0)
+        ) {
+          const snapshotEval = await activeProvider.evaluateSnapshot(
+            null,
+            {
+              matchId,
+              homeScore: homeScore ?? 0,
+              awayScore: awayScore ?? 0,
+              status,
+              minute: status === "LIVE" ? m.minute ?? 45 : 90,
+            }
+          );
+          if (snapshotEval.teamEvents.length > 0) {
+            matchEvents = snapshotEval.teamEvents
+              .filter((te) => te.kind === "GOAL" || te.kind === "ASSIST")
+              .map((te) => ({
+                id: te.id,
+                minute: te.minute,
+                type: te.kind === "GOAL" ? "GOAL" : "ASSIST",
+                playerId: te.actorPlayerId,
+                playerName: te.actorPlayerId ?? homeTeamName,
+                teamName: te.teamSide === "HOME" ? homeTeamName : awayTeamName,
+                source: te.source,
+                estimated: te.estimated,
+                metadata: te.metadata,
+              }));
+          }
+        }
+
+        return {
+          id: matchId,
+          utcDate: m.utcDate,
+          leagueId: normalizedLeagueId,
+          leagueName: koLeague?.name || m.competition?.name || "유럽 리그",
+          leagueCountry: koLeague?.country || m.area?.name || "국제",
+          leagueEmblem: m.competition?.emblem || undefined,
+          isInternational,
+          status,
+          rawStatus: String(m.status || ""),
+          minute: status === "LIVE" ? m.minute ?? 45 : undefined,
+          kickoffTime:
+            status === "FT" ? "종료" : formatKstTime(m.utcDate || ""),
+          providerMode: activeProvider.mode,
+          usesDummyLineup,
+          homeTeam: {
+            id: homeTla.toLowerCase(),
+            name: homeTeamName,
+            shortName: homeTla,
+            color: getColorForId(m.homeTeam?.id || homeTla),
+            crest: m.homeTeam?.crest || undefined,
+            score: homeScore ?? undefined,
+            formation: normalizeFormationCode(m.homeTeam?.formation, "4-3-3"),
+            lineup: homeLineup,
+            bench: normalizeLineupPlayers(
+              m.homeTeam?.bench,
+              homeTeamName,
+              isInternational
+            ),
+          },
+          awayTeam: {
+            id: awayTla.toLowerCase(),
+            name: awayTeamName,
+            shortName: awayTla,
+            color: getColorForId(m.awayTeam?.id || awayTla),
+            crest: m.awayTeam?.crest || undefined,
+            score: awayScore ?? undefined,
+            formation: normalizeFormationCode(m.awayTeam?.formation, "4-2-3-1"),
+            lineup: awayLineup,
+            bench: normalizeLineupPlayers(
+              m.awayTeam?.bench,
+              awayTeamName,
+              isInternational
+            ),
+          },
+          highlightText:
+            status === "LIVE"
+              ? "실시간 경기 진행 중 · 선수 시세 실시간 변동"
+              : status === "FT"
+              ? `경기 종료 (${homeScore ?? 0} : ${awayScore ?? 0})`
+              : `킥오프 ${formatKstTime(m.utcDate || "")} (KST)`,
+          ...(matchEvents ? { events: matchEvents } : {}),
+        };
+      })
+    );
 
     // Fallback to prepared National Team (A-Match) dummy matches during international breaks when API returns 0 matches
     if (normalizedMatches.length === 0) {
