@@ -4,7 +4,7 @@
 
 경기 중 발생하는 득점·어시스트·카드·실점 등 공식 이벤트 데이터를 기반으로 선수 시세를 실시간 산출하고, 가상 포인트로 매수·매도하는 축구 주식 거래 플랫폼입니다.
 
----
+
 
 ## ✨ 주요 기능
 
@@ -18,7 +18,7 @@
 - **3단 반응형 트레이딩 워크스페이스**
   - 실시간 경기 일정 및 선발 포메이션 피치 뷰, 핫 플레이어 스포트라이트, 도킹형 주문 패널 및 포트폴리오 자산 관리
 
----
+
 
 ## 🛠 기술 스택
 
@@ -29,7 +29,7 @@
 | **State & Chart** | Zustand, Lightweight Charts |
 | **Data & Validation** | `football-data.org` API, Node.js Test Runner, Monte Carlo Balance Simulator |
 
----
+
 
 ## 📂 프로젝트 구조
 
@@ -45,11 +45,14 @@ src/
 scripts/
 └── simulateBalance.ts # 50,000경기 몬테카를로 경제 밸런스 검증 시뮬레이터
 tests/                 # 가격 엔진 및 주문 가드 단위 테스트
+```
 
-🚀 시작하기
+## 🚀 시작하기
+
+```bash
 # 1. 저장소 클론 및 패키지 설치
-git clone [https://github.com/your-username/pitchtrade.git](https://github.com/your-username/pitchtrade.git)
-cd pitchtrade
+git clone https://github.com/iminchoi/football-app.git
+cd football-app
 npm install
 
 # 2. 환경 변수 설정 (.env.local)
@@ -57,8 +60,11 @@ echo "FOOTBALL_DATA_API_KEY=your_api_key_here" > .env.local
 
 # 3. 개발 서버 실행
 npm run dev
+```
 
-🧪 테스트 및 밸런스 시뮬레이션 실행
+## 🧪 테스트 및 밸런스 시뮬레이션 실행
+
+```bash
 # 단위 테스트 실행
 node --test tests/*.test.ts
 
