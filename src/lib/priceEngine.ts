@@ -62,6 +62,7 @@ export interface PlayerContext {
   matchId?: string;
   isStarter?: boolean;
   subInMinute?: number;
+  subOutMinute?: number;
   isBenchUnused?: boolean;
   seedId?: string;
   expectedReturn?: number;
@@ -537,6 +538,18 @@ export function buildPriceSeries(
 
   let cumulativeRaw = 0;
   const expectedE = ctx.expectedReturn ?? 0;
+  const startMin =
+    ctx.isStarter === false && ctx.subInMinute !== undefined
+      ? Math.max(0, Math.round(ctx.subInMinute))
+      : 0;
+  const redCardEv = sortedEvents.find((e) => e.type === "RED_CARD");
+  const endPitchMin = Math.min(
+    ctx.subOutMinute !== undefined
+      ? Math.max(0, Math.round(ctx.subOutMinute))
+      : Infinity,
+    redCardEv ? Math.max(0, Math.round(redCardEv.minute)) : Infinity
+  );
+  let onPitchMinutes = 0;
   const points: PricePoint[] = [];
 
   for (let m = 0; m <= targetEnd; m++) {
@@ -547,8 +560,10 @@ export function buildPriceSeries(
     }
     cumulativeRaw += stepDelta;
 
-    const elapsedFrac = Math.min(1, Math.max(0, m / 90));
-    const deductionAtMinute = expectedE * elapsedFrac;
+    if (m > startMin && m <= endPitchMin) {
+      onPitchMinutes += 1;
+    }
+    const deductionAtMinute = expectedE * (Math.min(90, onPitchMinutes) / 90);
 
     // Quiet-interval micro-noise strictly within ±0.15%, seeded deterministically by (playerId, matchId, minute)
     const quietNoise =
@@ -611,7 +626,7 @@ export function buildPriceSeries(
     }
   }
 
-  const finalDeduction = expectedE * Math.min(1, Math.max(0, targetEnd / 90));
+  const finalDeduction = expectedE * (Math.min(90, onPitchMinutes) / 90);
   const finalReturn = calculateCumulativeReturn(
     sortedEvents,
     ctx,

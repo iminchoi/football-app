@@ -164,3 +164,50 @@ test("v2.4 expectedReturn is deterministic and increases with favorable matchup"
   const weakVsStrong = expectedReturn("FW", 0.72, 0.75);
   assert.ok(r1 > weakVsStrong);
 });
+
+test("v2.5 bench player has zero deduction while waiting on bench and deducts by on-pitch minutes after sub-in", () => {
+  const e90 = expectedReturn("ST", 1.0, 1.0);
+  const subSeries = buildPriceSeries(
+    10000,
+    [],
+    {
+      position: "ST",
+      playerId: "p-sub",
+      matchId: "m-sub",
+      isStarter: false,
+      subInMinute: 60,
+      expectedReturn: e90,
+    },
+    90
+  );
+
+  // While on bench at m=0..60, cumulative event delta is 0 and deduction must be 0
+  const ptAt30 = subSeries.points.find((pt) => pt.minute === 30);
+  const ptAt60 = subSeries.points.find((pt) => pt.minute === 60);
+  assert.ok(ptAt30 && Math.abs(ptAt30.rawReturn ?? 0) <= 0.0015);
+  assert.ok(ptAt60 && Math.abs(ptAt60.rawReturn ?? 0) <= 0.0015);
+
+  // At m=90 (30 minutes on pitch), total deduction = (30/90) * E90
+  const expectedSubDeduction = Number((e90 * (30 / 90)).toFixed(4));
+  assert.equal(subSeries.rawReturn, -expectedSubDeduction);
+});
+
+test("v2.5 starter subbed out or red-carded stops deducting after leaving pitch, while 90-min starter deducts E90", () => {
+  const e90 = expectedReturn("FW", 1.35, 1.15);
+  const fullSeries = buildPriceSeries(
+    10000,
+    [],
+    { position: "FW", playerId: "p-full", matchId: "m-full", isStarter: true, expectedReturn: e90 },
+    90
+  );
+  assert.equal(fullSeries.rawReturn, -e90);
+
+  const subOutSeries = buildPriceSeries(
+    10000,
+    [],
+    { position: "FW", playerId: "p-out", matchId: "m-out", isStarter: true, subOutMinute: 60, expectedReturn: e90 },
+    90
+  );
+  const expected60Deduction = Number((e90 * (60 / 90)).toFixed(4));
+  assert.equal(subOutSeries.rawReturn, -expected60Deduction);
+});

@@ -29,7 +29,7 @@ interface CliOptions {
 }
 
 function parseCliOptions(argv: string[]): CliOptions {
-  let matches = 1000;
+  let matches = 5000;
   let seeds = 5;
   let baseSeed = 20261119;
   let cap = 0.15;
@@ -265,8 +265,11 @@ interface SeedRunOptions {
 interface SeedMetrics {
   seed: number;
   participants: number;
+  starterCount: number;
   intradayHits: number;
   intradayHitPct: number;
+  upperIntradayHitPct: number;
+  lowerIntradayHitPct: number;
   closeHitPct: number;
   upperHitCount: number;
   earlyUpperHitCount: number;
@@ -276,6 +279,10 @@ interface SeedMetrics {
   posMeans: Record<PosGroup, number>;
   posCi95: Record<PosGroup, number>;
   maxSpreadPct: number;
+  subCount: number;
+  subMeanPct: number;
+  subIntradayHitPct: number;
+  subPosMeans: Record<PosGroup, number>;
   maxAbsCumReturnsAsc: number[];
   contribMeanByPos: Record<PosGroup, Record<ContribBucket, number>>;
   cellReturns: Record<PosGroup, Record<MatchupKey, number[]>>;
@@ -293,15 +300,27 @@ function runSingleSeed(
   const BASE_PRICE = 10000;
 
   let totalParticipants = 0;
+  let starterCount = 0;
   let intradayHits = 0;
+  let upperIntradayHits = 0;
+  let lowerIntradayHits = 0;
   let closeHits = 0;
+  let subCount = 0;
+  let subIntradayHits = 0;
   let upperHitCount = 0;
   let earlyUpperHitCount = 0;
   const allReturns: number[] = [];
+  const subReturns: number[] = [];
   const bestStrategyReturns: number[] = [];
   const maxAbsCumReturns: number[] = [];
   const cellReturns = emptyCellMap();
   const groupReturns: Record<PosGroup, number[]> = {
+    FW: [],
+    MF: [],
+    DF: [],
+    GK: [],
+  };
+  const subGroupReturns: Record<PosGroup, number[]> = {
     FW: [],
     MF: [],
     DF: [],
@@ -547,6 +566,7 @@ function runSingleSeed(
         matchId,
         isStarter: p.isStarter,
         subInMinute: p.subInMinute,
+        subOutMinute: subOutMinute.get(p.playerId),
         expectedReturn: expE,
       };
       const series = buildPriceSeries(
@@ -560,75 +580,95 @@ function runSingleSeed(
       totalParticipants += 1;
       const posGroup = toPosGroup(p.position as Position);
 
-      for (const ev of evs) {
-        const dPct = eventDelta(ev, ctx) * 100;
-        if (dPct === 0) continue;
-        if (ev.type === "GOAL") contribSums[posGroup].GOAL += dPct;
-        else if (ev.type === "ASSIST") contribSums[posGroup].ASSIST += dPct;
-        else if (ev.type === "KEY_ACTION" || ev.type === "SAVE" || ev.type === "DEFENSIVE_ACTION" || ev.type === "KEY_PLAY") {
-          contribSums[posGroup].KEY_ACTION += dPct;
-        } else if (ev.type === "TEAM_GOAL") contribSums[posGroup].TEAM_GOAL += dPct;
-        else if (ev.type === "TEAM_CONCEDED" || ev.type === "CONCEDED") {
-          contribSums[posGroup].TEAM_CONCEDED += dPct;
-        } else if (ev.type === "CLEAN_SHEET_45" || ev.type === "CLEAN_SHEET_75") {
-          contribSums[posGroup].CLEAN_SHEET += dPct;
-        } else if (ev.type === "YELLOW_CARD" || ev.type === "RED_CARD") {
-          contribSums[posGroup].CARD += dPct;
+      if (p.isStarter) {
+        for (const ev of evs) {
+          const dPct = eventDelta(ev, ctx) * 100;
+          if (dPct === 0) continue;
+          if (ev.type === "GOAL") contribSums[posGroup].GOAL += dPct;
+          else if (ev.type === "ASSIST") contribSums[posGroup].ASSIST += dPct;
+          else if (ev.type === "KEY_ACTION" || ev.type === "SAVE" || ev.type === "DEFENSIVE_ACTION" || ev.type === "KEY_PLAY") {
+            contribSums[posGroup].KEY_ACTION += dPct;
+          } else if (ev.type === "TEAM_GOAL") contribSums[posGroup].TEAM_GOAL += dPct;
+          else if (ev.type === "TEAM_CONCEDED" || ev.type === "CONCEDED") {
+            contribSums[posGroup].TEAM_CONCEDED += dPct;
+          } else if (ev.type === "CLEAN_SHEET_45" || ev.type === "CLEAN_SHEET_75") {
+            contribSums[posGroup].CLEAN_SHEET += dPct;
+          } else if (ev.type === "YELLOW_CARD" || ev.type === "RED_CARD") {
+            contribSums[posGroup].CARD += dPct;
+          }
         }
       }
 
       let maxAbsRaw = 0;
       let hitIntraday = false;
+      let hitUpperIntraday = false;
+      let hitLowerIntraday = false;
       let firstUpperHitMin = -1;
       for (const pt of series.points) {
         const rr = Math.abs(pt.rawReturn ?? 0);
         if (rr > maxAbsRaw) maxAbsRaw = rr;
         const cr = pt.clampedReturn ?? 0;
-        if (Math.abs(cr) >= capLimit) hitIntraday = true;
+        if (cr >= capLimit) {
+          hitIntraday = true;
+          hitUpperIntraday = true;
+        }
+        if (cr <= -capLimit) {
+          hitIntraday = true;
+          hitLowerIntraday = true;
+        }
         if (firstUpperHitMin === -1 && cr >= capLimit) {
           firstUpperHitMin = pt.minute;
         }
       }
-      if (hitIntraday) intradayHits += 1;
-      if (Math.abs(series.clampedReturn) >= capLimit) closeHits += 1;
 
-      if (firstUpperHitMin !== -1) {
-        upperHitCount += 1;
-        const indivCount = evs.filter(
-          (e) =>
-            e.minute <= firstUpperHitMin &&
-            (e.type === "GOAL" ||
-              e.type === "ASSIST" ||
-              e.type === "KEY_ACTION" ||
-              e.type === "YELLOW_CARD" ||
-              e.type === "RED_CARD")
-        ).length;
-        if (indivCount <= 2) {
-          earlyUpperHitCount += 1;
-        }
-      }
-
-      maxAbsCumReturns.push(maxAbsRaw * 100);
       const retPct = series.clampedReturn * 100;
-      allReturns.push(retPct);
-      groupReturns[posGroup].push(retPct);
+
       if (p.isStarter) {
+        starterCount += 1;
+        if (hitIntraday) intradayHits += 1;
+        if (hitUpperIntraday) upperIntradayHits += 1;
+        if (hitLowerIntraday) lowerIntradayHits += 1;
+        if (Math.abs(series.clampedReturn) >= capLimit) closeHits += 1;
+
+        if (firstUpperHitMin !== -1) {
+          upperHitCount += 1;
+          const indivCount = evs.filter(
+            (e) =>
+              e.minute <= firstUpperHitMin &&
+              (e.type === "GOAL" ||
+                e.type === "ASSIST" ||
+                e.type === "KEY_ACTION" ||
+                e.type === "YELLOW_CARD" ||
+                e.type === "RED_CARD")
+          ).length;
+          if (indivCount <= 2) {
+            earlyUpperHitCount += 1;
+          }
+        }
+
+        maxAbsCumReturns.push(maxAbsRaw * 100);
+        allReturns.push(retPct);
+        groupReturns[posGroup].push(retPct);
         const matchupKey: MatchupKey = `${tierShort(ownStrength.tier)}-${tierShort(
           oppStrength.tier
         )}`;
         cellReturns[posGroup][matchupKey].push(retPct);
-      }
-      if (
-        p.isStarter &&
-        posGroup === "FW" &&
-        ((p.teamSide === "HOME" &&
-          homeStrength.tier === "STRONG" &&
-          awayStrength.tier === "WEAK") ||
-          (p.teamSide === "AWAY" &&
-            awayStrength.tier === "STRONG" &&
-            homeStrength.tier === "WEAK"))
-      ) {
-        bestStrategyReturns.push(retPct);
+        if (
+          posGroup === "FW" &&
+          ((p.teamSide === "HOME" &&
+            homeStrength.tier === "STRONG" &&
+            awayStrength.tier === "WEAK") ||
+            (p.teamSide === "AWAY" &&
+              awayStrength.tier === "STRONG" &&
+              homeStrength.tier === "WEAK"))
+        ) {
+          bestStrategyReturns.push(retPct);
+        }
+      } else {
+        subCount += 1;
+        if (hitIntraday) subIntradayHits += 1;
+        subReturns.push(retPct);
+        subGroupReturns[posGroup].push(retPct);
       }
     }
   }
@@ -668,12 +708,23 @@ function runSingleSeed(
     }
   }
 
+  const subOverallStat = meanAndStd(subReturns);
+  const subPosMeans: Record<PosGroup, number> = {
+    FW: meanAndStd(subGroupReturns.FW).mean,
+    MF: meanAndStd(subGroupReturns.MF).mean,
+    DF: meanAndStd(subGroupReturns.DF).mean,
+    GK: meanAndStd(subGroupReturns.GK).mean,
+  };
+
   return {
     seed,
     participants: totalParticipants,
+    starterCount,
     intradayHits,
-    intradayHitPct: (intradayHits / totalParticipants) * 100,
-    closeHitPct: (closeHits / totalParticipants) * 100,
+    intradayHitPct: (intradayHits / starterCount) * 100,
+    upperIntradayHitPct: (upperIntradayHits / starterCount) * 100,
+    lowerIntradayHitPct: (lowerIntradayHits / starterCount) * 100,
+    closeHitPct: (closeHits / starterCount) * 100,
     upperHitCount,
     earlyUpperHitCount,
     overallMeanPct: overallStat.mean,
@@ -684,6 +735,10 @@ function runSingleSeed(
     maxSpreadPct:
       Math.max(posMeans.FW, posMeans.MF, posMeans.DF, posMeans.GK) -
       Math.min(posMeans.FW, posMeans.MF, posMeans.DF, posMeans.GK),
+    subCount,
+    subMeanPct: subOverallStat.mean,
+    subIntradayHitPct: subCount > 0 ? (subIntradayHits / subCount) * 100 : 0,
+    subPosMeans,
     maxAbsCumReturnsAsc: maxAbsCumReturns,
     contribMeanByPos,
     cellReturns,
@@ -693,6 +748,8 @@ function runSingleSeed(
 interface BatchEvalSummary {
   intradayMean: number;
   intradayStd: number;
+  upperIntradayMean: number;
+  lowerIntradayMean: number;
   closeMean: number;
   overallMean: number;
   overallStd: number;
@@ -716,6 +773,8 @@ function evaluateBatch(
 ): BatchEvalSummary {
   const seedRuns = seedList.map((s) => runSingleSeed(s, matches, cap, simOpts));
   const intradayStat = meanAndStd(seedRuns.map((r) => r.intradayHitPct));
+  const upperIntradayStat = meanAndStd(seedRuns.map((r) => r.upperIntradayHitPct));
+  const lowerIntradayStat = meanAndStd(seedRuns.map((r) => r.lowerIntradayHitPct));
   const closeStat = meanAndStd(seedRuns.map((r) => r.closeHitPct));
   const overallStat = meanAndStd(seedRuns.map((r) => r.overallMeanPct));
   const spreadStat = meanAndStd(seedRuns.map((r) => r.maxSpreadPct));
@@ -744,6 +803,8 @@ function evaluateBatch(
   return {
     intradayMean: intradayStat.mean,
     intradayStd: intradayStat.std,
+    upperIntradayMean: upperIntradayStat.mean,
+    lowerIntradayMean: lowerIntradayStat.mean,
     closeMean: closeStat.mean,
     overallMean: overallStat.mean,
     overallStd: overallStat.std,
@@ -773,22 +834,28 @@ function main(): void {
     ).toFixed(0)}%) ===`
   );
 
-  const seedRuns = seedList.map((s) => runSingleSeed(s, opts.matches, opts.cap));
+  const v25Base = evaluateBatch(seedList, opts.matches, opts.cap, {
+    useExpectationDeduction: true,
+    rateMultiplier: 1.0,
+  });
+  const seedRuns = v25Base.seedRuns;
 
-  console.log("\n[1] Per-Seed Breakdown:");
+  console.log("\n[1] Per-Seed Breakdown (Starters):");
   for (const r of seedRuns) {
     console.log(
-      `  Seed ${r.seed}: IntradayHit=${r.intradayHitPct.toFixed(2)}% (${r.intradayHits}/${r.participants}) | CloseHit=${r.closeHitPct.toFixed(2)}% | Overall=${r.overallMeanPct >= 0 ? "+" : ""}${r.overallMeanPct.toFixed(2)}% | Spread=${r.maxSpreadPct.toFixed(2)}%p | BestStrat=${r.bestStrategyMeanPct >= 0 ? "+" : ""}${r.bestStrategyMeanPct.toFixed(2)}% (n=${r.bestStrategyCount})`
+      `  Seed ${r.seed}: IntradayHit=${r.intradayHitPct.toFixed(2)}% (Up=${r.upperIntradayHitPct.toFixed(2)}%, Down=${r.lowerIntradayHitPct.toFixed(2)}%) (${r.intradayHits}/${r.starterCount}) | Overall=${r.overallMeanPct >= 0 ? "+" : ""}${r.overallMeanPct.toFixed(2)}% | Spread=${r.maxSpreadPct.toFixed(2)}%p`
     );
   }
 
   const intradayStat = meanAndStd(seedRuns.map((r) => r.intradayHitPct));
+  const upperIntradayStat = meanAndStd(seedRuns.map((r) => r.upperIntradayHitPct));
+  const lowerIntradayStat = meanAndStd(seedRuns.map((r) => r.lowerIntradayHitPct));
   const closeStat = meanAndStd(seedRuns.map((r) => r.closeHitPct));
   const overallStat = meanAndStd(seedRuns.map((r) => r.overallMeanPct));
   const spreadStat = meanAndStd(seedRuns.map((r) => r.maxSpreadPct));
   const bestStratStat = meanAndStd(seedRuns.map((r) => r.bestStrategyMeanPct));
 
-  const totalParticipantsAll = seedRuns.reduce((s, r) => s + r.participants, 0);
+  const totalStartersAll = seedRuns.reduce((s, r) => s + r.starterCount, 0);
   const totalIntradayHitsAll = seedRuns.reduce((s, r) => s + r.intradayHits, 0);
   const totalBestStratAll = seedRuns.reduce((s, r) => s + r.bestStrategyCount, 0);
 
@@ -796,9 +863,9 @@ function main(): void {
     .flatMap((r) => r.maxAbsCumReturnsAsc)
     .sort((a, b) => a - b);
 
-  console.log("\n[2] Aggregate Across Seeds (Mean ± SD):");
+  console.log("\n[2] Aggregate Across Seeds (Starters, Mean ± SD):");
   console.log(
-    `  Intraday Cap Hit Rate : ${intradayStat.mean.toFixed(2)}% ± ${intradayStat.std.toFixed(2)}% (formula: totalIntradayHits / totalParticipants = ${totalIntradayHitsAll} / ${totalParticipantsAll} = ${((totalIntradayHitsAll / totalParticipantsAll) * 100).toFixed(2)}%)`
+    `  Intraday Cap Hit Rate : ${intradayStat.mean.toFixed(2)}% ± ${intradayStat.std.toFixed(2)}% (Upper=${upperIntradayStat.mean.toFixed(2)}%, Lower=${lowerIntradayStat.mean.toFixed(2)}%; ${totalIntradayHitsAll}/${totalStartersAll})`
   );
   console.log(
     `  Close Cap Hit Rate    : ${closeStat.mean.toFixed(2)}% ± ${closeStat.std.toFixed(2)}%`
@@ -816,7 +883,18 @@ function main(): void {
     `  Max Intraday |Return| : p50=${percentile(combinedMaxAbs, 50).toFixed(2)}% | p90=${percentile(combinedMaxAbs, 90).toFixed(2)}% | p99=${percentile(combinedMaxAbs, 99).toFixed(2)}%`
   );
 
-  console.log("\n[3] Position Mean Return (95% Confidence Interval, Seed 1):");
+  const subMeanStat = meanAndStd(seedRuns.map((r) => r.subMeanPct));
+  const subHitStat = meanAndStd(seedRuns.map((r) => r.subIntradayHitPct));
+  const totalSubsAll = seedRuns.reduce((s, r) => s + r.subCount, 0);
+  console.log("\n[2b] Substitute Players Report (Report-Only, No Verdict):");
+  console.log(
+    `  Subs (n=${totalSubsAll}): MeanReturn=${subMeanStat.mean >= 0 ? "+" : ""}${subMeanStat.mean.toFixed(2)}% ± ${subMeanStat.std.toFixed(2)}% | IntradayHit=${subHitStat.mean.toFixed(2)}%`
+  );
+  console.log(
+    `  Sub Pos Means (Seed 1): FW=${seedRuns[0].subPosMeans.FW >= 0 ? "+" : ""}${seedRuns[0].subPosMeans.FW.toFixed(2)}% | MF=${seedRuns[0].subPosMeans.MF >= 0 ? "+" : ""}${seedRuns[0].subPosMeans.MF.toFixed(2)}% | DF=${seedRuns[0].subPosMeans.DF >= 0 ? "+" : ""}${seedRuns[0].subPosMeans.DF.toFixed(2)}% | GK=${seedRuns[0].subPosMeans.GK.toFixed(2)}%`
+  );
+
+  console.log("\n[3] Position Mean Return (Starters, 95% CI, Seed 1):");
   const ref = seedRuns[0];
   for (const pos of ["FW", "MF", "DF", "GK"] as PosGroup[]) {
     console.log(
@@ -854,54 +932,53 @@ function main(): void {
     console.log(`  ${pos.padEnd(3)} | ${rowCells}`);
   }
 
-  const v24Base = evaluateBatch(seedList, opts.matches, opts.cap, {
-    useExpectationDeduction: true,
-    rateMultiplier: 1.0,
-  });
   const v23Base = evaluateBatch(seedList, opts.matches, opts.cap, {
     useExpectationDeduction: false,
     rateMultiplier: 1.0,
   });
 
-  console.log("\n[5] v2.3 vs v2.4 Comparison Table:");
-  console.log("  Version | IntradayHit% | CloseHit% | OverallMean% | MaxSpread%p | MaxCellUpperCI% | Verdict");
+  console.log("\n[5] v2.3 vs v2.5 Comparison Table (Starters):");
+  console.log("  Version | IntradayHit% (Up / Down)   | CloseHit% | OverallMean% | MaxSpread%p | MaxCellUpperCI% | Verdict");
   console.log(
-    `  v2.3    | ${v23Base.intradayMean.toFixed(2).padStart(11)}% | ${v23Base.closeMean.toFixed(2).padStart(8)}% | ${(v23Base.overallMean >= 0 ? "+" : "") + v23Base.overallMean.toFixed(2).padStart(10)}% | ${v23Base.spreadMean.toFixed(2).padStart(10)}%p | ${(v23Base.maxCellUpperCi95 >= 0 ? "+" : "") + v23Base.maxCellUpperCi95.toFixed(2).padStart(13)}% | ${v23Base.allPass ? "ALL PASS" : "FAIL"}`
+    `  v2.3    | ${v23Base.intradayMean.toFixed(2).padStart(6)}% (${v23Base.upperIntradayMean.toFixed(2)}% / ${v23Base.lowerIntradayMean.toFixed(2)}%) | ${v23Base.closeMean.toFixed(2).padStart(8)}% | ${(v23Base.overallMean >= 0 ? "+" : "") + v23Base.overallMean.toFixed(2).padStart(10)}% | ${v23Base.spreadMean.toFixed(2).padStart(10)}%p | ${(v23Base.maxCellUpperCi95 >= 0 ? "+" : "") + v23Base.maxCellUpperCi95.toFixed(2).padStart(13)}% | ${v23Base.allPass ? "ALL PASS" : "FAIL"}`
   );
   console.log(
-    `  v2.4    | ${v24Base.intradayMean.toFixed(2).padStart(11)}% | ${v24Base.closeMean.toFixed(2).padStart(8)}% | ${(v24Base.overallMean >= 0 ? "+" : "") + v24Base.overallMean.toFixed(2).padStart(10)}% | ${v24Base.spreadMean.toFixed(2).padStart(10)}%p | ${(v24Base.maxCellUpperCi95 >= 0 ? "+" : "") + v24Base.maxCellUpperCi95.toFixed(2).padStart(13)}% | ${v24Base.allPass ? "ALL PASS" : "FAIL"}`
+    `  v2.5    | ${v25Base.intradayMean.toFixed(2).padStart(6)}% (${v25Base.upperIntradayMean.toFixed(2)}% / ${v25Base.lowerIntradayMean.toFixed(2)}%) | ${v25Base.closeMean.toFixed(2).padStart(8)}% | ${(v25Base.overallMean >= 0 ? "+" : "") + v25Base.overallMean.toFixed(2).padStart(10)}% | ${v25Base.spreadMean.toFixed(2).padStart(10)}%p | ${(v25Base.maxCellUpperCi95 >= 0 ? "+" : "") + v25Base.maxCellUpperCi95.toFixed(2).padStart(13)}% | ${v25Base.allPass ? "ALL PASS" : "FAIL"}`
   );
 
-  console.log("\n[6] RATES ±20% Sensitivity Evaluation (v2.4):");
-  console.log("  Scenario      | IntradayHit% | OverallMean% | MaxSpread%p | MaxCellUpperCI% | Verdict");
+  console.log("\n[6] RATES ±20% Sensitivity Evaluation (v2.5, Starters):");
+  console.log("  Scenario      | IntradayHit% (Up / Down)   | OverallMean% | MaxSpread%p | MaxCellUpperCI% | Verdict");
   let allScenariosPass = true;
   for (const mult of [0.8, 1.0, 1.2]) {
-    const sc = evaluateBatch(seedList, opts.matches, opts.cap, {
-      useExpectationDeduction: true,
-      rateMultiplier: mult,
-    });
+    const sc =
+      mult === 1.0
+        ? v25Base
+        : evaluateBatch(seedList, opts.matches, opts.cap, {
+            useExpectationDeduction: true,
+            rateMultiplier: mult,
+          });
     if (!sc.allPass) allScenariosPass = false;
     const label = mult === 0.8 ? "RATES -20%" : mult === 1.0 ? "RATES Base" : "RATES +20%";
     console.log(
-      `  ${label.padEnd(13)} | ${sc.intradayMean.toFixed(2).padStart(11)}% | ${(sc.overallMean >= 0 ? "+" : "") + sc.overallMean.toFixed(2).padStart(10)}% | ${sc.spreadMean.toFixed(2).padStart(10)}%p | ${(sc.maxCellUpperCi95 >= 0 ? "+" : "") + sc.maxCellUpperCi95.toFixed(2).padStart(13)}% | ${sc.allPass ? "ALL PASS" : "FAIL"}`
+      `  ${label.padEnd(13)} | ${sc.intradayMean.toFixed(2).padStart(6)}% (${sc.upperIntradayMean.toFixed(2)}% / ${sc.lowerIntradayMean.toFixed(2)}%) | ${(sc.overallMean >= 0 ? "+" : "") + sc.overallMean.toFixed(2).padStart(10)}% | ${sc.spreadMean.toFixed(2).padStart(10)}%p | ${(sc.maxCellUpperCi95 >= 0 ? "+" : "") + sc.maxCellUpperCi95.toFixed(2).padStart(13)}% | ${sc.allPass ? "ALL PASS" : "FAIL"}`
     );
   }
 
-  console.log("\n[7] Verification Verdict (v2.4 Baseline):");
+  console.log("\n[7] Verification Verdict (v2.5 Baseline, Starters):");
   console.log(
-    `  [${v24Base.passHitRate ? "PASS" : "FAIL"}] Intraday ±${(opts.cap * 100).toFixed(0)}% Hit Rate in [${PASS_HIT_RATE_MIN_PCT}%, ${PASS_HIT_RATE_MAX_PCT}%]: ${v24Base.intradayMean.toFixed(2)}%`
+    `  [${v25Base.passHitRate ? "PASS" : "FAIL"}] Intraday ±${(opts.cap * 100).toFixed(0)}% Hit Rate in [${PASS_HIT_RATE_MIN_PCT}%, ${PASS_HIT_RATE_MAX_PCT}%]: ${v25Base.intradayMean.toFixed(2)}%`
   );
   console.log(
-    `  [${v24Base.passSpread ? "PASS" : "FAIL"}] Position Max Spread <= ${PASS_MAX_POS_SPREAD_PCT.toFixed(1)}%p: ${v24Base.spreadMean.toFixed(2)}%p`
+    `  [${v25Base.passSpread ? "PASS" : "FAIL"}] Position Max Spread <= ${PASS_MAX_POS_SPREAD_PCT.toFixed(1)}%p: ${v25Base.spreadMean.toFixed(2)}%p`
   );
   console.log(
-    `  [${v24Base.passOverall ? "PASS" : "FAIL"}] |Overall Mean Return| <= ${PASS_ABS_OVERALL_MEAN_PCT.toFixed(1)}%: ${Math.abs(v24Base.overallMean).toFixed(2)}%`
+    `  [${v25Base.passOverall ? "PASS" : "FAIL"}] |Overall Mean Return| <= ${PASS_ABS_OVERALL_MEAN_PCT.toFixed(1)}%: ${Math.abs(v25Base.overallMean).toFixed(2)}%`
   );
   console.log(
-    `  [${v24Base.passCells ? "PASS" : "FAIL"}] All Pos x Matchup 95% CI Upper <= ${PASS_MAX_CELL_CI_UPPER_PCT.toFixed(1)}%: max=${v24Base.maxCellUpperCi95.toFixed(2)}% (${v24Base.worstCellLabel})`
+    `  [${v25Base.passCells ? "PASS" : "FAIL"}] All Pos x Matchup 95% CI Upper <= ${PASS_MAX_CELL_CI_UPPER_PCT.toFixed(1)}%: max=${v25Base.maxCellUpperCi95.toFixed(2)}% (${v25Base.worstCellLabel})`
   );
 
-  if (!v24Base.allPass || !allScenariosPass) {
+  if (!v25Base.allPass || !allScenariosPass) {
     process.exitCode = 1;
   }
 }
