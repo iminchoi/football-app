@@ -6,9 +6,10 @@ import {
   deriveStatsFromEvents,
   eventDelta,
 } from "../src/lib/priceEngine.ts";
+import { WEIGHTS } from "../src/lib/weights.ts";
 import type { PlayerContext, PlayerEvent } from "../src/lib/priceEngine.ts";
 
-test("goal context priority is mutually exclusive: OPENER +9.5%, EQUALIZER/GO_AHEAD +12%, EXTEND_LEAD +7%", () => {
+test("goal context priority is mutually exclusive: OPENER, EQUALIZER/GO_AHEAD, EXTEND_LEAD", () => {
   const fwCtx: PlayerContext = { position: "ST", isStarter: true };
 
   const opener = eventDelta(
@@ -28,13 +29,13 @@ test("goal context priority is mutually exclusive: OPENER +9.5%, EQUALIZER/GO_AH
     fwCtx
   );
 
-  assert.equal(opener, 0.095);
-  assert.equal(equalizer, 0.12);
-  assert.equal(goAhead, 0.12);
-  assert.equal(extendLead, 0.07);
+  assert.equal(opener, WEIGHTS.GOAL.OPENER);
+  assert.equal(equalizer, WEIGHTS.GOAL.EQUALIZER_OR_GO_AHEAD);
+  assert.equal(goAhead, WEIGHTS.GOAL.EQUALIZER_OR_GO_AHEAD);
+  assert.equal(extendLead, WEIGHTS.GOAL.EXTEND_LEAD);
 });
 
-test("clamping preserves rawReturn while bounding clampedReturn within [-0.30, +0.30]", () => {
+test("clamping preserves rawReturn while bounding clampedReturn within [-CAP_LIMIT, +CAP_LIMIT]", () => {
   const ctx: PlayerContext = { position: "ST", playerId: "p-hat", matchId: "m1" };
   const hatTrickEvents: PlayerEvent[] = [
     { id: "e1", playerId: "p-hat", minute: 15, type: "GOAL", goalContext: "OPENER" },
@@ -43,15 +44,22 @@ test("clamping preserves rawReturn while bounding clampedReturn within [-0.30, +
     { id: "e4", playerId: "p-hat", minute: 75, type: "ASSIST" },
   ];
 
-  // Expected raw: 0.095 + 0.12 + 0.07 + 0.055 = 0.34 (+34%)
+  const expectedRaw = Number(
+    (
+      WEIGHTS.GOAL.OPENER +
+      WEIGHTS.GOAL.EQUALIZER_OR_GO_AHEAD +
+      WEIGHTS.GOAL.EXTEND_LEAD +
+      WEIGHTS.ASSIST
+    ).toFixed(4)
+  );
   const res = calculateCumulativeReturn(hatTrickEvents, ctx);
-  assert.equal(res.rawReturn, 0.34);
-  assert.equal(res.clampedReturn, 0.3);
+  assert.equal(res.rawReturn, expectedRaw);
+  assert.equal(res.clampedReturn, WEIGHTS.CAP_LIMIT);
 
   const series = buildPriceSeries(10000, hatTrickEvents, ctx, 90);
-  assert.equal(series.rawReturn, 0.34);
-  assert.equal(series.clampedReturn, 0.3);
-  assert.equal(series.currentPrice, 13000);
+  assert.equal(series.rawReturn, expectedRaw);
+  assert.equal(series.clampedReturn, WEIGHTS.CAP_LIMIT);
+  assert.equal(series.currentPrice, Math.round((10000 * (1 + WEIGHTS.CAP_LIMIT)) / 10) * 10);
 });
 
 test("unused bench player stays strictly at 0.00% regardless of team events", () => {

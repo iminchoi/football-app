@@ -14,9 +14,10 @@ import type {
 } from "../types";
 import { getPositionLine } from "../types/index.ts";
 import { getTierConfig } from "../utils/tier.ts";
+import { WEIGHTS } from "./weights.ts";
 
-export const RETURN_CLAMP_MIN = -0.3;
-export const RETURN_CLAMP_MAX = 0.3;
+export const RETURN_CLAMP_MIN = -WEIGHTS.CAP_LIMIT;
+export const RETURN_CLAMP_MAX = WEIGHTS.CAP_LIMIT;
 
 export type GoalContext =
   | "EQUALIZER"
@@ -199,39 +200,42 @@ export function eventDelta(event: PlayerEvent, ctx: PlayerContext): number {
       // Mutually exclusive priority: Equalizer/Go-ahead > Opener > Extend Lead (2+ goal margin)
       const ctxBonus =
         event.goalContext === "EQUALIZER" || event.goalContext === "GO_AHEAD"
-          ? 0.12
+          ? WEIGHTS.GOAL.EQUALIZER_OR_GO_AHEAD
           : event.goalContext === "EXTEND_LEAD"
-          ? 0.07
-          : 0.095; // OPENER / default
-      const defenderBonus = line === "DF" || line === "GK" ? 0.02 : 0;
+          ? WEIGHTS.GOAL.EXTEND_LEAD
+          : WEIGHTS.GOAL.OPENER;
+      const defenderBonus =
+        line === "DF" || line === "GK" ? WEIGHTS.GOAL.DEFENDER_OR_GK_BONUS : 0;
       return ctxBonus + defenderBonus;
     }
     case "ASSIST":
-      return 0.055;
+      return WEIGHTS.ASSIST;
     case "KEY_ACTION":
     case "SAVE":
     case "DEFENSIVE_ACTION":
     case "KEY_PLAY":
-      return line === "GK" ? 0.008 : 0.015;
+      return line === "GK" ? WEIGHTS.KEY_ACTION.GK : WEIGHTS.KEY_ACTION.OUTFIELD;
     case "YELLOW_CARD":
-      return -0.025;
+      return WEIGHTS.YELLOW_CARD;
     case "RED_CARD":
-      return -0.15;
+      return WEIGHTS.RED_CARD;
     case "TEAM_GOAL":
-      return 0.008;
+      return WEIGHTS.TEAM_GOAL;
     case "TEAM_CONCEDED":
     case "CONCEDED":
-      return line === "GK" || line === "DF" ? -0.022 : -0.01;
+      return line === "GK" || line === "DF"
+        ? WEIGHTS.TEAM_CONCEDED.GK_OR_DF
+        : WEIGHTS.TEAM_CONCEDED.MF_OR_FW;
     case "CLEAN_SHEET_45":
-      return line === "GK" || line === "DF" ? 0.012 : 0;
+      return line === "GK" || line === "DF" ? WEIGHTS.CLEAN_SHEET_45 : 0;
     case "CLEAN_SHEET_75":
-      return line === "GK" || line === "DF" ? 0.015 : 0;
+      return line === "GK" || line === "DF" ? WEIGHTS.CLEAN_SHEET_75 : 0;
     case "LINEUP_CONFIRMED":
-      return 0;
+      return WEIGHTS.LINEUP_CONFIRMED;
     case "LINEUP_EXCLUDED":
-      return -0.025;
+      return WEIGHTS.LINEUP_EXCLUDED;
     case "BIG_CHANCE_MISS":
-      return -0.015;
+      return WEIGHTS.BIG_CHANCE_MISS;
     case "PENALTY":
     case "SUB_IN":
     default:
@@ -246,7 +250,7 @@ export function eventDelta(event: PlayerEvent, ctx: PlayerContext): number {
 export function calculateCumulativeReturn(
   events: PlayerEvent[],
   ctx: PlayerContext,
-  capLimit = RETURN_CLAMP_MAX
+  capLimit: number = RETURN_CLAMP_MAX
 ): DerivedCumulativeReturn {
   if (ctx.isBenchUnused) {
     return { rawReturn: 0, clampedReturn: 0 };
@@ -437,7 +441,7 @@ export function buildPriceSeries(
   events: PlayerEvent[],
   ctx: PlayerContext,
   endMinute = 90,
-  capLimit = RETURN_CLAMP_MAX
+  capLimit: number = RETURN_CLAMP_MAX
 ): PriceSeriesResult {
   const safeCap = Math.max(0.01, Math.abs(capLimit));
   const safeBase = Math.max(100, round10(basePrice));
