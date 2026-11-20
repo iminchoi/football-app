@@ -42,7 +42,7 @@ import {
   resolvePlayerMatchContext,
   sanitizeEventTypeForPosition,
   isNegativeEventType,
-} from "@/utils/priceEngine";
+} from "@/lib/priceEngine";
 import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
 
 export {

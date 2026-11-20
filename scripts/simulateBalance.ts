@@ -9,23 +9,55 @@ import type {
 } from "../src/lib/priceEngine.ts";
 import type { Position } from "../src/types/index.ts";
 
-function parseSeedFromArgs(argv: string[]): number {
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg.startsWith("--seed=")) {
-      const n = Number(arg.slice("--seed=".length));
-      if (Number.isFinite(n)) return Math.floor(n);
-    } else if (arg === "--seed" && i + 1 < argv.length) {
-      const n = Number(argv[i + 1]);
-      if (Number.isFinite(n)) return Math.floor(n);
-    }
-  }
-  return 20261119;
+// ============================================================================
+// Pass / Fail Constants
+// ============================================================================
+const PASS_HIT_RATE_MIN_PCT = 0.5;
+const PASS_HIT_RATE_MAX_PCT = 10.0;
+const PASS_MAX_POS_SPREAD_PCT = 1.0;
+const PASS_ABS_OVERALL_MEAN_PCT = 0.5;
+
+interface CliOptions {
+  matches: number;
+  seeds: number;
+  baseSeed: number;
+  cap: number;
 }
 
-/**
- * Deterministic PRNG (Mulberry32) supporting reproducible `--seed` runs.
- */
+function parseCliOptions(argv: string[]): CliOptions {
+  let matches = 1000;
+  let seeds = 5;
+  let baseSeed = 20261119;
+  let cap = 0.3;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    const next = argv[i + 1];
+    if (arg.startsWith("--matches=")) {
+      matches = Math.max(1, Math.floor(Number(arg.slice("--matches=".length))));
+    } else if (arg === "--matches" && next) {
+      matches = Math.max(1, Math.floor(Number(next)));
+      i++;
+    } else if (arg.startsWith("--seeds=")) {
+      seeds = Math.max(1, Math.floor(Number(arg.slice("--seeds=".length))));
+    } else if (arg === "--seeds" && next) {
+      seeds = Math.max(1, Math.floor(Number(next)));
+      i++;
+    } else if (arg.startsWith("--seed=")) {
+      baseSeed = Math.floor(Number(arg.slice("--seed=".length)));
+    } else if (arg === "--seed" && next) {
+      baseSeed = Math.floor(Number(next));
+      i++;
+    } else if (arg.startsWith("--cap=")) {
+      cap = Math.max(0.05, Number(arg.slice("--cap=".length)));
+    } else if (arg === "--cap" && next) {
+      cap = Math.max(0.05, Number(next));
+      i++;
+    }
+  }
+  return { matches, seeds, baseSeed, cap };
+}
+
 function createRng(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -37,9 +69,6 @@ function createRng(seed: number): () => number {
   };
 }
 
-/**
- * Knuth Poisson sampler for realistic goal counts per team.
- */
 function samplePoisson(lambda: number, rng: () => number): number {
   const L = Math.exp(-lambda);
   let k = 0;
@@ -64,9 +93,7 @@ const FORMATION_433: Position[] = [
   "ST",
   "RW",
 ];
-
 const BENCH_ROLES: Position[] = ["GK", "CB", "CM", "LW", "ST"];
-
 type PosGroup = "FW" | "MF" | "DF" | "GK";
 
 function toPosGroup(pos: Position): PosGroup {
@@ -90,44 +117,71 @@ function pickByPositionShare(
   for (const c of candidates) {
     byGroup[toPosGroup(c.position as Position)].push(c);
   }
-
-  const availableGroups = (["FW", "MF", "DF", "GK"] as PosGroup[]).filter(
+  const available = (["FW", "MF", "DF", "GK"] as PosGroup[]).filter(
     (g) => byGroup[g].length > 0 && shares[g] > 0
   );
-  if (availableGroups.length === 0) {
+  if (available.length === 0) {
     return candidates[Math.floor(rng() * candidates.length)];
   }
-
-  const totalShare = availableGroups.reduce((s, g) => s + shares[g], 0);
+  const totalShare = available.reduce((s, g) => s + shares[g], 0);
   let roll = rng() * totalShare;
-  let chosenGroup: PosGroup = availableGroups[availableGroups.length - 1];
-  for (const g of availableGroups) {
+  let chosen = available[available.length - 1];
+  for (const g of available) {
     roll -= shares[g];
     if (roll <= 0) {
-      chosenGroup = g;
+      chosen = g;
       break;
     }
   }
-  const pool = byGroup[chosenGroup];
+  const pool = byGroup[chosen];
   return pool[Math.floor(rng() * pool.length)];
 }
 
-function simulate100Matches(seed: number): void {
+function percentile(sortedAsc: number[], p: number): number {
+  if (sortedAsc.length === 0) return 0;
+  const idx = Math.min(
+    sortedAsc.length - 1,
+    Math.max(0, Math.floor((p / 100) * (sortedAsc.length - 1)))
+  );
+  return sortedAsc[idx];
+}
+
+function meanAndStd(arr: number[]): { mean: number; std: number; ci95: number } {
+  const n = arr.length;
+  if (n === 0) return { mean: 0, std: 0, ci95: 0 };
+  const mean = arr.reduce((s, v) => s + v, 0) / n;
+  const variance =
+    n > 1 ? arr.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1) : 0;
+  const std = Math.sqrt(variance);
+  const ci95 = 1.96 * (std / Math.sqrt(n));
+  return { mean, std, ci95 };
+}
+
+interface SeedMetrics {
+  seed: number;
+  participants: number;
+  intradayHitPct: number;
+  closeHitPct: number;
+  overallMeanPct: number;
+  posMeans: Record<PosGroup, number>;
+  posCi95: Record<PosGroup, number>;
+  maxSpreadPct: number;
+  maxAbsCumReturnsAsc: number[];
+}
+
+function runSingleSeed(
+  seed: number,
+  matchCount: number,
+  capLimit: number
+): SeedMetrics {
   const rng = createRng(seed);
-  const MATCH_COUNT = 100;
   const BASE_PRICE = 10000;
 
   let totalParticipants = 0;
-  let intradayUpperHits = 0;
-  let intradayLowerHits = 0;
-  let closeUpperHits = 0;
-  let closeLowerHits = 0;
-  let totalBasePoints = 0;
-  let totalEndPoints = 0;
-
-  let postEvent10mSum = 0;
-  let postEvent10mCount = 0;
-
+  let intradayHits = 0;
+  let closeHits = 0;
+  const allReturns: number[] = [];
+  const maxAbsCumReturns: number[] = [];
   const groupReturns: Record<PosGroup, number[]> = {
     FW: [],
     MF: [],
@@ -135,8 +189,8 @@ function simulate100Matches(seed: number): void {
     GK: [],
   };
 
-  for (let m = 0; m < MATCH_COUNT; m++) {
-    const matchId = `sim-match-${m}`;
+  for (let m = 0; m < matchCount; m++) {
+    const matchId = `s${seed}-m${m}`;
     const participants: MatchParticipant[] = [];
     const subOutMinute = new Map<string, number>();
 
@@ -154,16 +208,13 @@ function simulate100Matches(seed: number): void {
         participants.push(p);
       }
 
-      // 3~5 substitutions per team between 55' and 85'
       const subCount = 3 + Math.floor(rng() * 3);
       const outfieldStarters = starters.filter((s) => s.position !== "GK");
       for (let b = 0; b < subCount; b++) {
-        const subMin = 55 + Math.floor(rng() * 31); // [55..85]
+        const subMin = 55 + Math.floor(rng() * 31);
         const replacedIdx = Math.floor(rng() * outfieldStarters.length);
         const replaced = outfieldStarters.splice(replacedIdx, 1)[0];
-        if (replaced) {
-          subOutMinute.set(replaced.playerId, subMin);
-        }
+        if (replaced) subOutMinute.set(replaced.playerId, subMin);
         participants.push({
           playerId: `${matchId}-${prefix}-b${b}`,
           teamSide: side,
@@ -177,7 +228,6 @@ function simulate100Matches(seed: number): void {
     const teamEvents: TeamMatchRawEvent[] = [];
     let evSeq = 0;
 
-    // 1) Substitutions & Lineup Confirmation (0.0% bonus per v2.1)
     for (const p of participants) {
       if (p.isStarter) {
         teamEvents.push({
@@ -206,21 +256,14 @@ function simulate100Matches(seed: number): void {
       return p.subInMinute !== undefined && min >= p.subInMinute;
     };
 
-    // 2) Goals per team: Poisson(1.4)
     const homeGoals = samplePoisson(1.4, rng);
     const awayGoals = samplePoisson(1.4, rng);
     const goalTimeline: { minute: number; side: "HOME" | "AWAY" }[] = [];
     for (let g = 0; g < homeGoals; g++) {
-      goalTimeline.push({
-        minute: 2 + Math.floor(rng() * 88),
-        side: "HOME",
-      });
+      goalTimeline.push({ minute: 2 + Math.floor(rng() * 88), side: "HOME" });
     }
     for (let g = 0; g < awayGoals; g++) {
-      goalTimeline.push({
-        minute: 2 + Math.floor(rng() * 88),
-        side: "AWAY",
-      });
+      goalTimeline.push({ minute: 2 + Math.floor(rng() * 88), side: "AWAY" });
     }
     goalTimeline.sort((a, b) => a.minute - b.minute);
 
@@ -232,13 +275,10 @@ function simulate100Matches(seed: number): void {
     for (const g of goalTimeline) {
       const prevDiff = g.side === "HOME" ? hScore - aScore : aScore - hScore;
       let goalContext: GoalContext = "OPENER";
-      if (hScore === 0 && aScore === 0) {
-        goalContext = "OPENER";
-      } else if (prevDiff === -1 || prevDiff === 0) {
+      if (hScore === 0 && aScore === 0) goalContext = "OPENER";
+      else if (prevDiff === -1 || prevDiff === 0) {
         goalContext = prevDiff === -1 ? "EQUALIZER" : "GO_AHEAD";
-      } else if (prevDiff >= 1) {
-        goalContext = "EXTEND_LEAD";
-      }
+      } else if (prevDiff >= 1) goalContext = "EXTEND_LEAD";
 
       if (g.side === "HOME") {
         hScore += 1;
@@ -267,11 +307,8 @@ function simulate100Matches(seed: number): void {
         goalContext,
       });
 
-      // 70% assist probability
       if (rng() < 0.7) {
-        const assistPool = activeSide.filter(
-          (p) => p.playerId !== scorer.playerId
-        );
+        const assistPool = activeSide.filter((p) => p.playerId !== scorer.playerId);
         if (assistPool.length > 0) {
           const assister = pickByPositionShare(
             assistPool,
@@ -289,45 +326,21 @@ function simulate100Matches(seed: number): void {
       }
     }
 
-    // 3) Clean sheet checkpoints at 45' and 75'
     if (firstConcededHome > 45) {
-      teamEvents.push({
-        id: `${matchId}-ev-${evSeq++}`,
-        minute: 45,
-        teamSide: "HOME",
-        kind: "CLEAN_SHEET_45",
-      });
+      teamEvents.push({ id: `${matchId}-ev-${evSeq++}`, minute: 45, teamSide: "HOME", kind: "CLEAN_SHEET_45" });
     }
     if (firstConcededHome > 75) {
-      teamEvents.push({
-        id: `${matchId}-ev-${evSeq++}`,
-        minute: 75,
-        teamSide: "HOME",
-        kind: "CLEAN_SHEET_75",
-      });
+      teamEvents.push({ id: `${matchId}-ev-${evSeq++}`, minute: 75, teamSide: "HOME", kind: "CLEAN_SHEET_75" });
     }
     if (firstConcededAway > 45) {
-      teamEvents.push({
-        id: `${matchId}-ev-${evSeq++}`,
-        minute: 45,
-        teamSide: "AWAY",
-        kind: "CLEAN_SHEET_45",
-      });
+      teamEvents.push({ id: `${matchId}-ev-${evSeq++}`, minute: 45, teamSide: "AWAY", kind: "CLEAN_SHEET_45" });
     }
     if (firstConcededAway > 75) {
-      teamEvents.push({
-        id: `${matchId}-ev-${evSeq++}`,
-        minute: 75,
-        teamSide: "AWAY",
-        kind: "CLEAN_SHEET_75",
-      });
+      teamEvents.push({ id: `${matchId}-ev-${evSeq++}`, minute: 75, teamSide: "AWAY", kind: "CLEAN_SHEET_75" });
     }
 
-    // 4) Key actions + Yellow (15%/player) + Red (0.5%/player)
     for (const side of ["HOME", "AWAY"] as const) {
-      const activeAtMid = participants.filter(
-        (p) => p.teamSide === side && p.isStarter
-      );
+      const activeAtMid = participants.filter((p) => p.teamSide === side && p.isStarter);
       const gk = activeAtMid.find((p) => p.position === "GK");
       if (gk) {
         const saves = 1 + Math.floor(rng() * 3);
@@ -341,9 +354,8 @@ function simulate100Matches(seed: number): void {
           });
         }
       }
-
-      const outfieldActions = 2 + Math.floor(rng() * 4);
       const outfield = activeAtMid.filter((p) => p.position !== "GK");
+      const outfieldActions = 2 + Math.floor(rng() * 4);
       for (let k = 0; k < outfieldActions; k++) {
         const actor = pickByPositionShare(
           outfield,
@@ -364,24 +376,19 @@ function simulate100Matches(seed: number): void {
       const minStart = p.isStarter ? 3 : p.subInMinute ?? 60;
       const minEnd = subOutMinute.get(p.playerId) ?? 89;
       if (minEnd <= minStart) continue;
-
       if (rng() < 0.15) {
-        const min =
-          minStart + Math.floor(rng() * Math.max(1, minEnd - minStart));
         teamEvents.push({
           id: `${matchId}-ev-${evSeq++}`,
-          minute: min,
+          minute: minStart + Math.floor(rng() * Math.max(1, minEnd - minStart)),
           teamSide: p.teamSide,
           kind: "YELLOW_CARD",
           actorPlayerId: p.playerId,
         });
       }
       if (rng() < 0.005) {
-        const min =
-          minStart + Math.floor(rng() * Math.max(1, minEnd - minStart));
         teamEvents.push({
           id: `${matchId}-ev-${evSeq++}`,
-          minute: min,
+          minute: minStart + Math.floor(rng() * Math.max(1, minEnd - minStart)),
           teamSide: p.teamSide,
           kind: "RED_CARD",
           actorPlayerId: p.playerId,
@@ -391,10 +398,9 @@ function simulate100Matches(seed: number): void {
 
     const fanned = fanOutTeamEventsToPlayers(participants, teamEvents);
     for (const p of participants) {
-      const evs = fanned[p.playerId] ?? [];
       const series = buildPriceSeries(
         BASE_PRICE,
-        evs,
+        fanned[p.playerId] ?? [],
         {
           position: p.position,
           playerId: p.playerId,
@@ -402,84 +408,146 @@ function simulate100Matches(seed: number): void {
           isStarter: p.isStarter,
           subInMinute: p.subInMinute,
         },
-        90
+        90,
+        capLimit
       );
 
       totalParticipants += 1;
-      totalBasePoints += BASE_PRICE;
-      totalEndPoints += series.currentPrice;
-
-      let hitUp = false;
-      let hitDown = false;
+      let maxAbsRaw = 0;
+      let hitIntraday = false;
       for (const pt of series.points) {
-        const cr = pt.clampedReturn ?? 0;
-        if (cr >= 0.3) hitUp = true;
-        if (cr <= -0.3) hitDown = true;
+        const rr = Math.abs(pt.rawReturn ?? 0);
+        if (rr > maxAbsRaw) maxAbsRaw = rr;
+        if (Math.abs(pt.clampedReturn ?? 0) >= capLimit) hitIntraday = true;
       }
-      if (hitUp) intradayUpperHits += 1;
-      if (hitDown) intradayLowerHits += 1;
-      if (series.clampedReturn >= 0.3) closeUpperHits += 1;
-      if (series.clampedReturn <= -0.3) closeLowerHits += 1;
+      if (hitIntraday) intradayHits += 1;
+      if (Math.abs(series.clampedReturn) >= capLimit) closeHits += 1;
 
-      groupReturns[toPosGroup(p.position as Position)].push(series.clampedReturn);
-
-      // Post-event 10-minute drift check for major individual events
-      for (const ev of evs) {
-        if (
-          ev.type !== "GOAL" &&
-          ev.type !== "ASSIST" &&
-          ev.type !== "YELLOW_CARD" &&
-          ev.type !== "RED_CARD"
-        ) {
-          continue;
-        }
-        const atEvent = series.points.find((pt) => pt.minute >= ev.minute);
-        const after10 = series.points.find(
-          (pt) => pt.minute >= Math.min(90, ev.minute + 10)
-        );
-        if (atEvent && after10) {
-          postEvent10mSum +=
-            (after10.clampedReturn ?? 0) - (atEvent.clampedReturn ?? 0);
-          postEvent10mCount += 1;
-        }
-      }
+      maxAbsCumReturns.push(maxAbsRaw * 100);
+      const retPct = series.clampedReturn * 100;
+      allReturns.push(retPct);
+      groupReturns[toPosGroup(p.position as Position)].push(retPct);
     }
   }
 
-  const avg = (arr: number[]) =>
-    arr.reduce((s, v) => s + v, 0) / Math.max(1, arr.length);
+  maxAbsCumReturns.sort((a, b) => a - b);
 
-  const posMeans = {
-    FW: avg(groupReturns.FW) * 100,
-    MF: avg(groupReturns.MF) * 100,
-    DF: avg(groupReturns.DF) * 100,
-    GK: avg(groupReturns.GK) * 100,
+  const fwStat = meanAndStd(groupReturns.FW);
+  const mfStat = meanAndStd(groupReturns.MF);
+  const dfStat = meanAndStd(groupReturns.DF);
+  const gkStat = meanAndStd(groupReturns.GK);
+  const overallStat = meanAndStd(allReturns);
+
+  const posMeans: Record<PosGroup, number> = {
+    FW: fwStat.mean,
+    MF: mfStat.mean,
+    DF: dfStat.mean,
+    GK: gkStat.mean,
   };
-  const maxPosDiff =
-    Math.max(posMeans.FW, posMeans.MF, posMeans.DF, posMeans.GK) -
-    Math.min(posMeans.FW, posMeans.MF, posMeans.DF, posMeans.GK);
-  const netPointChangePct =
-    ((totalEndPoints - totalBasePoints) / Math.max(1, totalBasePoints)) * 100;
-  const avgPost10mPct =
-    postEvent10mCount > 0 ? (postEvent10mSum / postEvent10mCount) * 100 : 0;
+  const posCi95: Record<PosGroup, number> = {
+    FW: fwStat.ci95,
+    MF: mfStat.ci95,
+    DF: dfStat.ci95,
+    GK: gkStat.ci95,
+  };
 
-  console.log(`=== PitchTrade v2.1 100-Match Balance Simulation (seed=${seed}) ===`);
-  console.log(`Simulated Matches: ${MATCH_COUNT} | Total Active Participants: ${totalParticipants}`);
-  console.log(
-    `1) Intraday ±30% Hit Rate: Upper=${((intradayUpperHits / totalParticipants) * 100).toFixed(2)}% | Lower=${((intradayLowerHits / totalParticipants) * 100).toFixed(2)}% | Combined=${(((intradayUpperHits + intradayLowerHits) / totalParticipants) * 100).toFixed(2)}%`
-  );
-  console.log(
-    `   Close ±30% Hit Rate:    Upper=${((closeUpperHits / totalParticipants) * 100).toFixed(2)}% | Lower=${((closeLowerHits / totalParticipants) * 100).toFixed(2)}% | Combined=${(((closeUpperHits + closeLowerHits) / totalParticipants) * 100).toFixed(2)}%`
-  );
-  console.log(
-    `2) Position Mean Return:   FW ${posMeans.FW.toFixed(2)}% | MF ${posMeans.MF.toFixed(2)}% | DF ${posMeans.DF.toFixed(2)}% | GK ${posMeans.GK.toFixed(2)}% (Max Spread: ${maxPosDiff.toFixed(2)}%p)`
-  );
-  console.log(
-    `3) Post-Event 10m Avg Additional Return: ${avgPost10mPct >= 0 ? "+" : ""}${avgPost10mPct.toFixed(3)}% (n=${postEvent10mCount})`
-  );
-  console.log(
-    `4) 100-Match Aggregate Point Supply Change: ${netPointChangePct >= 0 ? "+" : ""}${netPointChangePct.toFixed(2)}% (${totalBasePoints.toLocaleString()}P -> ${totalEndPoints.toLocaleString()}P)`
-  );
+  return {
+    seed,
+    participants: totalParticipants,
+    intradayHitPct: (intradayHits / totalParticipants) * 100,
+    closeHitPct: (closeHits / totalParticipants) * 100,
+    overallMeanPct: overallStat.mean,
+    posMeans,
+    posCi95,
+    maxSpreadPct:
+      Math.max(posMeans.FW, posMeans.MF, posMeans.DF, posMeans.GK) -
+      Math.min(posMeans.FW, posMeans.MF, posMeans.DF, posMeans.GK),
+    maxAbsCumReturnsAsc: maxAbsCumReturns,
+  };
 }
 
-simulate100Matches(parseSeedFromArgs(process.argv.slice(2)));
+function main(): void {
+  const opts = parseCliOptions(process.argv.slice(2));
+  const seedList = Array.from({ length: opts.seeds }, (_, idx) => opts.baseSeed + idx * 101);
+
+  console.log(
+    `=== PitchTrade Balance Verification (matches=${opts.matches}/seed, seeds=${opts.seeds}, cap=±${(
+      opts.cap * 100
+    ).toFixed(0)}%) ===`
+  );
+
+  const seedRuns = seedList.map((s) => runSingleSeed(s, opts.matches, opts.cap));
+
+  console.log("\n[1] Per-Seed Breakdown:");
+  for (const r of seedRuns) {
+    console.log(
+      `  Seed ${r.seed}: IntradayHit=${r.intradayHitPct.toFixed(2)}% | CloseHit=${r.closeHitPct.toFixed(2)}% | Overall=${r.overallMeanPct >= 0 ? "+" : ""}${r.overallMeanPct.toFixed(2)}% | Spread=${r.maxSpreadPct.toFixed(2)}%p`
+    );
+  }
+
+  const intradayStat = meanAndStd(seedRuns.map((r) => r.intradayHitPct));
+  const closeStat = meanAndStd(seedRuns.map((r) => r.closeHitPct));
+  const overallStat = meanAndStd(seedRuns.map((r) => r.overallMeanPct));
+  const spreadStat = meanAndStd(seedRuns.map((r) => r.maxSpreadPct));
+
+  const combinedMaxAbs = seedRuns
+    .flatMap((r) => r.maxAbsCumReturnsAsc)
+    .sort((a, b) => a - b);
+
+  console.log("\n[2] Aggregate Across Seeds (Mean ± SD):");
+  console.log(
+    `  Intraday Cap Hit Rate : ${intradayStat.mean.toFixed(2)}% ± ${intradayStat.std.toFixed(2)}%`
+  );
+  console.log(
+    `  Close Cap Hit Rate    : ${closeStat.mean.toFixed(2)}% ± ${closeStat.std.toFixed(2)}%`
+  );
+  console.log(
+    `  Overall Mean Return   : ${overallStat.mean >= 0 ? "+" : ""}${overallStat.mean.toFixed(2)}% ± ${overallStat.std.toFixed(2)}%`
+  );
+  console.log(
+    `  Position Max Spread   : ${spreadStat.mean.toFixed(2)}%p ± ${spreadStat.std.toFixed(2)}%p`
+  );
+  console.log(
+    `  Max Intraday |Return| : p50=${percentile(combinedMaxAbs, 50).toFixed(2)}% | p90=${percentile(combinedMaxAbs, 90).toFixed(2)}% | p99=${percentile(combinedMaxAbs, 99).toFixed(2)}%`
+  );
+
+  console.log("\n[3] Position Mean Return (95% Confidence Interval, Seed 1):");
+  const ref = seedRuns[0];
+  for (const pos of ["FW", "MF", "DF", "GK"] as PosGroup[]) {
+    console.log(
+      `  ${pos}: ${ref.posMeans[pos] >= 0 ? "+" : ""}${ref.posMeans[pos].toFixed(2)}% ± ${ref.posCi95[pos].toFixed(2)}% (95% CI)`
+    );
+  }
+
+  console.log("\n[4] Cap Comparison Table (0.15 / 0.20 / 0.30 on Seed 1):");
+  console.log("  Cap     | IntradayHit% | CloseHit% | OverallMean% | MaxSpread%p");
+  for (const cmpCap of [0.15, 0.2, 0.3]) {
+    const cRes = runSingleSeed(opts.baseSeed, opts.matches, cmpCap);
+    console.log(
+      `  ±${(cmpCap * 100).toFixed(0).padStart(2, "0")}%   | ${cRes.intradayHitPct.toFixed(2).padStart(11)}% | ${cRes.closeHitPct.toFixed(2).padStart(8)}% | ${(cRes.overallMeanPct >= 0 ? "+" : "") + cRes.overallMeanPct.toFixed(2).padStart(10)}% | ${cRes.maxSpreadPct.toFixed(2).padStart(10)}%p`
+    );
+  }
+
+  const passHitRate =
+    intradayStat.mean >= PASS_HIT_RATE_MIN_PCT &&
+    intradayStat.mean <= PASS_HIT_RATE_MAX_PCT;
+  const passSpread = spreadStat.mean <= PASS_MAX_POS_SPREAD_PCT;
+  const passOverall = Math.abs(overallStat.mean) <= PASS_ABS_OVERALL_MEAN_PCT;
+
+  console.log("\n[5] Verification Verdict:");
+  console.log(
+    `  [${passHitRate ? "PASS" : "FAIL"}] Intraday ±${(opts.cap * 100).toFixed(0)}% Hit Rate in [${PASS_HIT_RATE_MIN_PCT}%, ${PASS_HIT_RATE_MAX_PCT}%]: ${intradayStat.mean.toFixed(2)}%`
+  );
+  console.log(
+    `  [${passSpread ? "PASS" : "FAIL"}] Position Max Spread <= ${PASS_MAX_POS_SPREAD_PCT.toFixed(1)}%p: ${spreadStat.mean.toFixed(2)}%p`
+  );
+  console.log(
+    `  [${passOverall ? "PASS" : "FAIL"}] |Overall Mean Return| <= ${PASS_ABS_OVERALL_MEAN_PCT.toFixed(1)}%: ${Math.abs(overallStat.mean).toFixed(2)}%`
+  );
+
+  if (!passHitRate || !passSpread || !passOverall) {
+    process.exitCode = 1;
+  }
+}
+
+main();

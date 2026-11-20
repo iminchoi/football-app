@@ -24,7 +24,7 @@ import {
   derivePlayerMarketData,
   extractInitialMatchEvents,
   resolveLastMatchReview,
-} from "@/utils/priceEngine";
+} from "@/lib/priceEngine";
 import MatchEventTimeline from "@/components/MatchEventTimeline";
 import {
   ChartEventMarker,

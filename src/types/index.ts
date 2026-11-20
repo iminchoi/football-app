@@ -147,7 +147,7 @@ export interface StoredUserAccount {
 
 /**
  * Canonical match event kinds. Each position line may only receive the kinds listed in
- * `POSITION_EVENT_WHITELIST` (src/utils/priceEngine.ts); `SAVE` is goalkeeper-only.
+ * `POSITION_EVENT_WHITELIST` (src/lib/priceEngine.ts); `SAVE` is goalkeeper-only.
  */
 export type MatchEventType =
   | "GOAL"

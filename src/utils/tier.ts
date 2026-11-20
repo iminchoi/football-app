@@ -1,4 +1,4 @@
-import { Holding, Player, PlayerTier, StoredUserAccount } from "@/types";
+import type { Holding, Player, PlayerTier, StoredUserAccount } from "../types";
 
 export interface TierConfig {
   tier: PlayerTier;

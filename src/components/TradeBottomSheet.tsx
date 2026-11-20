@@ -26,7 +26,7 @@ import {
   derivePlayerMarketData,
   extractInitialMatchEvents,
   resolvePlayerMatchContext,
-} from "@/utils/priceEngine";
+} from "@/lib/priceEngine";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
 import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
 import { Player, TradeType, getPositionLine } from "@/types";

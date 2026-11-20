@@ -32,7 +32,7 @@ import {
   extractInitialMatchEvents,
   formatMinuteLabel,
   resolveLastMatchReview,
-} from "@/utils/priceEngine";
+} from "@/lib/priceEngine";
 import {
   CandleData,
   CandleTimeframe,

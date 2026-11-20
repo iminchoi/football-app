@@ -3,7 +3,7 @@
 import React from "react";
 import { Zap } from "lucide-react";
 import { MatchEvent } from "@/types";
-import { EVENT_TYPE_META, formatMinuteLabel } from "@/utils/priceEngine";
+import { EVENT_TYPE_META, formatMinuteLabel } from "@/lib/priceEngine";
 
 export interface MatchEventTimelineProps {
   events: MatchEvent[];
