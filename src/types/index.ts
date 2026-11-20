@@ -328,3 +328,36 @@ export interface PointTransaction {
   realizedPnL?: number;
   timestamp: string;
 }
+
+export interface ActiveMatchContext {
+  matchId: string;
+  competition: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeScore: number;
+  awayScore: number;
+  status: "PRE" | "LIVE" | "FT";
+  kickoffTime: string;
+  minute?: number;
+}
+
+export function buildActiveMatchContext(match: Match): ActiveMatchContext {
+  const status: "PRE" | "LIVE" | "FT" =
+    match.status === "LIVE" || match.rawStatus === "IN_PLAY"
+      ? "LIVE"
+      : match.status === "FT" || match.rawStatus === "FINISHED"
+      ? "FT"
+      : "PRE";
+
+  return {
+    matchId: match.id,
+    competition: match.leagueName,
+    homeTeam: match.homeTeam.shortName || match.homeTeam.name,
+    awayTeam: match.awayTeam.shortName || match.awayTeam.name,
+    homeScore: match.homeTeam.score ?? 0,
+    awayScore: match.awayTeam.score ?? 0,
+    status,
+    kickoffTime: match.kickoffTime,
+    minute: match.minute,
+  };
+}

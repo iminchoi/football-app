@@ -352,6 +352,7 @@ export default function MatchTimelineChart({
   onOpenFullScreenCandle,
 }: MatchTimelineChartProps) {
   const matches = useTradeStore((s) => s.matches);
+  const activeMatchContext = useTradeStore((s) => s.activeMatchContext);
 
   const [viewMode, setViewMode] = useState<ChartViewMode>("MATCH_TIMELINE");
   const [preMatchMode, setPreMatchMode] = useState<"PRE" | "LAST_FT">("PRE");
@@ -365,23 +366,29 @@ export default function MatchTimelineChart({
     setSelectedEventMinute(null);
   }, [player.id]);
 
-  // Resolve the player's active match (prioritizing LIVE, then direct matchId, then team match)
+  // Prioritize store activeMatchContext when present; fall back to matches lookup only if absent
   const playerMatch: Match | undefined = useMemo(() => {
-    const direct = matches.find((m) => m.id === player.matchId);
-    if (direct && (direct.status === "LIVE" || direct.rawStatus === "IN_PLAY")) {
-      return direct;
+    if (activeMatchContext) {
+      const byCtxId = matches.find((m) => m.id === activeMatchContext.matchId);
+      if (byCtxId) return byCtxId;
     }
+    const direct = matches.find((m) => m.id === player.matchId);
+    if (direct) return direct;
     const liveMatch = matches.find(
       (m) =>
         (m.status === "LIVE" || m.rawStatus === "IN_PLAY") &&
         doesPlayerBelongToMatch(player, m)
     );
     if (liveMatch) return liveMatch;
-    if (direct) return direct;
     return matches.find((m) => doesPlayerBelongToMatch(player, m));
-  }, [matches, player]);
+  }, [activeMatchContext, matches, player]);
 
   const matchStatus: "LIVE" | "FT" | "UPCOMING" = useMemo(() => {
+    if (activeMatchContext) {
+      return activeMatchContext.status === "PRE"
+        ? "UPCOMING"
+        : activeMatchContext.status;
+    }
     if (!playerMatch) return "LIVE";
     if (
       playerMatch.status === "LIVE" ||
@@ -396,31 +403,38 @@ export default function MatchTimelineChart({
       return "FT";
     }
     return "UPCOMING";
-  }, [playerMatch]);
+  }, [activeMatchContext, playerMatch]);
 
   const basePrice = roundToTen(
     player.basePrice ?? player.initialPrice ?? player.currentPrice
   );
-  const rawOpenPrice = roundToTen(
-    player.openPrice ?? player.priceHistory[0]?.price ?? basePrice
-  );
+  const rawOpenPrice =
+    matchStatus === "UPCOMING"
+      ? basePrice
+      : roundToTen(player.openPrice ?? player.priceHistory[0]?.price ?? basePrice);
 
-  // Derive SSOT timeline & metrics from player.events and openPrice
+  // Derive SSOT timeline & metrics from player.events and openPrice (forced empty on PRE)
   const ssotData = useMemo(() => {
-    const events = extractInitialMatchEvents(
-      {
-        ...player,
-        openPrice: rawOpenPrice,
-        basePrice,
-      },
-      matchStatus
-    );
+    const events =
+      matchStatus === "UPCOMING"
+        ? []
+        : extractInitialMatchEvents(
+            {
+              ...player,
+              openPrice: rawOpenPrice,
+              basePrice,
+            },
+            matchStatus
+          );
     const endMin =
       matchStatus === "FT"
         ? 90
         : matchStatus === "UPCOMING"
         ? 0
-        : playerMatch?.minute ?? player.lastEvent?.minute ?? 60;
+        : activeMatchContext?.minute ??
+          playerMatch?.minute ??
+          player.lastEvent?.minute ??
+          60;
     return derivePlayerMarketData({
       playerId: player.id,
       openPrice: rawOpenPrice,
@@ -429,7 +443,14 @@ export default function MatchTimelineChart({
       currentMinute: endMin,
       matchStatus,
     });
-  }, [player, rawOpenPrice, basePrice, matchStatus, playerMatch?.minute]);
+  }, [
+    player,
+    rawOpenPrice,
+    basePrice,
+    matchStatus,
+    activeMatchContext?.minute,
+    playerMatch?.minute,
+  ]);
 
   const lastMatchReview = useMemo(() => {
     if (matchStatus !== "UPCOMING") return null;
@@ -594,6 +615,18 @@ export default function MatchTimelineChart({
         <p className="truncate text-[11px] font-semibold text-gray-500">
           {isViewingLastMatch && lastMatchReview ? (
             <span className="text-slate-700">{lastMatchReview.matchLabel}</span>
+          ) : activeMatchContext ? (
+            <>
+              <span>{activeMatchContext.competition}</span>
+              <span className="mx-1 text-gray-300">·</span>
+              <span className="font-mono font-bold text-gray-800">
+                {activeMatchContext.homeTeam}{" "}
+                {activeMatchContext.status === "PRE"
+                  ? "vs"
+                  : `${activeMatchContext.homeScore} : ${activeMatchContext.awayScore}`}{" "}
+                {activeMatchContext.awayTeam}
+              </span>
+            </>
           ) : playerMatch ? (
             <>
               <span>{playerMatch.leagueName}</span>

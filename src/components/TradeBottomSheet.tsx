@@ -529,29 +529,62 @@ export default function TradeBottomSheet({
     player.openPrice ?? player.priceHistory[0]?.price ?? basePrice
   );
   const ctx = resolvePlayerMatchContext(player, matches);
+  const activeMatchContext = useTradeStore((s) => s.activeMatchContext);
+  const effectiveStatus = activeMatchContext
+    ? activeMatchContext.status === "PRE"
+      ? "UPCOMING"
+      : activeMatchContext.status
+    : ctx.status;
+  const effectiveMinute =
+    effectiveStatus === "UPCOMING"
+      ? 0
+      : effectiveStatus === "FT"
+      ? 90
+      : activeMatchContext?.minute ?? ctx.minute;
+
   const fallbackSsot = derivePlayerMarketData({
     playerId: player.id,
-    openPrice: rawOpenPrice,
+    openPrice: effectiveStatus === "UPCOMING" ? basePrice : rawOpenPrice,
     basePrice,
-    events: extractInitialMatchEvents({
-      ...player,
-      openPrice: rawOpenPrice,
-      basePrice,
-    }),
-    currentMinute: ctx.minute,
-    matchStatus: ctx.status,
+    events:
+      effectiveStatus === "UPCOMING"
+        ? []
+        : extractInitialMatchEvents({
+            ...player,
+            openPrice: rawOpenPrice,
+            basePrice,
+          }),
+    currentMinute: effectiveMinute,
+    matchStatus: effectiveStatus,
   });
 
-  const openPrice = player.openPrice ?? fallbackSsot.openPrice;
-  const currentPrice = roundToTen(
-    player.currentPrice ?? fallbackSsot.currentPrice
-  );
-  const highPrice = player.highPrice ?? fallbackSsot.highPrice;
-  const lowPrice = player.lowPrice ?? fallbackSsot.lowPrice;
-  const volume = player.volume ?? fallbackSsot.volume;
+  const openPrice =
+    effectiveStatus === "UPCOMING"
+      ? basePrice
+      : player.openPrice ?? fallbackSsot.openPrice;
+  const currentPrice =
+    effectiveStatus === "UPCOMING"
+      ? basePrice
+      : roundToTen(player.currentPrice ?? fallbackSsot.currentPrice);
+  const highPrice =
+    effectiveStatus === "UPCOMING"
+      ? basePrice
+      : player.highPrice ?? fallbackSsot.highPrice;
+  const lowPrice =
+    effectiveStatus === "UPCOMING"
+      ? basePrice
+      : player.lowPrice ?? fallbackSsot.lowPrice;
+  const volume =
+    effectiveStatus === "UPCOMING" ? 0 : player.volume ?? fallbackSsot.volume;
 
-  const diffFromBase = calculateDiffFromOpen(currentPrice, openPrice);
-  const pctFromBase = calculateChangePercentFromOpen(currentPrice, openPrice);
+  const diffFromBase =
+    effectiveStatus === "UPCOMING"
+      ? 0
+      : calculateDiffFromOpen(currentPrice, openPrice);
+  const pctFromBase =
+    effectiveStatus === "UPCOMING"
+      ? 0
+      : calculateChangePercentFromOpen(currentPrice, openPrice);
 
   // Market supply & liquidity metrics (Single Source of Truth + Dynamic availableShares)
   const tierCfg = getTierConfig(basePrice);
@@ -590,7 +623,7 @@ export default function TradeBottomSheet({
   const isAtLowerLimit = currentPrice <= minFloorPrice;
   const isBuyBlockedByCap = tradeType === "BUY" && isAtUpperLimit;
   const isSellBlockedByFloor = tradeType === "SELL" && isAtLowerLimit;
-  const isMatchFinished = ctx.status === "FT";
+  const isMatchFinished = effectiveStatus === "FT";
 
   // Period chart series
   const series = buildPeriodSeries(player, period);

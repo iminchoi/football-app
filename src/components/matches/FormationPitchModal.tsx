@@ -10,6 +10,7 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import {
+  ActiveMatchContext,
   Match,
   Player,
   Holding,
@@ -19,6 +20,7 @@ import {
   ApiLineupPlayer,
   getPositionLine,
   normalizeDetailedPosition,
+  buildActiveMatchContext,
 } from "@/types";
 import {
   roundToTen,
@@ -37,7 +39,11 @@ interface FormationPitchModalProps {
   players: Player[];
   holdings: Record<string, Holding>;
   onClose: () => void;
-  onSelectPlayerTrade: (player: Player, type: TradeType) => void;
+  onSelectPlayerTrade: (
+    player: Player,
+    type: TradeType,
+    matchContext?: ActiveMatchContext
+  ) => void;
 }
 
 export type SupportedFormation = "4-3-3" | "4-2-3-1";
@@ -1404,7 +1410,11 @@ export interface FormationPitchContentProps {
   match: Match;
   players: Player[];
   holdings: Record<string, Holding>;
-  onSelectPlayerTrade: (player: Player, type: TradeType) => void;
+  onSelectPlayerTrade: (
+    player: Player,
+    type: TradeType,
+    matchContext?: ActiveMatchContext
+  ) => void;
   onCollapseInline?: () => void;
 }
 
@@ -1455,6 +1465,13 @@ export function FormationPitchContent({
     match.status === "UPCOMING" ||
     match.rawStatus === "TIMED" ||
     match.rawStatus === "SCHEDULED";
+
+  const handleSelectWithContext = useCallback(
+    (player: Player, type: TradeType) => {
+      onSelectPlayerTrade(player, type, buildActiveMatchContext(match));
+    },
+    [match, onSelectPlayerTrade]
+  );
 
   const startingPlayers = useMemo(
     () => pitchPlayers.slice(0, 11),
@@ -1584,7 +1601,7 @@ export function FormationPitchContent({
                   teamColor={activeTeam.color}
                   holdingQty={holdings[player.id]?.quantity ?? 0}
                   isUpcoming={isUpcoming}
-                  onSelect={onSelectPlayerTrade}
+                  onSelect={handleSelectWithContext}
                 />
               ))}
             </div>
@@ -1624,7 +1641,7 @@ export function FormationPitchContent({
                 teamColor={activeTeam.color}
                 holdingQty={holdings[sub.id]?.quantity ?? 0}
                 isUpcoming={isUpcoming}
-                onSelect={onSelectPlayerTrade}
+                onSelect={handleSelectWithContext}
               />
             ))}
           </div>

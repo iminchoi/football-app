@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useTradeStore } from "@/store/useTradeStore";
-import { Player, TradeType } from "@/types";
+import { ActiveMatchContext, Player, TradeType } from "@/types";
 import TopAssetHeader from "@/components/TopAssetHeader";
 import BottomTabBar from "@/components/BottomTabBar";
 import MatchesTabView from "@/components/matches/MatchesTabView";
@@ -16,9 +16,7 @@ import AdminPanel from "@/components/AdminPanel";
 
 export default function HomePage() {
   const activeTab = useTradeStore((state) => state.activeTab);
-  const ensurePlayerInStore = useTradeStore(
-    (state) => state.ensurePlayerInStore
-  );
+  const selectPlayer = useTradeStore((state) => state.selectPlayer);
 
   const [mounted, setMounted] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
@@ -33,8 +31,12 @@ export default function HomePage() {
     setMounted(true);
   }, []);
 
-  const handleOpenTradeSheet = (player: Player, type: TradeType = "BUY") => {
-    ensurePlayerInStore(player);
+  const handleOpenTradeSheet = (
+    player: Player,
+    type: TradeType = "BUY",
+    matchContext?: ActiveMatchContext | null
+  ) => {
+    selectPlayer(player, matchContext ?? null);
     setSelectedPlayerId(player.id);
     setModalTradeType(type);
     setRecentPlayerIds((prev) =>

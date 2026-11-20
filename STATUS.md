@@ -1,11 +1,12 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); UI pitch-view player selection now overrides selected match context (`PRE` open-price alignment) and displays `"장전 프리마켓 (PRE)"` when all matches on the selected date are upcoming.
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); UI trading panels (`RightTradeDockPanel`, `TradeBottomSheet`, `MatchTimelineChart`) now bind directly to `useTradeStore.activeMatchContext` from every click path (summary list and pitch view).
 - `npx tsc --noEmit --incremental false` passes (0 errors); `node --test tests/priceEngine.test.ts tests/orderGate.test.ts tests/tradeStore.test.ts` passes (17/17).
 
 ## Recent Changes
-- `src/components/matches/FormationPitchModal.tsx`: Added `applySelectedMatchContext` to `buildTeamLineupForMatch` so all 11 starters and 5 bench players inherit the selected match's `matchId`, team metadata, and clean `PRE` baseline (`events: []`, `0.00%`).
-- `src/store/useTradeStore.ts`: Updated `ensurePlayerInStore` to sync `matchId` and `PRE` baseline fields when an existing `dummyData` player is opened from another match context.
-- `src/components/matches/MatchesTabView.tsx`: Added `allUpcoming` branch to show `"장전 프리마켓 (PRE)"` instead of `"LIVE API"` when all listed matches are upcoming.
+- `src/types/index.ts`: Added `ActiveMatchContext` and `buildActiveMatchContext`.
+- `src/store/useTradeStore.ts`, `src/app/page.tsx`: Added `activeMatchContext` state and `selectPlayer(player, matchContext?)`; enforced `activeMatchContext` status in `buyPlayer`/`sellPlayer`.
+- `src/components/matches/MatchAccordionCard.tsx`, `FormationPitchModal.tsx`, `MatchesTabView.tsx`: Passed `buildActiveMatchContext(match)` on both summary list and pitch view clicks; disabled `FT` summary `매수` buttons as `마감`.
+- `src/components/market/MatchTimelineChart.tsx`, `RightTradeDockPanel.tsx`, `TradeBottomSheet.tsx`: Rendered header/status from `activeMatchContext` first and reset `PRE` price/events/chart to flat baseline (`0P / 0.00%`).
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

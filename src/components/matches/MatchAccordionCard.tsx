@@ -8,7 +8,14 @@ import {
   ArrowRight,
   Star,
 } from "lucide-react";
-import { Match, Player, Holding, TradeType } from "@/types";
+import {
+  ActiveMatchContext,
+  Match,
+  Player,
+  Holding,
+  TradeType,
+  buildActiveMatchContext,
+} from "@/types";
 import {
   useTradeStore,
   doesPlayerBelongToTeam,
@@ -30,7 +37,11 @@ interface MatchAccordionCardProps {
   holdings: Record<string, Holding>;
   isExpanded: boolean;
   onToggleExpand: () => void;
-  onSelectPlayerTrade: (player: Player, type: TradeType) => void;
+  onSelectPlayerTrade: (
+    player: Player,
+    type: TradeType,
+    matchContext?: ActiveMatchContext
+  ) => void;
 }
 
 export default function MatchAccordionCard({
@@ -308,10 +319,14 @@ export default function MatchAccordionCard({
                   );
                   const isSoldOut = availableShares === 0;
 
+                  const isFinished =
+                    match.status === "FT" || match.rawStatus === "FINISHED";
+                  const matchCtx = buildActiveMatchContext(match);
+
                   return (
                     <div
                       key={`${player.id}-${player.position}`}
-                      onClick={() => onSelectPlayerTrade(player, "BUY")}
+                      onClick={() => onSelectPlayerTrade(player, "BUY", matchCtx)}
                       className="flex cursor-pointer items-center justify-between gap-2 rounded-xl border border-gray-200/80 bg-white px-3 py-2 transition hover:border-[#00A878]/50 active:scale-[0.99]"
                     >
                       {/* Left: [☆] [등번호] [선수명] [포지션] [잔여/보유] */}
@@ -383,17 +398,19 @@ export default function MatchAccordionCard({
 
                         <button
                           type="button"
+                          disabled={isFinished || isSoldOut}
                           onClick={(e) => {
                             e.stopPropagation();
-                            onSelectPlayerTrade(player, "BUY");
+                            if (isFinished) return;
+                            onSelectPlayerTrade(player, "BUY", matchCtx);
                           }}
-                          className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold shadow-sm transition active:scale-95 ${
-                            isSoldOut
-                              ? "bg-gray-200 text-gray-500"
-                              : "bg-[#00A878] text-white hover:opacity-95"
+                          className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold shadow-sm transition ${
+                            isFinished || isSoldOut
+                              ? "cursor-not-allowed bg-gray-200 text-gray-500 shadow-none"
+                              : "bg-[#00A878] text-white hover:opacity-95 active:scale-95"
                           }`}
                         >
-                          {isSoldOut ? "품절" : "매수"}
+                          {isFinished ? "마감" : isSoldOut ? "품절" : "매수"}
                         </button>
                       </div>
                     </div>

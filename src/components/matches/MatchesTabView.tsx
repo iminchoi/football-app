@@ -14,11 +14,21 @@ import {
   useTradeStore,
   filterPlayersForMatch,
 } from "@/store/useTradeStore";
-import { Holding, Match, Player, TradeType } from "@/types";
+import {
+  ActiveMatchContext,
+  Holding,
+  Match,
+  Player,
+  TradeType,
+} from "@/types";
 import MatchAccordionCard from "./MatchAccordionCard";
 
 interface MatchesTabViewProps {
-  onSelectPlayerTrade: (player: Player, type: TradeType) => void;
+  onSelectPlayerTrade: (
+    player: Player,
+    type: TradeType,
+    matchContext?: ActiveMatchContext
+  ) => void;
 }
 
 const WEEKDAYS_KO = ["일", "월", "화", "수", "목", "금", "토"];

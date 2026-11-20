@@ -46,6 +46,7 @@ export default function RightTradeDockPanel({
   const cash = useTradeStore((s) => s.cash);
   const players = useTradeStore((s) => s.players);
   const matches = useTradeStore((s) => s.matches);
+  const activeMatchContext = useTradeStore((s) => s.activeMatchContext);
   const holdings = useTradeStore((s) => s.holdings);
   const watchlist = useTradeStore((s) => s.watchlist);
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
@@ -99,13 +100,25 @@ export default function RightTradeDockPanel({
   );
   const capPrice = roundToTen(basePrice * (1 + WEIGHTS.CAP_LIMIT));
   const floorPrice = roundToTen(basePrice * (1 - WEIGHTS.CAP_LIMIT));
-  const isAtUpperLimit = player.currentPrice >= capPrice;
-  const isAtLowerLimit = player.currentPrice <= floorPrice;
   const matchCtx = resolvePlayerMatchContext(player, matches);
-  const isMatchFinished = matchCtx.status === "FT";
+  const effectiveStatus = activeMatchContext
+    ? activeMatchContext.status === "PRE"
+      ? "UPCOMING"
+      : activeMatchContext.status
+    : matchCtx.status;
+  const isMatchFinished = effectiveStatus === "FT";
+  const isMatchUpcoming = effectiveStatus === "UPCOMING";
+  const displayPrice = isMatchUpcoming ? basePrice : player.currentPrice;
+  const effectiveOpenPrice = isMatchUpcoming ? basePrice : openPrice;
+  const isAtUpperLimit = displayPrice >= capPrice;
+  const isAtLowerLimit = displayPrice <= floorPrice;
 
-  const diff = calculateDiffFromOpen(player.currentPrice, openPrice);
-  const pct = calculateChangePercentFromOpen(player.currentPrice, openPrice);
+  const diff = isMatchUpcoming
+    ? 0
+    : calculateDiffFromOpen(displayPrice, effectiveOpenPrice);
+  const pct = isMatchUpcoming
+    ? 0
+    : calculateChangePercentFromOpen(displayPrice, effectiveOpenPrice);
   const isUp = diff > 0;
   const isDown = diff < 0;
   const isWatched = watchlist.includes(player.id);
@@ -114,10 +127,10 @@ export default function RightTradeDockPanel({
   const holdingQty = user ? holdings[player.id]?.quantity ?? 0 : 0;
 
   const maxBuyQty = user
-    ? Math.floor(cash / Math.max(1, player.currentPrice))
+    ? Math.floor(cash / Math.max(1, displayPrice))
     : 0;
   const maxQty = tradeType === "BUY" ? maxBuyQty : holdingQty;
-  const totalAmount = roundToTen(player.currentPrice * quantity);
+  const totalAmount = roundToTen(displayPrice * quantity);
   const isCircuitLocked = cbRemainingSec > 0;
 
   const handleSubmitOrder = () => {
@@ -227,7 +240,7 @@ export default function RightTradeDockPanel({
           <div className="flex items-baseline justify-between">
             <div>
               <span className="font-mono text-2xl font-black tracking-tight text-gray-900">
-                {player.currentPrice.toLocaleString()}
+                {displayPrice.toLocaleString()}
               </span>
               <span className="ml-0.5 text-xs font-bold text-gray-500">P</span>
             </div>

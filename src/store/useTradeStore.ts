@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import {
+  ActiveMatchContext,
   Match,
   Player,
   TeamInfo,
@@ -92,6 +93,7 @@ interface TradeStoreState {
   selectedDate: DateKey;
   activeTab: BottomTab;
   expandedMatchIds: string[];
+  activeMatchContext: ActiveMatchContext | null;
 
   // Auth Actions (Account registry, password hash verification & per-user portfolio isolation)
   login: (id: string, password: string) => AuthActionResult;
@@ -104,6 +106,10 @@ interface TradeStoreState {
   toggleExpandMatch: (matchId: string) => void;
   toggleWatchlist: (playerId: string) => void;
   ensurePlayerInStore: (player: Player) => void;
+  selectPlayer: (
+    player: Player,
+    matchContext?: ActiveMatchContext | null
+  ) => void;
   syncPlayersFromMatches: (matches: Match[]) => void;
   tickMarket: () => void;
   buyPlayer: (playerId: string, quantity: number) => TradeExecutionResult;
@@ -594,6 +600,7 @@ export const useTradeStore = create<TradeStoreState>()(
       selectedDate: "TODAY",
       activeTab: "MATCHES",
       expandedMatchIds: ["m-tot-ars", "m-mci-liv", "m-kor-jpn"],
+      activeMatchContext: null,
 
       login: (id, password) => {
         const trimmedId = id.trim();
@@ -837,6 +844,11 @@ export const useTradeStore = create<TradeStoreState>()(
           watchlist: nextWatchlist,
         });
         set({ watchlist: nextWatchlist, accounts: nextAccounts });
+      },
+
+      selectPlayer: (player, matchContext = null) => {
+        set({ activeMatchContext: matchContext });
+        get().ensurePlayerInStore(player);
       },
 
       ensurePlayerInStore: (newPlayer) => {
@@ -1786,7 +1798,7 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         }
 
-        const { user, cash, players, matches, holdings, accounts, transactions } = get();
+        const { user, cash, players, matches, holdings, accounts, transactions, activeMatchContext } = get();
         if (!user) {
           return {
             success: false,
@@ -1800,14 +1812,24 @@ export const useTradeStore = create<TradeStoreState>()(
         }
 
         const matchCtx = resolvePlayerMatchContext(player, matches);
+        const effectiveStatus =
+          activeMatchContext && activeMatchContext.matchId === player.matchId
+            ? activeMatchContext.status === "FT"
+              ? "FT"
+              : activeMatchContext.status === "PRE"
+              ? "UPCOMING"
+              : "LIVE"
+            : matchCtx.status;
         const basePrice = roundToTen(
           player.basePrice ?? player.initialPrice ?? player.currentPrice
         );
+        const effectiveCurrent =
+          effectiveStatus === "UPCOMING" ? basePrice : player.currentPrice;
         const gate = validateTradeOrder({
           side: "BUY",
-          matchStatus: matchCtx.status,
+          matchStatus: effectiveStatus,
           basePrice,
-          currentPrice: player.currentPrice,
+          currentPrice: effectiveCurrent,
           quantity,
           cash,
           lastMajorEventAt: player.lastMajorEventAt,
@@ -1887,7 +1909,7 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         }
 
-        const { user, cash, realizedPnL, players, matches, holdings, transactions } =
+        const { user, cash, realizedPnL, players, matches, holdings, transactions, activeMatchContext } =
           get();
         if (!user) {
           return {
@@ -1902,15 +1924,25 @@ export const useTradeStore = create<TradeStoreState>()(
         }
 
         const matchCtx = resolvePlayerMatchContext(player, matches);
+        const effectiveStatus =
+          activeMatchContext && activeMatchContext.matchId === player.matchId
+            ? activeMatchContext.status === "FT"
+              ? "FT"
+              : activeMatchContext.status === "PRE"
+              ? "UPCOMING"
+              : "LIVE"
+            : matchCtx.status;
         const prev = holdings[playerId];
         const basePrice = roundToTen(
           player.basePrice ?? player.initialPrice ?? player.currentPrice
         );
+        const effectiveCurrent =
+          effectiveStatus === "UPCOMING" ? basePrice : player.currentPrice;
         const gate = validateTradeOrder({
           side: "SELL",
-          matchStatus: matchCtx.status,
+          matchStatus: effectiveStatus,
           basePrice,
-          currentPrice: player.currentPrice,
+          currentPrice: effectiveCurrent,
           quantity,
           holdingQuantity: prev?.quantity ?? 0,
           lastMajorEventAt: player.lastMajorEventAt,
@@ -2375,6 +2407,7 @@ export const useTradeStore = create<TradeStoreState>()(
           watchlist: [],
           selectedDate: "TODAY",
           expandedMatchIds: ["m-tot-ars", "m-mci-liv", "m-kor-jpn"],
+      activeMatchContext: null,
         });
       },
     }),
