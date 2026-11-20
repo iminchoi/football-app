@@ -18,6 +18,7 @@ import {
 import { useTradeStore, roundToTen } from "@/store/useTradeStore";
 import { INITIAL_CASH } from "@/data/dummyData";
 import { Player, TradeType } from "@/types";
+import { getTierConfig } from "@/utils/tier";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface PortfolioTabViewProps {
@@ -33,6 +34,7 @@ export default function PortfolioTabView({
   const cash = useTradeStore((s) => s.cash);
   const realizedPnL = useTradeStore((s) => s.realizedPnL);
   const players = useTradeStore((s) => s.players);
+  const playerPrices = useTradeStore((s) => s.playerPrices);
   const holdings = useTradeStore((s) => s.holdings);
   const transactions = useTradeStore((s) => s.transactions);
   const setActiveTab = useTradeStore((s) => s.setActiveTab);
@@ -51,8 +53,73 @@ export default function PortfolioTabView({
 
   const holdingItems = Object.values(holdings)
     .map((h) => {
-      const player = players.find((p) => p.id === h.playerId);
-      if (!player || h.quantity <= 0) return null;
+      if (h.quantity <= 0) return null;
+
+      const latestTx = transactions.find((t) => t.playerId === h.playerId);
+      const fallbackName = latestTx?.playerName ?? "";
+      const fallbackTeamShort = latestTx?.teamShort ?? "CLB";
+
+      const matchedById = players.find((p) => p.id === h.playerId);
+      const matchedByName =
+        !matchedById && fallbackName
+          ? players.find(
+              (p) => p.name.trim() === fallbackName.trim()
+            )
+          : undefined;
+      const savedPrice = playerPrices[h.playerId];
+      const fallbackBase = roundToTen(
+        savedPrice?.openPrice ?? h.avgBuyPrice ?? 10000
+      );
+      const fallbackCurrent = roundToTen(
+        savedPrice?.currentPrice ?? h.avgBuyPrice ?? fallbackBase
+      );
+      const tierCfg = getTierConfig(fallbackBase);
+
+      const player: Player =
+        matchedById ??
+        matchedByName ?? {
+          id: h.playerId,
+          name: fallbackName || "선수",
+          englishName: fallbackName || "Player",
+          nationalTeam: "",
+          matchId: "unknown",
+          teamId: fallbackTeamShort.toLowerCase(),
+          teamName: fallbackTeamShort,
+          teamShort: fallbackTeamShort,
+          teamColor: "#0F172A",
+          position: "CM",
+          backNumber: 10,
+          tier: tierCfg.tier,
+          totalShares: tierCfg.totalShares,
+          marketSupply: tierCfg.marketSupply,
+          basePrice: fallbackBase,
+          openPrice: fallbackBase,
+          initialPrice: fallbackBase,
+          currentPrice: fallbackCurrent,
+          previousPrice: roundToTen(
+            savedPrice?.previousPrice ?? fallbackCurrent
+          ),
+          priceHistory: savedPrice?.priceHistory ?? [
+            {
+              minute: 0,
+              timeLabel: "0'",
+              price: fallbackBase,
+              changePercentFromOpen: 0,
+            },
+          ],
+          lastEvent: {
+            text: "보유 종목 시세 연동",
+            sentiment: "neutral",
+            minute: 0,
+          },
+          stats: {
+            rating: 7.0,
+            goals: 0,
+            assists: 0,
+            shotsOnTarget: 0,
+            keyPasses: 0,
+          },
+        };
 
       const avgPrice = roundToTen(h.avgBuyPrice);
       const curPrice = roundToTen(player.currentPrice);

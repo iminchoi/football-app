@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Flame,
   Star,
@@ -18,12 +18,14 @@ import {
   calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import {
+  Match,
   Player,
   PositionLine,
   PricePoint,
   TradeType,
   getPositionLine,
 } from "@/types";
+import { WEIGHTS } from "@/lib/weights";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface MarketChartTabViewProps {
@@ -126,6 +128,33 @@ export default function MarketChartTabView({
   const watchlist = useTradeStore((s) => s.watchlist);
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
   const setActiveTab = useTradeStore((s) => s.setActiveTab);
+  const [apiTodayMatches, setApiTodayMatches] = useState<Match[] | null>(null);
+
+  useEffect(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    const todayStr = `${y}-${m}-${d}`;
+    let cancelled = false;
+
+    fetch(`/api/matches?date=${encodeURIComponent(todayStr)}`, {
+      cache: "no-store",
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data && Array.isArray(data.matches) && data.matches.length > 0) {
+          setApiTodayMatches(data.matches as Match[]);
+        }
+      })
+      .catch(() => {
+        // Ignore network errors and fall back to store matches
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 1-Line Slim Quick Filter Bar States
   const [sortMode, setSortMode] = useState<SortMode>("GAINERS");
@@ -142,9 +171,12 @@ export default function MarketChartTabView({
   }, [players]);
 
   const todayKeyMatches = useMemo(() => {
+    if (apiTodayMatches && apiTodayMatches.length > 0) {
+      return apiTodayMatches.slice(0, 4);
+    }
     const todayMatches = matches.filter((m) => m.dateKey === "TODAY");
     return (todayMatches.length > 0 ? todayMatches : matches).slice(0, 4);
-  }, [matches]);
+  }, [apiTodayMatches, matches]);
 
   const doesPlayerMatchLeague = (
     player: Player,
@@ -292,10 +324,12 @@ export default function MarketChartTabView({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-2 xl:grid-cols-3 gap-2.5">
             {spotlightPlayers.map((p) => {
               const open = roundToTen(p.openPrice ?? p.initialPrice);
-              const pct = calculateChangePercentFromOpen(p.currentPrice, open);
+              const rawPct = calculateChangePercentFromOpen(p.currentPrice, open);
+              const maxPct = WEIGHTS.CAP_LIMIT * 100;
+              const pct = Math.max(-maxPct, Math.min(maxPct, rawPct));
               const isUp = pct > 0;
               const isDown = pct < 0;
               const isSelected = selectedPlayerId === p.id;
@@ -310,18 +344,18 @@ export default function MarketChartTabView({
                   key={p.id}
                   type="button"
                   onClick={() => onSelectPlayerTrade(p, "BUY")}
-                  className={`flex min-w-0 flex-col justify-between rounded-xl border p-3 text-left transition hover:border-[#00A878]/60 active:scale-[0.99] ${
+                  className={`flex min-w-0 flex-col justify-between rounded-xl border p-2.5 sm:p-3 text-left transition hover:border-[#00A878]/60 active:scale-[0.99] ${
                     isSelected
                       ? "border-[#00A878] bg-emerald-50/35"
                       : "border-gray-200/80 bg-[#F7F9F8]"
                   }`}
                 >
                   {/* 1단: 좌측 PlayerAvatar + 우측 미니 스파크라인 */}
-                  <div className="flex w-full items-center justify-between gap-2">
-                    <PlayerAvatar player={p} size={34} />
+                  <div className="flex w-full items-center justify-between gap-1.5">
+                    <PlayerAvatar player={p} size={30} />
                     <svg
-                      width="56"
-                      height="22"
+                      width="48"
+                      height="20"
                       viewBox="0 0 72 24"
                       className="shrink-0 overflow-visible"
                     >
@@ -337,18 +371,18 @@ export default function MarketChartTabView({
                   </div>
 
                   {/* 2단: 독립 1줄 선수명 + 포지션·팀 약자 */}
-                  <div className="mt-2.5 w-full min-w-0">
-                    <p className="truncate whitespace-nowrap text-sm font-bold text-slate-900">
+                  <div className="mt-2 w-full min-w-0">
+                    <p className="truncate whitespace-nowrap text-[13px] sm:text-sm font-bold text-slate-900">
                       {p.name}
                     </p>
-                    <p className="mt-0.5 whitespace-nowrap text-xs font-semibold text-slate-500">
+                    <p className="mt-0.5 whitespace-nowrap text-[11px] font-semibold text-slate-500">
                       {p.position} · {p.teamShort}
                     </p>
                   </div>
 
                   {/* 3단: 현재가 + 등락률 뱃지 (좁아지면 자연스럽게 wrap) */}
-                  <div className="mt-2.5 flex w-full flex-wrap items-baseline justify-between gap-1">
-                    <span className="whitespace-nowrap font-mono text-sm font-black text-gray-900 tabular-nums">
+                  <div className="mt-2 flex w-full flex-wrap items-baseline justify-between gap-1">
+                    <span className="whitespace-nowrap font-mono text-[13px] sm:text-sm font-black text-gray-900 tabular-nums">
                       {p.currentPrice.toLocaleString()}P
                     </span>
                     <span
