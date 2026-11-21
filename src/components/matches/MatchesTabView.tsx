@@ -14,6 +14,8 @@ import {
   useTradeStore,
   filterPlayersForMatch,
 } from "@/store/useTradeStore";
+import { INITIAL_MATCHES } from "@/data/dummyData";
+import { mergePinnedFixturesForToday } from "@/lib/lineupStatus";
 import {
   ActiveMatchContext,
   Holding,
@@ -183,6 +185,8 @@ export default function MatchesTabView({
 
         setDataSource(data.source || "UNKNOWN");
 
+        const isTodaySelected = dateStr === todayStr;
+
         if (data.source === "FOOTBALL_DATA_API") {
           const fetchedList = finalizePastMatches(
             Array.isArray(data.matches) ? data.matches : [],
@@ -190,8 +194,13 @@ export default function MatchesTabView({
             todayStr,
             true
           );
-          setApiMatches(fetchedList);
-          syncPlayersFromMatches(fetchedList);
+          const mergedList = mergePinnedFixturesForToday(
+            fetchedList,
+            INITIAL_MATCHES,
+            isTodaySelected
+          );
+          setApiMatches(mergedList);
+          syncPlayersFromMatches(mergedList);
           setStatusMessage(null);
         } else if (data.source === "AMATCH_FALLBACK") {
           const fallbackList = finalizePastMatches(
@@ -200,8 +209,13 @@ export default function MatchesTabView({
             todayStr,
             false
           );
-          setApiMatches(fallbackList);
-          syncPlayersFromMatches(fallbackList);
+          const mergedList = mergePinnedFixturesForToday(
+            fallbackList,
+            INITIAL_MATCHES,
+            isTodaySelected
+          );
+          setApiMatches(mergedList);
+          syncPlayersFromMatches(mergedList);
           setStatusMessage(data.message || null);
         } else {
           // Fallback when API key is empty or error occurs
@@ -228,8 +242,13 @@ export default function MatchesTabView({
             todayStr,
             false
           );
-          setApiMatches(resolvedFallback);
-          syncPlayersFromMatches(resolvedFallback);
+          const mergedList = mergePinnedFixturesForToday(
+            resolvedFallback,
+            INITIAL_MATCHES,
+            isTodaySelected
+          );
+          setApiMatches(mergedList);
+          syncPlayersFromMatches(mergedList);
           setStatusMessage(data.message || null);
         }
       } catch {
@@ -259,11 +278,16 @@ export default function MatchesTabView({
 
   // Overlay live store match state (scores/minutes) onto fetched matches;
   // finished matches keep their FT state so a past date never shows LIVE.
-  const resolvedMatches = apiMatches.map((m) =>
-    m.status === "FT"
-      ? m
-      : storeMockMatches.find((sm) => sm.id === m.id) ?? m
-  );
+  const resolvedMatches = apiMatches.map((m) => {
+    if (m.status === "FT") return m;
+    const sm = storeMockMatches.find((s) => s.id === m.id);
+    if (!sm) return m;
+    return {
+      ...sm,
+      leagueId: m.leagueId,
+      ...(m.leagueEmblem ? { leagueEmblem: m.leagueEmblem } : {}),
+    };
+  });
 
   // Group fetched matches by leagueId
   const leagueGroups = resolvedMatches.reduce<

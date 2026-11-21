@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyLineupEntryMeta,
+  mergePinnedFixturesForToday,
   reconcileTeamGoalMarkers,
   resolveMatchManagers,
   resolvePlayerMatchStatus,
@@ -407,4 +408,55 @@ test("clicking a pitch or cross-match player never fabricates yellow cards or as
   const managers = resolveMatchManagers(newArsMatch);
   assert.equal(managers.homeManager, "Matthias Jaissle");
   assert.equal(managers.awayManager, "Mikel Arteta");
+});
+
+test("mergePinnedFixturesForToday keeps m-new-ars at top of today list even when live API returns fd-* matches, and skips on past/future dates", () => {
+  const pinnedNewArs = makeBaseMatch({
+    id: "m-new-ars",
+    leagueId: "epl",
+    homeManager: "Matthias Jaissle",
+    awayManager: "Mikel Arteta",
+    homeTeam: {
+      id: "new",
+      name: "Newcastle",
+      shortName: "NEW",
+      color: "#241F20",
+      score: 1,
+      formation: "4-2-3-1",
+      manager: "Matthias Jaissle",
+    },
+    awayTeam: {
+      id: "ars",
+      name: "Arsenal",
+      shortName: "ARS",
+      color: "#EF0107",
+      score: 2,
+      formation: "4-2-3-1",
+      manager: "Mikel Arteta",
+    },
+  });
+
+  const liveApiMatches: Match[] = [
+    makeBaseMatch({
+      id: "fd-560651",
+      leagueId: "pl-2021",
+      leagueEmblem: "https://crests.football-data.org/PL.png",
+      providerMode: "SCORE_ONLY",
+      usesDummyLineup: true,
+      homeTeam: { id: "new", name: "Newcastle", shortName: "NEW", color: "#241F20", score: 0, formation: "4-3-3" },
+      awayTeam: { id: "ars", name: "Arsenal", shortName: "ARS", color: "#EF0107", score: 0, formation: "4-2-3-1" },
+    }),
+  ];
+
+  // Today: m-new-ars is injected at top and aligned into pl-2021 group while fd-560651 remains intact
+  const todayMerged = mergePinnedFixturesForToday(liveApiMatches, [pinnedNewArs], true);
+  assert.equal(todayMerged.length, 2);
+  assert.equal(todayMerged[0].id, "m-new-ars");
+  assert.equal(todayMerged[0].leagueId, "pl-2021");
+  assert.equal(todayMerged[1].id, "fd-560651");
+
+  // Non-today: pinned today fixture is not injected
+  const otherDay = mergePinnedFixturesForToday(liveApiMatches, [pinnedNewArs], false);
+  assert.equal(otherDay.length, 1);
+  assert.equal(otherDay[0].id, "fd-560651");
 });

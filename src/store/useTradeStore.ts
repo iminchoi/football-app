@@ -29,6 +29,7 @@ import {
   POSITION_EVENTS,
 } from "@/data/dummyData";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
+import { mergePinnedFixturesForToday } from "@/lib/lineupStatus";
 import {
   roundToTen,
   clampToPriceLimit,
@@ -1027,7 +1028,11 @@ export const useTradeStore = create<TradeStoreState>()(
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => {
             if (data && Array.isArray(data.matches)) {
-              const fetched = data.matches as Match[];
+              const fetched = mergePinnedFixturesForToday(
+                data.matches as Match[],
+                INITIAL_MATCHES,
+                true
+              );
               set({
                 todayMatches: fetched,
                 isLoadingTodayMatches: false,
@@ -1035,17 +1040,31 @@ export const useTradeStore = create<TradeStoreState>()(
               });
               get().syncPlayersFromMatches(fetched);
             } else {
+              const fallbackToday = mergePinnedFixturesForToday(
+                [],
+                INITIAL_MATCHES,
+                true
+              );
               set({
+                todayMatches: fallbackToday,
                 isLoadingTodayMatches: false,
                 hasFetchedTodayMatches: true,
               });
+              get().syncPlayersFromMatches(fallbackToday);
             }
           })
           .catch(() => {
+            const fallbackToday = mergePinnedFixturesForToday(
+              [],
+              INITIAL_MATCHES,
+              true
+            );
             set({
+              todayMatches: fallbackToday,
               isLoadingTodayMatches: false,
               hasFetchedTodayMatches: true,
             });
+            get().syncPlayersFromMatches(fallbackToday);
           })
           .finally(() => {
             inFlightTodayMatchesPromise = null;
@@ -1384,6 +1403,7 @@ export const useTradeStore = create<TradeStoreState>()(
 
               const targetIdx = nextPlayers.findIndex((p) => {
                 if (p.id.startsWith("pitch-")) return false;
+                if (p.matchId !== match.id) return false;
                 if (
                   evIdStr &&
                   (p.id === evIdStr || p.id === `api-p-${evIdStr}`)

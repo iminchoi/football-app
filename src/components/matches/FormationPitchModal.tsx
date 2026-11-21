@@ -1712,40 +1712,26 @@ export function FormationPitchContent({
   onCollapseInline,
 }: FormationPitchContentProps) {
   const [selectedSide, setSelectedSide] = useState<"HOME" | "AWAY">("HOME");
-  const [pitchPlayers, setPitchPlayers] = useState<Player[]>([]);
-  const [benchPlayers, setBenchPlayers] = useState<Player[]>([]);
-  const [formationLabel, setFormationLabel] = useState<string>("4-3-3");
   const [isBenchOpen, setIsBenchOpen] = useState<boolean>(true);
 
   const activeTeam =
     selectedSide === "HOME" ? match.homeTeam : match.awayTeam;
 
-  const handleSelectTeam = useCallback(
-    (side: "HOME" | "AWAY") => {
-      setSelectedSide(side);
-      const selectedLineup = buildTeamLineupForMatch(match, side, players);
-      setPitchPlayers(selectedLineup.startingLineup.slice(0, 11));
-      setBenchPlayers(selectedLineup.benchLineup);
-      setFormationLabel(selectedLineup.formation);
-    },
-    [match, players]
-  );
+  const handleSelectTeam = useCallback((side: "HOME" | "AWAY") => {
+    setSelectedSide(side);
+  }, []);
 
   useEffect(() => {
     setSelectedSide("HOME");
     setIsBenchOpen(true);
   }, [match.id]);
 
-  useEffect(() => {
-    const currentTeamLineup = buildTeamLineupForMatch(
-      match,
-      selectedSide,
-      players
-    );
-    setPitchPlayers(currentTeamLineup.startingLineup.slice(0, 11));
-    setBenchPlayers(currentTeamLineup.benchLineup);
-    setFormationLabel(currentTeamLineup.formation);
-  }, [match, activeTeam.id, selectedSide, players]);
+  const currentTeamLineup = useMemo(
+    () => buildTeamLineupForMatch(match, selectedSide, players),
+    [match, selectedSide, players]
+  );
+  const benchPlayers = currentTeamLineup.benchLineup;
+  const formationLabel = currentTeamLineup.formation;
 
   const isUpcoming =
     match.status === "UPCOMING" ||
@@ -1760,8 +1746,8 @@ export function FormationPitchContent({
   );
 
   const startingPlayers = useMemo(
-    () => pitchPlayers.slice(0, 11),
-    [pitchPlayers]
+    () => currentTeamLineup.startingLineup.slice(0, 11),
+    [currentTeamLineup]
   );
 
   const teamStatusById = useMemo(() => {
@@ -1981,80 +1967,84 @@ export function FormationPitchContent({
               ))}
             </div>
 
-            {/* Non-tradable Team Managers Row (감독) */}
-            {(homeManager || awayManager) && (
-              <div
-                data-testid="bench-managers-section"
-                className="border-t border-gray-100 bg-[#F9FAFB] px-3 py-2.5"
-              >
-                <div className="mb-1.5 flex items-center justify-between">
-                  <span className="text-[11px] font-extrabold text-gray-500">
-                    감독
-                  </span>
-                  <span className="text-[10px] font-medium text-gray-400">
-                    양 팀 사령탑 (비거래)
-                  </span>
-                </div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {[
-                    {
-                      side: "HOME",
-                      teamName: match.homeTeam.name,
-                      shortName: match.homeTeam.shortName,
-                      color: match.homeTeam.color,
-                      managerName: homeManager ?? "미정",
-                    },
-                    {
-                      side: "AWAY",
-                      teamName: match.awayTeam.name,
-                      shortName: match.awayTeam.shortName,
-                      color: match.awayTeam.color,
-                      managerName: awayManager ?? "미정",
-                    },
-                  ].map((mgr) => (
-                    <div
-                      key={mgr.side}
-                      data-testid={`manager-card-${mgr.side.toLowerCase()}`}
-                      className="flex items-center gap-2.5 rounded-xl border border-gray-200/80 bg-white px-2.5 py-2 select-none"
-                    >
-                      <div
-                        className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-gray-200/80 bg-[#F7F9F8]"
-                        aria-label={`${mgr.managerName} 감독`}
-                      >
-                        <svg
-                          viewBox="0 0 64 64"
-                          width={32}
-                          height={32}
-                          className="block h-full w-full"
-                          role="img"
-                          aria-hidden="true"
-                        >
-                          <circle cx="32" cy="22" r="9" fill={mgr.color} opacity="0.9" />
-                          <path
-                            d="M16 53 C16 40 22 34 32 34 C42 34 48 40 48 53 Z"
-                            fill={mgr.color}
-                            opacity="0.88"
-                          />
-                          <path
-                            d="M27 34 L32 45 L37 34"
-                            fill="#FFFFFF"
-                            opacity="0.9"
-                          />
-                        </svg>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-extrabold text-gray-900">
-                          {mgr.managerName}
-                        </p>
-                        <p className="truncate text-[10px] font-semibold text-gray-500">
-                          {mgr.teamName} ({mgr.shortName})
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+            {/* Non-tradable Team Managers Row (감독) - always visible inside 교체명단 */}
+            <div
+              data-testid="bench-managers-section"
+              className="border-t border-gray-100 bg-[#F9FAFB] px-3 py-2.5"
+            >
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-[11px] font-extrabold text-gray-500">
+                  감독
+                </span>
+                <span className="text-[10px] font-medium text-gray-400">
+                  양 팀 사령탑 (비거래)
+                </span>
               </div>
-            )}
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {[
+                  {
+                    side: "HOME",
+                    teamName: match.homeTeam.name,
+                    shortName: match.homeTeam.shortName,
+                    color: match.homeTeam.color,
+                    managerName: homeManager ?? "감독 정보 미제공",
+                    isMissing: !homeManager,
+                  },
+                  {
+                    side: "AWAY",
+                    teamName: match.awayTeam.name,
+                    shortName: match.awayTeam.shortName,
+                    color: match.awayTeam.color,
+                    managerName: awayManager ?? "감독 정보 미제공",
+                    isMissing: !awayManager,
+                  },
+                ].map((mgr) => (
+                  <div
+                    key={mgr.side}
+                    data-testid={`manager-card-${mgr.side.toLowerCase()}`}
+                    className="flex items-center gap-2.5 rounded-xl border border-gray-200/80 bg-white px-2.5 py-2 select-none"
+                  >
+                    <div
+                      className="relative inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-gray-200/80 bg-[#F7F9F8]"
+                      aria-label={`${mgr.managerName} 감독`}
+                    >
+                      <svg
+                        viewBox="0 0 64 64"
+                        width={32}
+                        height={32}
+                        className="block h-full w-full"
+                        role="img"
+                        aria-hidden="true"
+                      >
+                        <circle cx="32" cy="22" r="9" fill={mgr.color} opacity="0.9" />
+                        <path
+                          d="M16 53 C16 40 22 34 32 34 C42 34 48 40 48 53 Z"
+                          fill={mgr.color}
+                          opacity="0.88"
+                        />
+                        <path
+                          d="M27 34 L32 45 L37 34"
+                          fill="#FFFFFF"
+                          opacity="0.9"
+                        />
+                      </svg>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p
+                        className={`truncate text-xs font-extrabold ${
+                          mgr.isMissing ? "text-gray-400" : "text-gray-900"
+                        }`}
+                      >
+                        {mgr.managerName}
+                      </p>
+                      <p className="truncate text-[10px] font-semibold text-gray-500">
+                        {mgr.teamName} ({mgr.shortName})
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>

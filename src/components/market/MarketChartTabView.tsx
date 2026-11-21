@@ -58,6 +58,11 @@ const SPOTLIGHT_IDS = [
 const EplTeams = new Set([
   "토트넘 홋스퍼",
   "아스널",
+  "아스날",
+  "Arsenal",
+  "뉴캐슬",
+  "뉴캐슬 유나이티드",
+  "Newcastle",
   "맨체스터 시티",
   "리버풀",
   "첼시",

@@ -25,6 +25,7 @@ import {
   calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import { getAvailableShares } from "@/utils/tier";
+import { resolvePlayerMatchStatus } from "@/lib/lineupStatus";
 import {
   buildTeamLineupForMatch,
   FormationPitchContent,
@@ -59,7 +60,9 @@ export default function MatchAccordionCard({
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
   const [selectedSide, setSelectedSide] = useState<"HOME" | "AWAY">("HOME");
   const [activeKeyPlayers, setActiveKeyPlayers] = useState<Player[]>([]);
-  const [isInlinePitchOpen, setIsInlinePitchOpen] = useState<boolean>(false);
+  const [isInlinePitchOpen, setIsInlinePitchOpen] = useState<boolean>(
+    match.id === "m-new-ars"
+  );
 
   const isUpcoming =
     match.status === "UPCOMING" ||
@@ -93,11 +96,20 @@ export default function MatchAccordionCard({
     const isAMatch = isNationalTeamMatch(match);
     const pickTop3 = (side: "HOME" | "AWAY"): Player[] => {
       const team = side === "HOME" ? match.homeTeam : match.awayTeam;
-      const baseTeamPlayers = players.filter(
+      const sameMatchPlayers = players.filter(
         (p) =>
           !p.id.startsWith("pitch-") &&
+          p.matchId === match.id &&
           doesPlayerBelongToTeam(p, team, isAMatch)
       );
+      const baseTeamPlayers =
+        sameMatchPlayers.length > 0
+          ? sameMatchPlayers
+          : players.filter(
+              (p) =>
+                !p.id.startsWith("pitch-") &&
+                doesPlayerBelongToTeam(p, team, isAMatch)
+            );
 
       if (baseTeamPlayers.length >= 3) {
         return baseTeamPlayers.slice(0, 3);
@@ -322,6 +334,11 @@ export default function MatchAccordionCard({
                   const isFinished =
                     match.status === "FT" || match.rawStatus === "FINISHED";
                   const matchCtx = buildActiveMatchContext(match);
+                  const playerStatus = resolvePlayerMatchStatus({
+                    player,
+                    match,
+                    teamSide: selectedSide,
+                  });
 
                   return (
                     <div
@@ -358,6 +375,34 @@ export default function MatchAccordionCard({
                         <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">
                           {player.position}
                         </span>
+
+                        {playerStatus.goals > 0 && (
+                          <span className="shrink-0 text-[10px] font-bold">
+                            ⚽{playerStatus.goals > 1 ? playerStatus.goals : ""}
+                          </span>
+                        )}
+                        {playerStatus.assists > 0 && (
+                          <span className="shrink-0 text-[10px] font-bold text-sky-700">
+                            🅰️{playerStatus.assists > 1 ? playerStatus.assists : ""}
+                          </span>
+                        )}
+                        {playerStatus.yellowCards > 0 && (
+                          <span
+                            title="옐로카드"
+                            className="inline-block h-[10px] w-[7px] shrink-0 rounded-[1.5px] border border-amber-500/60 bg-[#FACC15]"
+                          />
+                        )}
+                        {playerStatus.redCards > 0 && (
+                          <span
+                            title="레드카드"
+                            className="inline-block h-[10px] w-[7px] shrink-0 rounded-[1.5px] border border-rose-700/60 bg-[#EF4444]"
+                          />
+                        )}
+                        {playerStatus.subOutMinute !== undefined && (
+                          <span className="shrink-0 font-mono text-[9px] font-extrabold text-[#E11D48]">
+                            {playerStatus.subOutMinute}&apos;←
+                          </span>
+                        )}
 
                         {isSoldOut ? (
                           <span className="shrink-0 rounded bg-[#F07868]/15 px-1.5 py-0.5 text-[9px] font-black text-[#F07868]">

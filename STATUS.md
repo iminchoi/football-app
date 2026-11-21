@@ -1,14 +1,16 @@
+# Project Status
+
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); score-aligned goal/assist markers, click-invariant lineup/bench badges, `Newcastle vs Arsenal` (`02:30`) 4-2-3-1 fixture, and non-tradable manager (`감독`) display in `교체명단` are complete.
-- `npx tsc --noEmit --incremental false` passes (0 errors), `npm run build` passes, and `node --experimental-strip-types --test tests/*.test.ts` passes (26/26).
+- Core match trading, lineup formation view (`FormationPitchModal.tsx`), substitution/card badges (`lineupStatus.ts`), manager strip (`교체명단`), and `v2.5` pricing engine (`WEIGHTS` untouched) are working.
+- `m-new-ars` (`Newcastle vs Arsenal`) stays pinned to today's match list alongside live API fixtures (`fd-*`), with expanded inline pitch + `교체명단` + managers rendered immediately.
+- Verified with `npx tsc --noEmit --incremental false`, `node --experimental-strip-types --test tests/*.test.ts` (27/27 pass), and `npm run build` (Next.js 15.5.28 production build + lint pass).
 
 ## Recent Changes
-- `src/lib/lineupStatus.ts` & `src/lib/priceEngine.ts`: Suppressed spurious goal/assist markers in `SCORE_ONLY` and 0-score matches, added `reconcileTeamGoalMarkers` and `resolveMatchManagers`, and stopped `extractInitialMatchEvents` from fabricating cards/assists when `events: []` or `pitch-` players are clicked.
-- `src/store/useTradeStore.ts`: Prevented `ensurePlayerInStore` from overwriting cross-match `matchId` or fabricating events on click, and prevented `tickMarket` from inventing random milestone events on `SCORE_ONLY`, `match.events`, or `pitch-` players.
-- `src/components/matches/FormationPitchModal.tsx`, `src/data/dummyData.ts`, `src/types/index.ts`, `src/app/api/matches/route.ts`: Added `m-new-ars` (`Newcastle` vs `Arsenal`, `Matthias Jaissle` / `Mikel Arteta`), isolated cross-match player context, and rendered non-tradable `감독` cards inside `교체명단`.
-- `tests/lineupStatus.test.ts`: Added tests for `ScoreOnly` / team-score reconciliation, click immutability, cross-match isolation, and `resolveMatchManagers`.
+- `src/lib/lineupStatus.ts` & `tests/lineupStatus.test.ts`: Added `PINNED_TODAY_FIXTURE_IDS` and `mergePinnedFixturesForToday` to inject `m-new-ars` on today's date only (tested).
+- `src/components/matches/MatchesTabView.tsx` & `src/store/useTradeStore.ts`: Merged pinned today fixtures across API/fallback fetch paths (`fetchMatchesByDate`, `fetchTodayMatches`) and locked `syncPlayersFromMatches` event binding to `p.matchId === match.id`.
+- `src/components/matches/FormationPitchModal.tsx`: Replaced effect-delayed lineup state with immediate `useMemo`, and kept `data-testid="bench-managers-section"` visible with `"감독 정보 미제공"` fallback.
+- `src/components/matches/MatchAccordionCard.tsx` & `src/components/market/MarketChartTabView.tsx`: Auto-opened inline pitch for `m-new-ars`, added status badges to key player rows, matched `p.matchId === match.id` in `pickTop3`, and added Newcastle/Arsenal to `EplTeams`.
 
 ## Known Issues & Next Steps
-- **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨 (`v2.5-engine-freeze` 범위 외).
-- **RATES 오차 허용 구간**: 포지션 최대 격차(`<= 1.0%p`) 기준 `RATES` 허용 오차 범위는 약 `-17% ~ +32%` 수준.
-- **브라우저 시각 검증**: 실제 모바일/데스크톱 브라우저에서 `Newcastle vs Arsenal` 라인업, `교체명단` 감독 칸, 선수 클릭 시 배지 불변성 최종 확인 권장.
+- Live `football-data.org` free-tier `fd-*` matches remain in `SCORE_ONLY` mode (`usesDummyLineup: true`, no event/lineup/coach feed from upstream).
+- Perform an interactive UI pass in the browser on `/` to inspect desktop and mobile rendering of `m-new-ars` pitch, bench, and `감독` badges.
