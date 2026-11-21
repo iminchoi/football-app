@@ -410,7 +410,7 @@ test("clicking a pitch or cross-match player never fabricates yellow cards or as
   assert.equal(managers.awayManager, "Mikel Arteta");
 });
 
-test("mergePinnedFixturesForToday keeps m-new-ars at top of today list even when live API returns fd-* matches, and skips on past/future dates", () => {
+test("mergePinnedFixturesForToday merges m-new-ars into a matching live API fixture without duplicating, pins separately when unmatched, and skips on past/future dates", () => {
   const pinnedNewArs = makeBaseMatch({
     id: "m-new-ars",
     leagueId: "epl",
@@ -424,6 +424,7 @@ test("mergePinnedFixturesForToday keeps m-new-ars at top of today list even when
       score: 1,
       formation: "4-2-3-1",
       manager: "Matthias Jaissle",
+      lineup: [{ id: "p-new-osula", name: "Osula", position: "ST", shirtNumber: 10, yellowCards: 1 }],
     },
     awayTeam: {
       id: "ars",
@@ -433,30 +434,62 @@ test("mergePinnedFixturesForToday keeps m-new-ars at top of today list even when
       score: 2,
       formation: "4-2-3-1",
       manager: "Mikel Arteta",
+      lineup: [{ id: "p-ars-havertz", name: "Havertz", position: "ST", shirtNumber: 29, subOutMinute: 68 }],
     },
+    events: [
+      { id: "ev-na-g1", minute: 19, type: "GOAL", playerId: "p-ars-havertz", playerName: "Havertz", source: "REAL" },
+    ],
   });
 
-  const liveApiMatches: Match[] = [
+  const matchingLiveApiMatches: Match[] = [
     makeBaseMatch({
       id: "fd-560651",
       leagueId: "pl-2021",
       leagueEmblem: "https://crests.football-data.org/PL.png",
       providerMode: "SCORE_ONLY",
       usesDummyLineup: true,
-      homeTeam: { id: "new", name: "Newcastle", shortName: "NEW", color: "#241F20", score: 0, formation: "4-3-3" },
-      awayTeam: { id: "ars", name: "Arsenal", shortName: "ARS", color: "#EF0107", score: 0, formation: "4-2-3-1" },
+      minute: 23,
+      homeTeam: { id: "new", name: "Newcastle United", shortName: "NEW", color: "#241F20", score: 0, formation: "4-3-3" },
+      awayTeam: { id: "ars", name: "Arsenal FC", shortName: "ARS", color: "#EF0107", score: 0, formation: "4-2-3-1" },
     }),
   ];
 
-  // Today: m-new-ars is injected at top and aligned into pl-2021 group while fd-560651 remains intact
-  const todayMerged = mergePinnedFixturesForToday(liveApiMatches, [pinnedNewArs], true);
-  assert.equal(todayMerged.length, 2);
-  assert.equal(todayMerged[0].id, "m-new-ars");
+  // Today with matching live fixture: merges into fd-560651 (no duplicate card!) while preserving SCORE_ONLY live score/clock/events
+  const todayMerged = mergePinnedFixturesForToday(matchingLiveApiMatches, [pinnedNewArs], true);
+  assert.equal(todayMerged.length, 1);
+  assert.equal(todayMerged[0].id, "fd-560651");
   assert.equal(todayMerged[0].leagueId, "pl-2021");
-  assert.equal(todayMerged[1].id, "fd-560651");
+  assert.equal(todayMerged[0].providerMode, "SCORE_ONLY");
+  assert.equal(todayMerged[0].minute, 23);
+  assert.equal(todayMerged[0].homeTeam.score, 0);
+  assert.equal(todayMerged[0].awayTeam.score, 0);
+  assert.equal(todayMerged[0].homeManager, "Matthias Jaissle");
+  assert.equal(todayMerged[0].awayManager, "Mikel Arteta");
+  assert.equal(todayMerged[0].events, undefined);
+  assert.equal(todayMerged[0].homeTeam.lineup?.[0]?.yellowCards, undefined);
+  assert.equal(todayMerged[0].awayTeam.lineup?.[0]?.subOutMinute, undefined);
+
+  // Today with unrelated live API match: pins m-new-ars at top cleanly separated from live SCORE_ONLY API match
+  const unrelatedLiveApiMatches: Match[] = [
+    makeBaseMatch({
+      id: "fd-560700",
+      leagueId: "pl-2021",
+      leagueEmblem: "https://crests.football-data.org/PL.png",
+      providerMode: "SCORE_ONLY",
+      usesDummyLineup: true,
+      homeTeam: { id: "che", name: "Chelsea", shortName: "CHE", color: "#034694", score: 1, formation: "4-2-3-1" },
+      awayTeam: { id: "liv", name: "Liverpool", shortName: "LIV", color: "#C8102E", score: 0, formation: "4-3-3" },
+    }),
+  ];
+  const separatedMerged = mergePinnedFixturesForToday(unrelatedLiveApiMatches, [pinnedNewArs], true);
+  assert.equal(separatedMerged.length, 2);
+  assert.equal(separatedMerged[0].id, "m-new-ars");
+  assert.equal(separatedMerged[0].leagueId, "pl-2021");
+  assert.equal(separatedMerged[1].id, "fd-560700");
+  assert.equal(separatedMerged[1].providerMode, "SCORE_ONLY");
 
   // Non-today: pinned today fixture is not injected
-  const otherDay = mergePinnedFixturesForToday(liveApiMatches, [pinnedNewArs], false);
+  const otherDay = mergePinnedFixturesForToday(unrelatedLiveApiMatches, [pinnedNewArs], false);
   assert.equal(otherDay.length, 1);
-  assert.equal(otherDay[0].id, "fd-560651");
+  assert.equal(otherDay[0].id, "fd-560700");
 });

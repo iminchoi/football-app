@@ -26,6 +26,11 @@ import {
   getPositionLine,
 } from "@/types";
 import { WEIGHTS } from "@/lib/weights";
+import {
+  resolveMatchClock,
+  resolveMatchScore,
+  resolveSyncedMatch,
+} from "@/lib/matchSync";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface MarketChartTabViewProps {
@@ -159,8 +164,8 @@ export default function MarketChartTabView({
   }, [players]);
 
   const todayKeyMatches = useMemo(() => {
-    return todayMatches.slice(0, 4);
-  }, [todayMatches]);
+    return todayMatches.slice(0, 4).map((m) => resolveSyncedMatch(m, matches));
+  }, [todayMatches, matches]);
 
   const doesPlayerMatchLeague = (
     player: Player,
@@ -427,45 +432,41 @@ export default function MarketChartTabView({
               </div>
             ) : (
               todayKeyMatches.map((m) => {
-              const statusLabel =
-                m.status === "LIVE"
-                  ? `${m.minute ?? 45}'`
-                  : m.status === "FT"
-                  ? "FT"
-                  : "PRE";
+                const clock = resolveMatchClock(m);
+                const score = resolveMatchScore(m);
 
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setActiveTab("MATCHES")}
-                  className="flex w-full items-center justify-between gap-2 rounded-xl border border-gray-100 bg-[#F7F9F8] px-3 py-2 text-left transition hover:border-[#00A878]/40"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span
-                      className={`shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[10px] font-extrabold ${
-                        m.status === "LIVE"
-                          ? "bg-[#00A878]/15 text-[#00A878]"
-                          : m.status === "FT"
-                          ? "bg-gray-200 text-gray-600"
-                          : "bg-amber-100 text-amber-800"
-                      }`}
-                    >
-                      {statusLabel}
-                    </span>
-                    <span className="truncate text-xs font-bold text-gray-900">
-                      {m.homeTeam.shortName} vs {m.awayTeam.shortName}
-                    </span>
-                  </div>
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setActiveTab("MATCHES")}
+                    className="flex w-full items-center justify-between gap-2 rounded-xl border border-gray-100 bg-[#F7F9F8] px-3 py-2 text-left transition hover:border-[#00A878]/40"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[10px] font-extrabold tabular-nums ${
+                          clock.isLive
+                            ? clock.isHalfTime
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-[#00A878]/15 text-[#00A878]"
+                            : clock.isFinished
+                            ? "bg-gray-200 text-gray-600"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        {clock.shortLabel}
+                      </span>
+                      <span className="truncate text-xs font-bold text-gray-900">
+                        {m.homeTeam.shortName} vs {m.awayTeam.shortName}
+                      </span>
+                    </div>
 
-                  <span className="shrink-0 font-mono text-xs font-black text-gray-800 tabular-nums">
-                    {m.status === "UPCOMING"
-                      ? m.kickoffTime
-                      : `${m.homeTeam.score ?? 0} : ${m.awayTeam.score ?? 0}`}
-                  </span>
-                </button>
-              );
-            })
+                    <span className="shrink-0 font-mono text-xs font-black text-gray-800 tabular-nums">
+                      {clock.isUpcoming ? clock.kickoffTime : score.display}
+                    </span>
+                  </button>
+                );
+              })
             )}
           </div>
         </div>

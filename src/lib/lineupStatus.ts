@@ -436,43 +436,8 @@ export function applyLineupEntryMeta(
   };
 }
 
-export const PINNED_TODAY_FIXTURE_IDS = ["m-new-ars"] as const;
-
-/**
- * Guarantee pinned today-only verification/demo fixtures (such as `m-new-ars`
- * Newcastle vs Arsenal) stay present and selectable on today's date even when
- * `/api/matches` returns live `FOOTBALL_DATA_API` or `AMATCH_FALLBACK` payloads.
- */
-export function mergePinnedFixturesForToday(
-  fetchedMatches: Match[],
-  fixturePool: Match[],
-  isToday: boolean
-): Match[] {
-  if (!isToday) return fetchedMatches;
-
-  const existingIds = new Set(fetchedMatches.map((m) => m.id));
-  const plApiSample = fetchedMatches.find((m) => m.leagueId === "pl-2021");
-  const pinnedToInsert: Match[] = [];
-
-  for (const pinnedId of PINNED_TODAY_FIXTURE_IDS) {
-    if (existingIds.has(pinnedId)) continue;
-    const fixture = fixturePool.find((m) => m.id === pinnedId);
-    if (!fixture) continue;
-
-    pinnedToInsert.push(
-      plApiSample
-        ? {
-            ...fixture,
-            leagueId: "pl-2021",
-            ...(plApiSample.leagueEmblem
-              ? { leagueEmblem: plApiSample.leagueEmblem }
-              : {}),
-          }
-        : fixture
-    );
-  }
-
-  if (pinnedToInsert.length === 0) return fetchedMatches;
-  return [...pinnedToInsert, ...fetchedMatches];
-}
+export {
+  PINNED_TODAY_FIXTURE_IDS,
+  mergePinnedFixturesForToday,
+} from "./matchSync.ts";
 

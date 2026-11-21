@@ -1,14 +1,15 @@
 # Project Status
 
 ## Current State
-- Core match trading, lineup formation view (`FormationPitchModal.tsx`), substitution/card badges (`lineupStatus.ts`), manager strip (`교체명단`), and `v2.5` pricing engine (`WEIGHTS` untouched) are working.
-- Sequential `impl -> verify` automation script (`run_pipeline.py`) is configured at repo root with `01_match_sync` and `02_badges_and_lang` tasks and `.pipeline_logs/` ignored in `.gitignore`.
-- Verified with `python3 -m py_compile run_pipeline.py`, `python3 run_pipeline.py --help` / `--list` / `--dry-run`, and `npx tsc --noEmit`.
+- Core match trading, lineup formation view (`FormationPitchModal.tsx`), substitution/card badges (`lineupStatus.ts`), manager strip (`교체명단`), and `v2.5` pricing engine (`WEIGHTS`, `priceEngine.ts`, `SimulatedEventsProvider.ts`, `.cache/ledger.json` untouched) are working.
+- Unified today match deduplication/merging and single-source match clock (`PRE` / `1H` / `HT` / `2H` / `FT`) and score (`homeScore : awayScore`) synchronization are implemented in `src/lib/matchSync.ts` and connected across API, store, schedule cards, lineup/pitch modal, market summary, charts, and header.
+- Verified with `npx tsc --noEmit` (0 errors) and `node --experimental-strip-types --test tests/*.test.ts` (33/33 passing).
 
 ## Recent Changes
-- `run_pipeline.py`: Added sequential `agy --print` (`--output-format json`, `--mode accept-edits`, `--dangerously-skip-permissions`) pipeline running `impl` (`--effort high`) then diff-based `verify` (`--effort xhigh`) on exit 0, with configurable `--model`, `.pipeline_logs/` logging, v2.5/ledger/no-build guardrails, and initial tasks `01_match_sync` and `02_badges_and_lang`.
-- `.gitignore`: Added `/.pipeline_logs/` and `.pipeline_logs/`.
+- `src/lib/matchSync.ts`, `src/lib/lineupStatus.ts`: Added canonical team/date fixture deduplication (`deduplicateMatches`, `enrichMatchFromFixture`, `mergePinnedFixturesForToday`, `resolveFetchedMatchesForDate`) so pinned today fixtures merge into matching live API games without duplicating cards while keeping live `SCORE_ONLY` data isolated from static fixture events; added single-source `resolveMatchClock`, `resolveMatchScore`, `resolveSyncedMatch`, `resolveSyncedMatchFromContext`, and `resolveMatchForPlayerView`.
+- `src/app/api/matches/route.ts`, `src/types/index.ts`, `src/store/useTradeStore.ts`: Deduplicated API match payloads, normalized `PAUSED`/`FT` minutes, preserved `rawStatus` on `ActiveMatchContext`, unified `fetchTodayMatches` and `MatchesTabView` through `resolveFetchedMatchesForDate`, and kept `matches`, `todayMatches`, and `activeMatchContext` synchronized on sync, ticks, and goal events.
+- `src/components/matches/MatchesTabView.tsx`, `src/components/matches/MatchAccordionCard.tsx`, `src/components/matches/FormationPitchModal.tsx`, `src/components/market/MarketChartTabView.tsx`, `src/components/market/MatchTimelineChart.tsx`, `src/components/market/FullScreenCandleChartModal.tsx`, `src/components/TopAssetHeader.tsx`: Connected all views to the single match clock and score resolvers.
+- `tests/matchSync.test.ts`, `tests/lineupStatus.test.ts`: Added and updated unit tests for duplicate today fixture prevention, `SCORE_ONLY` isolation, and cross-view clock/score consistency.
 
 ## Known Issues & Next Steps
-- Execute `python3 run_pipeline.py` (optionally with `--model`) to run `01_match_sync` and `02_badges_and_lang` end-to-end.
-- Perform an interactive UI pass in the browser on `/` after pipeline tasks complete.
+- Proceed with `02_badges_and_lang` or run an interactive browser UI pass on `/` to verify visual rendering across live/HT/FT states.

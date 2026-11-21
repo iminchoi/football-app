@@ -34,6 +34,10 @@ import {
   resolveLastMatchReview,
 } from "@/lib/priceEngine";
 import {
+  resolveMatchClock,
+  resolveMatchForPlayerView,
+} from "@/lib/matchSync";
+import {
   CandleData,
   CandleTimeframe,
   ChartEventType,
@@ -127,6 +131,7 @@ export default function FullScreenCandleChartModal({
 }: FullScreenCandleChartModalProps) {
   const players = useTradeStore((s) => s.players);
   const matches = useTradeStore((s) => s.matches);
+  const activeMatchContext = useTradeStore((s) => s.activeMatchContext);
   const watchlist = useTradeStore((s) => s.watchlist);
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
 
@@ -168,41 +173,21 @@ export default function FullScreenCandleChartModal({
 
   const playerMatch: Match | undefined = useMemo(() => {
     if (!player) return undefined;
-    const direct = matches.find((m) => m.id === player.matchId);
-    if (direct && (direct.status === "LIVE" || direct.rawStatus === "IN_PLAY")) {
-      return direct;
-    }
-    const liveMatch = matches.find(
-      (m) =>
-        (m.status === "LIVE" || m.rawStatus === "IN_PLAY") &&
-        doesPlayerBelongToMatch(player, m)
-    );
-    if (liveMatch) return liveMatch;
-    return direct ?? matches.find((m) => doesPlayerBelongToMatch(player, m));
-  }, [matches, player]);
+    return resolveMatchForPlayerView({
+      player,
+      storeMatches: matches,
+      activeMatchContext,
+      belongsToMatch: doesPlayerBelongToMatch,
+    });
+  }, [activeMatchContext, matches, player]);
 
-  const matchStatus: "LIVE" | "FT" | "UPCOMING" = useMemo(() => {
-    if (!playerMatch) return "LIVE";
-    if (
-      playerMatch.status === "LIVE" ||
-      playerMatch.rawStatus === "IN_PLAY"
-    ) {
-      return "LIVE";
-    }
-    if (
-      playerMatch.status === "FT" ||
-      playerMatch.rawStatus === "FINISHED"
-    ) {
-      return "FT";
-    }
-    return "UPCOMING";
-  }, [playerMatch]);
+  const matchClock = useMemo(
+    () => resolveMatchClock(playerMatch, activeMatchContext),
+    [playerMatch, activeMatchContext]
+  );
 
-  const currentMinute = useMemo(() => {
-    if (matchStatus === "FT") return 90;
-    if (matchStatus === "UPCOMING") return 0;
-    return playerMatch?.minute ?? player?.lastEvent?.minute ?? 65;
-  }, [matchStatus, playerMatch?.minute, player?.lastEvent?.minute]);
+  const matchStatus: "LIVE" | "FT" | "UPCOMING" = matchClock.status;
+  const currentMinute = matchClock.minute;
 
   const ssotMetrics = useMemo(() => {
     if (!player) return null;
@@ -655,10 +640,7 @@ export default function FullScreenCandleChartModal({
   const sortedEventsAsc = [...canonicalEvents].sort(
     (a, b) => a.minute - b.minute
   );
-  const isHalfTime =
-    !isViewingLastMatch &&
-    matchStatus === "LIVE" &&
-    (currentMinute === 45 || playerMatch?.rawStatus === "PAUSED");
+  const isHalfTime = !isViewingLastMatch && matchClock.isHalfTime;
 
   const progressPct =
     isViewingLastMatch || matchStatus === "FT"
@@ -1010,7 +992,7 @@ export default function FullScreenCandleChartModal({
                       <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
                       <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-white" />
                     </span>
-                    LIVE {currentMinute}&apos;
+                    {matchClock.chartLabel}
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-2.5 py-0.5 font-sans text-[10px] font-bold text-white">

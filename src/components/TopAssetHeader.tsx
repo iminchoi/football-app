@@ -12,7 +12,14 @@ import {
   useTradeStore,
   roundToTen,
   calculateChangePercentFromOpen,
+  doesPlayerBelongToMatch,
 } from "@/store/useTradeStore";
+import {
+  resolveMatchClock,
+  resolveMatchForPlayerView,
+  resolveMatchScore,
+  resolveSyncedMatchFromContext,
+} from "@/lib/matchSync";
 import { BottomTab, Player } from "@/types";
 
 interface TopAssetHeaderProps {
@@ -77,10 +84,31 @@ export default function TopAssetHeader({
   const user = useTradeStore((s) => s.user);
   const cash = useTradeStore((s) => s.cash);
   const players = useTradeStore((s) => s.players);
+  const matches = useTradeStore((s) => s.matches);
+  const activeMatchContext = useTradeStore((s) => s.activeMatchContext);
   const holdings = useTradeStore((s) => s.holdings);
   const activeTab = useTradeStore((s) => s.activeTab);
   const setActiveTab = useTradeStore((s) => s.setActiveTab);
   const logout = useTradeStore((s) => s.logout);
+
+  const syncedHeaderMatch = useMemo(
+    () => resolveSyncedMatchFromContext(activeMatchContext, matches),
+    [activeMatchContext, matches]
+  );
+  const headerClock = useMemo(
+    () =>
+      syncedHeaderMatch || activeMatchContext
+        ? resolveMatchClock(syncedHeaderMatch, activeMatchContext)
+        : null,
+    [syncedHeaderMatch, activeMatchContext]
+  );
+  const headerScore = useMemo(
+    () =>
+      syncedHeaderMatch || activeMatchContext
+        ? resolveMatchScore(syncedHeaderMatch, activeMatchContext)
+        : null,
+    [syncedHeaderMatch, activeMatchContext]
+  );
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const searchBoxRef = useRef<HTMLDivElement | null>(null);
@@ -195,8 +223,35 @@ export default function TopAssetHeader({
           </nav>
         </div>
 
-        {/* Right: Global Search Bar + Auth / Profile */}
+        {/* Right: Active Match Pill + Global Search Bar + Auth / Profile */}
         <div className="flex items-center gap-2.5 shrink-0">
+          {headerClock && headerScore && (syncedHeaderMatch || activeMatchContext) && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("MATCHES")}
+              className="hidden 2xl:inline-flex items-center gap-1.5 rounded-xl border border-gray-200/90 bg-[#F7F9F8] px-2.5 py-1.5 text-[11px] transition hover:border-[#00A878]/50"
+            >
+              <span
+                className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-extrabold tabular-nums ${
+                  headerClock.isLive
+                    ? headerClock.isHalfTime
+                      ? "bg-amber-100 text-amber-800"
+                      : "bg-[#00A878]/15 text-[#00A878]"
+                    : "bg-gray-200 text-gray-600"
+                }`}
+              >
+                {headerClock.shortLabel}
+              </span>
+              <span className="font-mono font-extrabold text-gray-900 tabular-nums">
+                {syncedHeaderMatch?.homeTeam.shortName ??
+                  activeMatchContext?.homeTeam}{" "}
+                {headerScore.display}{" "}
+                {syncedHeaderMatch?.awayTeam.shortName ??
+                  activeMatchContext?.awayTeam}
+              </span>
+            </button>
+          )}
+
           {/* Global Search Input */}
           <div ref={searchBoxRef} className="relative hidden sm:block w-56 md:w-72">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
@@ -244,6 +299,17 @@ export default function TopAssetHeader({
                       );
                       const isUp = pct > 0;
                       const isDown = pct < 0;
+                      const matchedGame = resolveMatchForPlayerView({
+                        player: p,
+                        storeMatches: matches,
+                        belongsToMatch: doesPlayerBelongToMatch,
+                      });
+                      const gameClock = matchedGame
+                        ? resolveMatchClock(matchedGame)
+                        : null;
+                      const gameScore = matchedGame
+                        ? resolveMatchScore(matchedGame)
+                        : null;
                       return (
                         <button
                           key={p.id}
@@ -263,6 +329,14 @@ export default function TopAssetHeader({
                             </p>
                             <p className="truncate text-[10px] text-gray-400">
                               {p.teamName}
+                              {matchedGame && gameClock && gameScore && (
+                                <span className="ml-1.5 font-mono font-semibold text-gray-500 tabular-nums">
+                                  · {gameClock.shortLabel}{" "}
+                                  {matchedGame.homeTeam.shortName}{" "}
+                                  {gameScore.display}{" "}
+                                  {matchedGame.awayTeam.shortName}
+                                </span>
+                              )}
                             </p>
                           </div>
                           <div className="text-right font-mono shrink-0">

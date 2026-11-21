@@ -27,6 +27,11 @@ import {
 import { getAvailableShares } from "@/utils/tier";
 import { resolvePlayerMatchStatus } from "@/lib/lineupStatus";
 import {
+  resolveMatchClock,
+  resolveMatchScore,
+  resolveSyncedMatch,
+} from "@/lib/matchSync";
+import {
   buildTeamLineupForMatch,
   FormationPitchContent,
 } from "./FormationPitchModal";
@@ -54,6 +59,7 @@ export default function MatchAccordionCard({
   onSelectPlayerTrade,
 }: MatchAccordionCardProps) {
   const user = useTradeStore((s) => s.user);
+  const storeMatches = useTradeStore((s) => s.matches);
   const storeHoldings = useTradeStore((s) => s.holdings);
   const accounts = useTradeStore((s) => s.accounts);
   const watchlist = useTradeStore((s) => s.watchlist);
@@ -64,10 +70,14 @@ export default function MatchAccordionCard({
     match.id === "m-new-ars"
   );
 
-  const isUpcoming =
-    match.status === "UPCOMING" ||
-    match.rawStatus === "TIMED" ||
-    match.rawStatus === "SCHEDULED";
+  const syncedMatch = useMemo(
+    () => resolveSyncedMatch(match, storeMatches),
+    [match, storeMatches]
+  );
+  const clock = useMemo(() => resolveMatchClock(syncedMatch), [syncedMatch]);
+  const score = useMemo(() => resolveMatchScore(syncedMatch), [syncedMatch]);
+
+  const isUpcoming = clock.isUpcoming;
 
   const handleOpenPitch = () => {
     if (!isExpanded) onToggleExpand();
@@ -93,13 +103,13 @@ export default function MatchAccordionCard({
 
   // Build deduplicated 3 key players for Home and Away teams (prioritizing base players from store)
   const { homeKeyPlayers, awayKeyPlayers } = useMemo(() => {
-    const isAMatch = isNationalTeamMatch(match);
+    const isAMatch = isNationalTeamMatch(syncedMatch);
     const pickTop3 = (side: "HOME" | "AWAY"): Player[] => {
-      const team = side === "HOME" ? match.homeTeam : match.awayTeam;
+      const team = side === "HOME" ? syncedMatch.homeTeam : syncedMatch.awayTeam;
       const sameMatchPlayers = players.filter(
         (p) =>
           !p.id.startsWith("pitch-") &&
-          p.matchId === match.id &&
+          p.matchId === syncedMatch.id &&
           doesPlayerBelongToTeam(p, team, isAMatch)
       );
       const baseTeamPlayers =
@@ -115,7 +125,7 @@ export default function MatchAccordionCard({
         return baseTeamPlayers.slice(0, 3);
       }
 
-      const lineup = buildTeamLineupForMatch(match, side, players);
+      const lineup = buildTeamLineupForMatch(syncedMatch, side, players);
       const merged: Player[] = [...baseTeamPlayers];
       for (const candidate of lineup.startingLineup) {
         if (merged.length >= 3) break;
@@ -134,7 +144,7 @@ export default function MatchAccordionCard({
       homeKeyPlayers: pickTop3("HOME"),
       awayKeyPlayers: pickTop3("AWAY"),
     };
-  }, [players, match]);
+  }, [players, syncedMatch]);
 
   // Replace (never append) activeKeyPlayers when switching team tab
   const handleSelectTeam = (side: "HOME" | "AWAY") => {
@@ -149,11 +159,6 @@ export default function MatchAccordionCard({
     setActiveKeyPlayers(targetList.slice(0, 3));
   }, [selectedSide, homeKeyPlayers, awayKeyPlayers]);
 
-  const formatLiveLabel = (min?: number) => {
-    const m = min ?? 45;
-    return m <= 45 ? `전반 ${m}'` : `후반 ${m}'`;
-  };
-
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-200/90 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.03)] transition-all">
       {/* Clickable Match Summary Row (FotMob Clean Style) */}
@@ -164,18 +169,30 @@ export default function MatchAccordionCard({
         {/* Top Row: Single Clean Status Pill ONLY + Lineup Toggle */}
         <div className="mb-2.5 flex items-center justify-between">
           <div>
-            {match.status === "LIVE" ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-extrabold text-[#00985f] border border-emerald-200">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#00985f] animate-ping" />
-                {formatLiveLabel(match.minute)}
+            {clock.isLive ? (
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-extrabold border tabular-nums ${
+                  clock.isHalfTime
+                    ? "bg-amber-50 text-amber-700 border-amber-200"
+                    : "bg-emerald-50 text-[#00985f] border-emerald-200"
+                }`}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    clock.isHalfTime
+                      ? "bg-amber-500"
+                      : "bg-[#00985f] animate-ping"
+                  }`}
+                />
+                {clock.cardLabel}
               </span>
-            ) : match.status === "FT" ? (
+            ) : clock.isFinished ? (
               <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-bold text-gray-600">
-                경기 종료 (FT)
+                {clock.cardLabel}
               </span>
             ) : (
               <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-bold text-gray-600 font-mono">
-                {match.kickoffTime}
+                {clock.kickoffTime}
               </span>
             )}
           </div>
@@ -197,65 +214,65 @@ export default function MatchAccordionCard({
           <div className="flex items-center justify-end gap-2.5 text-right min-w-0">
             <div className="min-w-0">
               <p className="text-sm font-bold text-gray-900 leading-tight truncate">
-                {match.homeTeam.name}
+                {syncedMatch.homeTeam.name}
               </p>
               <span className="text-[10px] font-medium text-gray-400">
-                {match.homeTeam.shortName}
+                {syncedMatch.homeTeam.shortName}
               </span>
             </div>
-            {match.homeTeam.crest ? (
+            {syncedMatch.homeTeam.crest ? (
               <img
-                src={match.homeTeam.crest}
-                alt={match.homeTeam.name}
+                src={syncedMatch.homeTeam.crest}
+                alt={syncedMatch.homeTeam.name}
                 className="h-8 w-8 shrink-0 object-contain"
               />
             ) : (
               <div
-                style={{ backgroundColor: match.homeTeam.color }}
+                style={{ backgroundColor: syncedMatch.homeTeam.color }}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-extrabold text-white shadow-sm"
               >
-                {match.homeTeam.shortName}
+                {syncedMatch.homeTeam.shortName}
               </div>
             )}
           </div>
 
           {/* Center Score or Kickoff */}
           <div className="min-w-[68px] text-center">
-            {match.status === "UPCOMING" ? (
+            {clock.isUpcoming ? (
               <div className="rounded-xl bg-gray-100 px-3 py-1.5 font-mono text-xs font-bold text-gray-700">
-                {match.kickoffTime}
+                {clock.kickoffTime}
               </div>
             ) : (
-              <div className="flex items-center justify-center gap-2 rounded-xl bg-[#f1f3f5] px-3 py-1.5 font-mono text-base font-black text-gray-900">
-                <span>{match.homeTeam.score ?? 0}</span>
+              <div className="flex items-center justify-center gap-2 rounded-xl bg-[#f1f3f5] px-3 py-1.5 font-mono text-base font-black text-gray-900 tabular-nums">
+                <span>{score.homeScore}</span>
                 <span className="text-gray-400">:</span>
-                <span>{match.awayTeam.score ?? 0}</span>
+                <span>{score.awayScore}</span>
               </div>
             )}
           </div>
 
           {/* Away Team */}
           <div className="flex items-center justify-start gap-2.5 text-left min-w-0">
-            {match.awayTeam.crest ? (
+            {syncedMatch.awayTeam.crest ? (
               <img
-                src={match.awayTeam.crest}
-                alt={match.awayTeam.name}
+                src={syncedMatch.awayTeam.crest}
+                alt={syncedMatch.awayTeam.name}
                 className="h-8 w-8 shrink-0 object-contain"
               />
             ) : (
               <div
-                style={{ backgroundColor: match.awayTeam.color }}
+                style={{ backgroundColor: syncedMatch.awayTeam.color }}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[10px] font-extrabold text-white shadow-sm"
               >
-                {match.awayTeam.shortName}
+                {syncedMatch.awayTeam.shortName}
               </div>
             )}
             <div className="min-w-0">
               <p className="text-sm font-bold text-gray-900 leading-tight truncate">
-                {match.awayTeam.name}
+                {syncedMatch.awayTeam.name}
               </p>
               <span className="text-[10px] font-medium text-gray-400">
-                {match.awayTeam.shortName}
+                {syncedMatch.awayTeam.shortName}
               </span>
             </div>
           </div>
@@ -267,7 +284,7 @@ export default function MatchAccordionCard({
         <div className="border-t border-gray-100 bg-[#F7F9F8] px-2.5 sm:px-3.5 py-3">
           {isInlinePitchOpen || isUpcoming ? (
             <FormationPitchContent
-              match={match}
+              match={syncedMatch}
               players={players}
               holdings={holdings}
               onSelectPlayerTrade={onSelectPlayerTrade}
@@ -290,7 +307,7 @@ export default function MatchAccordionCard({
                         : "text-gray-500 hover:text-gray-800"
                     }`}
                   >
-                    {match.homeTeam.shortName} 주요 선수 ({homeKeyPlayers.length})
+                    {syncedMatch.homeTeam.shortName} 주요 선수 ({homeKeyPlayers.length})
                   </button>
                   <button
                     type="button"
@@ -301,7 +318,7 @@ export default function MatchAccordionCard({
                         : "text-gray-500 hover:text-gray-800"
                     }`}
                   >
-                    {match.awayTeam.shortName} 주요 선수 ({awayKeyPlayers.length})
+                    {syncedMatch.awayTeam.shortName} 주요 선수 ({awayKeyPlayers.length})
                   </button>
                 </div>
 
@@ -331,12 +348,11 @@ export default function MatchAccordionCard({
                   );
                   const isSoldOut = availableShares === 0;
 
-                  const isFinished =
-                    match.status === "FT" || match.rawStatus === "FINISHED";
-                  const matchCtx = buildActiveMatchContext(match);
+                  const isFinished = clock.isFinished;
+                  const matchCtx = buildActiveMatchContext(syncedMatch);
                   const playerStatus = resolvePlayerMatchStatus({
                     player,
-                    match,
+                    match: syncedMatch,
                     teamSide: selectedSide,
                   });
 

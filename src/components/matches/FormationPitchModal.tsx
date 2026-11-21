@@ -25,6 +25,7 @@ import {
   buildActiveMatchContext,
 } from "@/types";
 import {
+  useTradeStore,
   roundToTen,
   clampToPriceLimit,
   doesPlayerBelongToTeam,
@@ -42,6 +43,11 @@ import {
   resolvePlayerMatchStatus,
   type PlayerMatchLineupStatus,
 } from "@/lib/lineupStatus";
+import {
+  resolveMatchClock,
+  resolveMatchScore,
+  resolveSyncedMatch,
+} from "@/lib/matchSync";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface FormationPitchModalProps {
@@ -1711,11 +1717,18 @@ export function FormationPitchContent({
   onSelectPlayerTrade,
   onCollapseInline,
 }: FormationPitchContentProps) {
+  const storeMatches = useTradeStore((s) => s.matches);
+  const syncedMatch = useMemo(
+    () => resolveSyncedMatch(match, storeMatches),
+    [match, storeMatches]
+  );
+  const clock = useMemo(() => resolveMatchClock(syncedMatch), [syncedMatch]);
+
   const [selectedSide, setSelectedSide] = useState<"HOME" | "AWAY">("HOME");
   const [isBenchOpen, setIsBenchOpen] = useState<boolean>(true);
 
   const activeTeam =
-    selectedSide === "HOME" ? match.homeTeam : match.awayTeam;
+    selectedSide === "HOME" ? syncedMatch.homeTeam : syncedMatch.awayTeam;
 
   const handleSelectTeam = useCallback((side: "HOME" | "AWAY") => {
     setSelectedSide(side);
@@ -1724,25 +1737,22 @@ export function FormationPitchContent({
   useEffect(() => {
     setSelectedSide("HOME");
     setIsBenchOpen(true);
-  }, [match.id]);
+  }, [syncedMatch.id]);
 
   const currentTeamLineup = useMemo(
-    () => buildTeamLineupForMatch(match, selectedSide, players),
-    [match, selectedSide, players]
+    () => buildTeamLineupForMatch(syncedMatch, selectedSide, players),
+    [syncedMatch, selectedSide, players]
   );
   const benchPlayers = currentTeamLineup.benchLineup;
   const formationLabel = currentTeamLineup.formation;
 
-  const isUpcoming =
-    match.status === "UPCOMING" ||
-    match.rawStatus === "TIMED" ||
-    match.rawStatus === "SCHEDULED";
+  const isUpcoming = clock.isUpcoming;
 
   const handleSelectWithContext = useCallback(
     (player: Player, type: TradeType) => {
-      onSelectPlayerTrade(player, type, buildActiveMatchContext(match));
+      onSelectPlayerTrade(player, type, buildActiveMatchContext(syncedMatch));
     },
-    [match, onSelectPlayerTrade]
+    [syncedMatch, onSelectPlayerTrade]
   );
 
   const startingPlayers = useMemo(
@@ -1757,7 +1767,7 @@ export function FormationPitchContent({
       orderedIds.push(p.id);
       rawMap[p.id] = resolvePlayerMatchStatus({
         player: p,
-        match,
+        match: syncedMatch,
         providerPlayerEvents: providerEventsByPlayer?.[p.id],
         teamSide: selectedSide,
       });
@@ -1766,15 +1776,15 @@ export function FormationPitchContent({
   }, [
     startingPlayers,
     benchPlayers,
-    match,
+    syncedMatch,
     providerEventsByPlayer,
     selectedSide,
     activeTeam.score,
   ]);
 
   const { homeManager, awayManager } = useMemo(
-    () => resolveMatchManagers(match),
-    [match]
+    () => resolveMatchManagers(syncedMatch),
+    [syncedMatch]
   );
 
   const startingRows = useMemo(() => {
@@ -1816,12 +1826,12 @@ export function FormationPitchContent({
             }`}
           >
             <span
-              style={{ backgroundColor: match.homeTeam.color }}
+              style={{ backgroundColor: syncedMatch.homeTeam.color }}
               className="h-2 w-2 rounded-full"
             />
-            <span className="truncate">{match.homeTeam.name}</span>
+            <span className="truncate">{syncedMatch.homeTeam.name}</span>
             <span className="font-mono text-[10px] text-gray-400">
-              ({normalizeSupportedFormation(match.homeTeam.formation, "HOME")})
+              ({normalizeSupportedFormation(syncedMatch.homeTeam.formation, "HOME")})
             </span>
           </button>
 
@@ -1835,12 +1845,12 @@ export function FormationPitchContent({
             }`}
           >
             <span
-              style={{ backgroundColor: match.awayTeam.color }}
+              style={{ backgroundColor: syncedMatch.awayTeam.color }}
               className="h-2 w-2 rounded-full"
             />
-            <span className="truncate">{match.awayTeam.name}</span>
+            <span className="truncate">{syncedMatch.awayTeam.name}</span>
             <span className="font-mono text-[10px] text-gray-400">
-              ({normalizeSupportedFormation(match.awayTeam.formation, "AWAY")})
+              ({normalizeSupportedFormation(syncedMatch.awayTeam.formation, "AWAY")})
             </span>
           </button>
         </div>
@@ -1903,7 +1913,7 @@ export function FormationPitchContent({
                     teamStatusById[player.id] ??
                     resolvePlayerMatchStatus({
                       player,
-                      match,
+                      match: syncedMatch,
                       providerPlayerEvents: providerEventsByPlayer?.[player.id],
                       teamSide: selectedSide,
                     })
@@ -1956,7 +1966,7 @@ export function FormationPitchContent({
                     teamStatusById[sub.id] ??
                     resolvePlayerMatchStatus({
                       player: sub,
-                      match,
+                      match: syncedMatch,
                       providerPlayerEvents: providerEventsByPlayer?.[sub.id],
                       teamSide: selectedSide,
                     })
@@ -1984,17 +1994,17 @@ export function FormationPitchContent({
                 {[
                   {
                     side: "HOME",
-                    teamName: match.homeTeam.name,
-                    shortName: match.homeTeam.shortName,
-                    color: match.homeTeam.color,
+                    teamName: syncedMatch.homeTeam.name,
+                    shortName: syncedMatch.homeTeam.shortName,
+                    color: syncedMatch.homeTeam.color,
                     managerName: homeManager ?? "감독 정보 미제공",
                     isMissing: !homeManager,
                   },
                   {
                     side: "AWAY",
-                    teamName: match.awayTeam.name,
-                    shortName: match.awayTeam.shortName,
-                    color: match.awayTeam.color,
+                    teamName: syncedMatch.awayTeam.name,
+                    shortName: syncedMatch.awayTeam.shortName,
+                    color: syncedMatch.awayTeam.color,
                     managerName: awayManager ?? "감독 정보 미제공",
                     isMissing: !awayManager,
                   },
@@ -2059,7 +2069,21 @@ export default function FormationPitchModal({
   onClose,
   onSelectPlayerTrade,
 }: FormationPitchModalProps) {
-  if (!match) return null;
+  const storeMatches = useTradeStore((s) => s.matches);
+  const syncedMatch = useMemo(
+    () => (match ? resolveSyncedMatch(match, storeMatches) : null),
+    [match, storeMatches]
+  );
+  const clock = useMemo(
+    () => (syncedMatch ? resolveMatchClock(syncedMatch) : null),
+    [syncedMatch]
+  );
+  const score = useMemo(
+    () => (syncedMatch ? resolveMatchScore(syncedMatch) : null),
+    [syncedMatch]
+  );
+
+  if (!syncedMatch || !clock || !score) return null;
 
   return (
     <div
@@ -2074,23 +2098,27 @@ export default function FormationPitchModal({
         <div className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-3.5 shrink-0">
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-extrabold text-[#00A878] border border-emerald-200">
-                포메이션 피치 뷰
+              <span
+                className={`rounded-md px-1.5 py-0.5 font-mono text-[10px] font-extrabold tabular-nums border ${
+                  clock.isLive
+                    ? clock.isHalfTime
+                      ? "bg-amber-50 text-amber-700 border-amber-200"
+                      : "bg-emerald-50 text-[#00A878] border-emerald-200"
+                    : "bg-gray-100 text-gray-600 border-gray-200"
+                }`}
+              >
+                {clock.cardLabel}
               </span>
               <span className="text-xs font-bold text-gray-500">
-                {match.leagueName}
+                {syncedMatch.leagueName}
               </span>
             </div>
             <h2 className="mt-0.5 text-sm font-extrabold text-gray-900">
-              {match.homeTeam.name}{" "}
-              <span className="font-mono text-[#00A878]">
-                {match.status === "UPCOMING"
-                  ? "vs"
-                  : `${match.homeTeam.score ?? 0} : ${
-                      match.awayTeam.score ?? 0
-                    }`}
+              {syncedMatch.homeTeam.name}{" "}
+              <span className="font-mono text-[#00A878] tabular-nums">
+                {score.display}
               </span>{" "}
-              {match.awayTeam.name}
+              {syncedMatch.awayTeam.name}
             </h2>
           </div>
 
@@ -2106,7 +2134,7 @@ export default function FormationPitchModal({
         {/* Single Scrollable Content */}
         <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3.5">
           <FormationPitchContent
-            match={match}
+            match={syncedMatch}
             players={players}
             holdings={holdings}
             onSelectPlayerTrade={onSelectPlayerTrade}

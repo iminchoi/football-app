@@ -374,16 +374,21 @@ export interface ActiveMatchContext {
   homeScore: number;
   awayScore: number;
   status: "PRE" | "LIVE" | "FT";
+  rawStatus?: string;
   kickoffTime: string;
   minute?: number;
 }
 
 export function buildActiveMatchContext(match: Match): ActiveMatchContext {
+  const rawUpper = (match.rawStatus || "").trim().toUpperCase();
   const status: "PRE" | "LIVE" | "FT" =
-    match.status === "LIVE" || match.rawStatus === "IN_PLAY"
-      ? "LIVE"
-      : match.status === "FT" || match.rawStatus === "FINISHED"
+    match.status === "FT" || rawUpper === "FINISHED" || rawUpper === "AWARDED"
       ? "FT"
+      : match.status === "LIVE" ||
+        rawUpper === "IN_PLAY" ||
+        rawUpper === "PAUSED" ||
+        rawUpper === "LIVE"
+      ? "LIVE"
       : "PRE";
 
   return {
@@ -394,7 +399,15 @@ export function buildActiveMatchContext(match: Match): ActiveMatchContext {
     homeScore: match.homeTeam.score ?? 0,
     awayScore: match.awayTeam.score ?? 0,
     status,
+    ...(match.rawStatus ? { rawStatus: match.rawStatus } : {}),
     kickoffTime: match.kickoffTime,
-    minute: match.minute,
+    minute:
+      status === "FT"
+        ? match.minute ?? 90
+        : status === "PRE"
+        ? 0
+        : rawUpper === "PAUSED"
+        ? 45
+        : match.minute,
   };
 }

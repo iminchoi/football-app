@@ -19,6 +19,7 @@ import {
   ChartEventMarker,
   MatchEvent,
   EventSentiment,
+  buildActiveMatchContext,
   getPositionLine,
   normalizeDetailedPosition,
 } from "@/types";
@@ -29,7 +30,16 @@ import {
   POSITION_EVENTS,
 } from "@/data/dummyData";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
-import { mergePinnedFixturesForToday } from "@/lib/lineupStatus";
+import {
+  enrichMatchFromFixture,
+  isApiBackedMatch,
+  isSameMatchFixture,
+  resolveFetchedMatchesForDate,
+  resolveMatchClock,
+  resolveMatchForPlayerView,
+  resolveSyncedMatch,
+  syncActiveMatchContext,
+} from "@/lib/matchSync";
 import {
   roundToTen,
   clampToPriceLimit,
@@ -115,6 +125,7 @@ interface TradeStoreState {
     matchContext?: ActiveMatchContext | null
   ) => void;
   syncPlayersFromMatches: (matches: Match[]) => void;
+  setTodayMatches: (matches: Match[]) => void;
   fetchTodayMatches: () => Promise<void>;
   tickMarket: () => void;
   buyPlayer: (playerId: string, quantity: number) => TradeExecutionResult;
@@ -857,7 +868,19 @@ export const useTradeStore = create<TradeStoreState>()(
       },
 
       selectPlayer: (player, matchContext = null) => {
-        set({ activeMatchContext: matchContext });
+        const { matches, todayMatches } = get();
+        const pool = matches.length > 0 ? matches : todayMatches;
+        const resolvedMatch = resolveMatchForPlayerView({
+          player,
+          storeMatches: pool,
+          activeMatchContext: matchContext,
+          belongsToMatch: doesPlayerBelongToMatch,
+        });
+        set({
+          activeMatchContext: resolvedMatch
+            ? buildActiveMatchContext(resolvedMatch)
+            : matchContext,
+        });
         get().ensurePlayerInStore(player);
       },
 
@@ -1009,6 +1032,14 @@ export const useTradeStore = create<TradeStoreState>()(
         });
       },
 
+      setTodayMatches: (matches) => {
+        set({
+          todayMatches: matches,
+          isLoadingTodayMatches: false,
+          hasFetchedTodayMatches: true,
+        });
+      },
+
       fetchTodayMatches: async () => {
         if (inFlightTodayMatchesPromise) {
           return inFlightTodayMatchesPromise;
@@ -1020,6 +1051,7 @@ export const useTradeStore = create<TradeStoreState>()(
         const m = String(now.getMonth() + 1).padStart(2, "0");
         const d = String(now.getDate()).padStart(2, "0");
         const todayStr = `${y}-${m}-${d}`;
+        const fallbackMatches = get().matches;
 
         inFlightTodayMatchesPromise = fetch(
           `/api/matches?date=${encodeURIComponent(todayStr)}`,
@@ -1027,38 +1059,32 @@ export const useTradeStore = create<TradeStoreState>()(
         )
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => {
-            if (data && Array.isArray(data.matches)) {
-              const fetched = mergePinnedFixturesForToday(
-                data.matches as Match[],
-                INITIAL_MATCHES,
-                true
-              );
-              set({
-                todayMatches: fetched,
-                isLoadingTodayMatches: false,
-                hasFetchedTodayMatches: true,
-              });
-              get().syncPlayersFromMatches(fetched);
-            } else {
-              const fallbackToday = mergePinnedFixturesForToday(
-                [],
-                INITIAL_MATCHES,
-                true
-              );
-              set({
-                todayMatches: fallbackToday,
-                isLoadingTodayMatches: false,
-                hasFetchedTodayMatches: true,
-              });
-              get().syncPlayersFromMatches(fallbackToday);
-            }
+            const resolved = resolveFetchedMatchesForDate({
+              source: data?.source,
+              matches: Array.isArray(data?.matches)
+                ? (data.matches as Match[])
+                : null,
+              fallbackMatches,
+              fixturePool: INITIAL_MATCHES,
+              requestedDateStr: todayStr,
+              todayStr,
+            });
+            set({
+              todayMatches: resolved,
+              isLoadingTodayMatches: false,
+              hasFetchedTodayMatches: true,
+            });
+            get().syncPlayersFromMatches(resolved);
           })
           .catch(() => {
-            const fallbackToday = mergePinnedFixturesForToday(
-              [],
-              INITIAL_MATCHES,
-              true
-            );
+            const fallbackToday = resolveFetchedMatchesForDate({
+              source: "CLIENT_FALLBACK",
+              matches: null,
+              fallbackMatches,
+              fixturePool: INITIAL_MATCHES,
+              requestedDateStr: todayStr,
+              todayStr,
+            });
             set({
               todayMatches: fallbackToday,
               isLoadingTodayMatches: false,
@@ -1665,60 +1691,155 @@ export const useTradeStore = create<TradeStoreState>()(
           }
         }
 
-        // Also merge incomingMatches into state.matches so tickMarket can update live API matches
+        // Merge incomingMatches into state.matches through a single deduplicated path
+        // so live API fixtures supersede local mock duplicates for the same canonical match.
         const existingMatchMap = new Map(
           state.matches.map((m) => [m.id, m] as const)
         );
+        const replacedIdMap = new Map<string, string>();
         let matchesChanged = false;
         for (const inc of incomingMatches) {
           const prev = existingMatchMap.get(inc.id);
           if (!prev) {
-            existingMatchMap.set(inc.id, inc);
+            if (isApiBackedMatch(inc)) {
+              let mergedInc = inc;
+              for (const [existingId, existingMatch] of Array.from(
+                existingMatchMap.entries()
+              )) {
+                if (
+                  !isApiBackedMatch(existingMatch) &&
+                  isSameMatchFixture(existingMatch, inc, true)
+                ) {
+                  mergedInc = enrichMatchFromFixture(mergedInc, existingMatch);
+                  existingMatchMap.delete(existingId);
+                  replacedIdMap.set(existingId, mergedInc.id);
+                }
+              }
+              existingMatchMap.set(mergedInc.id, mergedInc);
+            } else {
+              let mergedIntoExistingApi = false;
+              for (const [existingId, existingMatch] of Array.from(
+                existingMatchMap.entries()
+              )) {
+                if (
+                  isApiBackedMatch(existingMatch) &&
+                  isSameMatchFixture(existingMatch, inc, true)
+                ) {
+                  existingMatchMap.set(
+                    existingId,
+                    enrichMatchFromFixture(existingMatch, inc)
+                  );
+                  replacedIdMap.set(inc.id, existingId);
+                  mergedIntoExistingApi = true;
+                  break;
+                }
+              }
+              if (!mergedIntoExistingApi) {
+                existingMatchMap.set(inc.id, inc);
+              }
+            }
             matchesChanged = true;
-          } else if (
-            prev.isInternational !== inc.isInternational ||
-            prev.status !== inc.status ||
-            prev.homeTeam.score !== inc.homeTeam.score ||
-            prev.awayTeam.score !== inc.awayTeam.score ||
-            (inc.events?.length ?? 0) !== (prev.events?.length ?? 0) ||
-            (!prev.homeTeam.lineup && inc.homeTeam.lineup) ||
-            (!prev.awayTeam.lineup && inc.awayTeam.lineup)
-          ) {
-            existingMatchMap.set(inc.id, {
-              ...inc,
-              minute: inc.minute ?? prev.minute,
-              homeTeam: {
-                ...inc.homeTeam,
-                score: inc.homeTeam.score ?? prev.homeTeam.score,
-              },
-              awayTeam: {
-                ...inc.awayTeam,
-                score: inc.awayTeam.score ?? prev.awayTeam.score,
-              },
-            });
-            matchesChanged = true;
+          } else {
+            const incomingIsApi = isApiBackedMatch(inc);
+            const nextMinute = incomingIsApi
+              ? inc.minute ?? prev.minute
+              : inc.status === "FT"
+              ? 90
+              : prev.status === inc.status
+              ? prev.minute ?? inc.minute
+              : inc.minute ?? prev.minute;
+            const nextHomeScore = incomingIsApi
+              ? inc.homeTeam.score ?? prev.homeTeam.score
+              : prev.status === inc.status
+              ? prev.homeTeam.score ?? inc.homeTeam.score
+              : inc.homeTeam.score ?? prev.homeTeam.score;
+            const nextAwayScore = incomingIsApi
+              ? inc.awayTeam.score ?? prev.awayTeam.score
+              : prev.status === inc.status
+              ? prev.awayTeam.score ?? inc.awayTeam.score
+              : inc.awayTeam.score ?? prev.awayTeam.score;
+
+            if (
+              prev.isInternational !== inc.isInternational ||
+              prev.status !== inc.status ||
+              prev.rawStatus !== inc.rawStatus ||
+              prev.minute !== nextMinute ||
+              prev.homeTeam.score !== nextHomeScore ||
+              prev.awayTeam.score !== nextAwayScore ||
+              (inc.events?.length ?? 0) !== (prev.events?.length ?? 0) ||
+              (!prev.homeTeam.lineup && inc.homeTeam.lineup) ||
+              (!prev.awayTeam.lineup && inc.awayTeam.lineup)
+            ) {
+              existingMatchMap.set(
+                inc.id,
+                enrichMatchFromFixture(
+                  {
+                    ...inc,
+                    minute: nextMinute,
+                    homeTeam: {
+                      ...inc.homeTeam,
+                      score: nextHomeScore,
+                    },
+                    awayTeam: {
+                      ...inc.awayTeam,
+                      score: nextAwayScore,
+                    },
+                  },
+                  prev
+                )
+              );
+              matchesChanged = true;
+            }
+          }
+        }
+
+        if (replacedIdMap.size > 0) {
+          for (let i = 0; i < nextPlayers.length; i++) {
+            const remappedMatchId = replacedIdMap.get(nextPlayers[i].matchId);
+            if (remappedMatchId) {
+              nextPlayers[i] = { ...nextPlayers[i], matchId: remappedMatchId };
+              playersChanged = true;
+            }
           }
         }
 
         if (playersChanged || matchesChanged) {
+          const nextMatches = matchesChanged
+            ? Array.from(existingMatchMap.values())
+            : state.matches;
+          const nextTodayMatches = matchesChanged
+            ? state.todayMatches.map((tm) => resolveSyncedMatch(tm, nextMatches))
+            : state.todayMatches;
+          const nextActiveMatchContext = matchesChanged
+            ? syncActiveMatchContext(
+                state.activeMatchContext,
+                nextMatches,
+                replacedIdMap
+              )
+            : state.activeMatchContext;
+
           set({
             ...(playersChanged
               ? { players: nextPlayers, playerPrices: nextPlayerPrices }
               : {}),
             ...(matchesChanged
-              ? { matches: Array.from(existingMatchMap.values()) }
+              ? {
+                  matches: nextMatches,
+                  todayMatches: nextTodayMatches,
+                  activeMatchContext: nextActiveMatchContext,
+                }
               : {}),
           });
         }
       },
 
       tickMarket: () => {
-        const { matches, players, playerPrices } = get();
+        const { matches, todayMatches, activeMatchContext, players, playerPrices } =
+          get();
 
         const updatedMatches = matches.map((m) => {
-          const isMatchLive =
-            m.status === "LIVE" || m.rawStatus === "IN_PLAY";
-          if (!isMatchLive) return m;
+          const clock = resolveMatchClock(m);
+          if (!clock.isLive || clock.isHalfTime) return m;
           const nextMin = (m.minute ?? 45) >= 90 ? 46 : (m.minute ?? 45) + 1;
           return { ...m, minute: nextMin };
         });
@@ -1957,8 +2078,23 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         });
 
+        const nextTodayMatches = todayMatches.map((tm) =>
+          resolveSyncedMatch(tm, updatedMatches)
+        );
+        const nextActiveMatchContext =
+          activeMatchContext && activeMatchContext.status !== "FT"
+            ? (() => {
+                const synced = liveMatchMap.get(activeMatchContext.matchId);
+                return synced
+                  ? buildActiveMatchContext(synced)
+                  : activeMatchContext;
+              })()
+            : activeMatchContext;
+
         set({
           matches: updatedMatches,
+          todayMatches: nextTodayMatches,
+          activeMatchContext: nextActiveMatchContext,
           players: updatedPlayers,
           playerPrices: nextPlayerPrices,
         });
@@ -2549,10 +2685,28 @@ export const useTradeStore = create<TradeStoreState>()(
           };
         });
 
+        const { todayMatches, activeMatchContext } = get();
+        const nextTodayMatches = todayMatches.map((tm) =>
+          resolveSyncedMatch(tm, nextMatches)
+        );
+        const nextActiveMatchContext =
+          activeMatchContext && activeMatchContext.status !== "FT"
+            ? (() => {
+                const synced = nextMatches.find(
+                  (m) => m.id === activeMatchContext.matchId
+                );
+                return synced
+                  ? buildActiveMatchContext(synced)
+                  : activeMatchContext;
+              })()
+            : activeMatchContext;
+
         set({
           players: nextPlayers,
           playerPrices: nextPlayerPrices,
           matches: nextMatches,
+          todayMatches: nextTodayMatches,
+          activeMatchContext: nextActiveMatchContext,
         });
 
         return {

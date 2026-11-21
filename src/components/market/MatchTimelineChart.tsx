@@ -25,6 +25,11 @@ import {
   extractInitialMatchEvents,
   resolveLastMatchReview,
 } from "@/lib/priceEngine";
+import {
+  resolveMatchClock,
+  resolveMatchForPlayerView,
+  resolveMatchScore,
+} from "@/lib/matchSync";
 import MatchEventTimeline from "@/components/MatchEventTimeline";
 import {
   ChartEventMarker,
@@ -386,44 +391,29 @@ export default function MatchTimelineChart({
     setSelectedEventMinute(null);
   }, [player.id]);
 
-  // Prioritize store activeMatchContext when present; fall back to matches lookup only if absent
-  const playerMatch: Match | undefined = useMemo(() => {
-    if (activeMatchContext) {
-      const byCtxId = matches.find((m) => m.id === activeMatchContext.matchId);
-      if (byCtxId) return byCtxId;
-    }
-    const direct = matches.find((m) => m.id === player.matchId);
-    if (direct) return direct;
-    const liveMatch = matches.find(
-      (m) =>
-        (m.status === "LIVE" || m.rawStatus === "IN_PLAY") &&
-        doesPlayerBelongToMatch(player, m)
-    );
-    if (liveMatch) return liveMatch;
-    return matches.find((m) => doesPlayerBelongToMatch(player, m));
-  }, [activeMatchContext, matches, player]);
+  // Resolve canonical live match from storeMatches + activeMatchContext (single source of truth)
+  const playerMatch: Match | undefined = useMemo(
+    () =>
+      resolveMatchForPlayerView({
+        player,
+        storeMatches: matches,
+        activeMatchContext,
+        belongsToMatch: doesPlayerBelongToMatch,
+      }),
+    [activeMatchContext, matches, player]
+  );
 
-  const matchStatus: "LIVE" | "FT" | "UPCOMING" = useMemo(() => {
-    if (activeMatchContext) {
-      return activeMatchContext.status === "PRE"
-        ? "UPCOMING"
-        : activeMatchContext.status;
-    }
-    if (!playerMatch) return "LIVE";
-    if (
-      playerMatch.status === "LIVE" ||
-      playerMatch.rawStatus === "IN_PLAY"
-    ) {
-      return "LIVE";
-    }
-    if (
-      playerMatch.status === "FT" ||
-      playerMatch.rawStatus === "FINISHED"
-    ) {
-      return "FT";
-    }
-    return "UPCOMING";
-  }, [activeMatchContext, playerMatch]);
+  const matchClock = useMemo(
+    () => resolveMatchClock(playerMatch, activeMatchContext),
+    [playerMatch, activeMatchContext]
+  );
+
+  const matchScore = useMemo(
+    () => resolveMatchScore(playerMatch, activeMatchContext),
+    [playerMatch, activeMatchContext]
+  );
+
+  const matchStatus: "LIVE" | "FT" | "UPCOMING" = matchClock.status;
 
   const basePrice = roundToTen(
     player.basePrice ?? player.initialPrice ?? player.currentPrice
@@ -447,14 +437,11 @@ export default function MatchTimelineChart({
             matchStatus
           );
     const endMin =
-      matchStatus === "FT"
-        ? 90
-        : matchStatus === "UPCOMING"
+      matchClock.isFinished
+        ? matchClock.minute
+        : matchClock.isUpcoming
         ? 0
-        : activeMatchContext?.minute ??
-          playerMatch?.minute ??
-          player.lastEvent?.minute ??
-          60;
+        : matchClock.minute;
     return derivePlayerMarketData({
       playerId: player.id,
       openPrice: rawOpenPrice,
@@ -468,8 +455,9 @@ export default function MatchTimelineChart({
     rawOpenPrice,
     basePrice,
     matchStatus,
-    activeMatchContext?.minute,
-    playerMatch?.minute,
+    matchClock.isFinished,
+    matchClock.isUpcoming,
+    matchClock.minute,
   ]);
 
   const lastMatchReview = useMemo(() => {
@@ -568,18 +556,7 @@ export default function MatchTimelineChart({
     [player, overallPeriod]
   );
 
-  const liveMinuteLabel =
-    playerMatch?.minute ??
-    timelineData[timelineData.length - 1]?.minute ??
-    player.lastEvent?.minute ??
-    64;
-
-  const matchTabLabel =
-    matchStatus === "LIVE"
-      ? `LIVE ${liveMinuteLabel}'`
-      : matchStatus === "FT"
-      ? "당일 경기 (FT)"
-      : "경기 예정 (PRE)";
+  const matchTabLabel = matchClock.chartLabel;
 
   // Standardized PitchTrade Palette: Up = #00A878, Down = #F07868, Flat = #A8B2BC
   const strokeColor = isUpFromOpen
@@ -645,30 +622,22 @@ export default function MatchTimelineChart({
           <p className="truncate text-[11px] font-semibold text-gray-500">
             {isViewingLastMatch && lastMatchReview ? (
               <span className="text-slate-700">{lastMatchReview.matchLabel}</span>
-            ) : activeMatchContext ? (
-              <>
-                <span>{activeMatchContext.competition}</span>
-                <span className="mx-1 text-gray-300">·</span>
-                <span className="font-mono font-bold text-gray-800">
-                  {activeMatchContext.homeTeam}{" "}
-                  {activeMatchContext.status === "PRE"
-                    ? "vs"
-                    : `${activeMatchContext.homeScore} : ${activeMatchContext.awayScore}`}{" "}
-                  {activeMatchContext.awayTeam}
-                </span>
-              </>
             ) : playerMatch ? (
               <>
                 <span>{playerMatch.leagueName}</span>
                 <span className="mx-1 text-gray-300">·</span>
-                <span className="font-mono font-bold text-gray-800">
-                  {playerMatch.homeTeam.shortName}{" "}
-                  {playerMatch.status === "UPCOMING"
-                    ? "vs"
-                    : `${playerMatch.homeTeam.score ?? 0} : ${
-                        playerMatch.awayTeam.score ?? 0
-                      }`}{" "}
+                <span className="font-mono font-bold text-gray-800 tabular-nums">
+                  {playerMatch.homeTeam.shortName} {matchScore.display}{" "}
                   {playerMatch.awayTeam.shortName}
+                </span>
+              </>
+            ) : activeMatchContext ? (
+              <>
+                <span>{activeMatchContext.competition}</span>
+                <span className="mx-1 text-gray-300">·</span>
+                <span className="font-mono font-bold text-gray-800 tabular-nums">
+                  {activeMatchContext.homeTeam} {matchScore.display}{" "}
+                  {activeMatchContext.awayTeam}
                 </span>
               </>
             ) : (

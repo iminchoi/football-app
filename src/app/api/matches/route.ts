@@ -11,6 +11,7 @@ import {
   INITIAL_MATCHES,
   NATIONAL_TEAM_DUMMY_MATCHES,
 } from "@/data/dummyData";
+import { deduplicateMatches } from "@/lib/matchSync";
 import { getActiveMatchDataProvider } from "@/lib/providers";
 
 const FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4/matches";
@@ -773,7 +774,14 @@ export async function GET(request: NextRequest) {
           isInternational,
           status,
           rawStatus: String(m.status || ""),
-          minute: status === "LIVE" ? m.minute ?? 45 : undefined,
+          minute:
+            status === "FT"
+              ? 90
+              : status === "LIVE"
+              ? String(m.status || "").toUpperCase() === "PAUSED"
+                ? 45
+                : m.minute ?? 45
+              : undefined,
           kickoffTime:
             status === "FT" ? "종료" : formatKstTime(m.utcDate || ""),
           providerMode: activeProvider.mode,
@@ -823,8 +831,13 @@ export async function GET(request: NextRequest) {
       })
     );
 
+    const dedupedMatches = deduplicateMatches(
+      normalizedMatches,
+      targetDate === getKstTodayStr()
+    );
+
     // Fallback to prepared National Team (A-Match) dummy matches during international breaks when API returns 0 matches
-    if (normalizedMatches.length === 0) {
+    if (dedupedMatches.length === 0) {
       return NextResponse.json({
         source: "AMATCH_FALLBACK",
         date: targetDate,
@@ -840,8 +853,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       source: "FOOTBALL_DATA_API",
       date: targetDate,
-      count: normalizedMatches.length,
-      matches: normalizedMatches,
+      count: dedupedMatches.length,
+      matches: dedupedMatches,
     });
   } catch (error: unknown) {
     const errorMessage =

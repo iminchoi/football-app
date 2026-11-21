@@ -15,7 +15,11 @@ import {
   filterPlayersForMatch,
 } from "@/store/useTradeStore";
 import { INITIAL_MATCHES } from "@/data/dummyData";
-import { mergePinnedFixturesForToday } from "@/lib/lineupStatus";
+import {
+  resolveFetchedMatchesForDate,
+  resolveMatchClock,
+  resolveSyncedMatch,
+} from "@/lib/matchSync";
 import {
   ActiveMatchContext,
   Holding,
@@ -62,37 +66,6 @@ function getNearestSaturdayStr(dateStr: string): string {
   return toDateStr(d);
 }
 
-/**
- * Force every match dated before today to FT. Demo/A-Match fallbacks reuse the same
- * LIVE fixtures for any requested date, so their date is the requested date; real API
- * matches use their own kickoff date (`utcDate`).
- */
-function finalizePastMatches(
-  list: Match[],
-  requestedDateStr: string,
-  todayStr: string,
-  useKickoffDate: boolean
-): Match[] {
-  return list.map((m) => {
-    const kickoff = useKickoffDate && m.utcDate ? new Date(m.utcDate) : null;
-    const matchDateStr =
-      kickoff && !Number.isNaN(kickoff.getTime())
-        ? toDateStr(kickoff)
-        : requestedDateStr;
-    if (matchDateStr >= todayStr || m.status === "FT") return m;
-    return {
-      ...m,
-      status: "FT",
-      rawStatus: "FINISHED",
-      minute: 90,
-      kickoffTime: "종료",
-      highlightText: `경기 종료 (${m.homeTeam.score ?? 0} : ${
-        m.awayTeam.score ?? 0
-      })`,
-    };
-  });
-}
-
 function formatKoreanDateLabel(dateStr: string, todayStr: string): {
   badge?: string;
   mainText: string;
@@ -131,6 +104,7 @@ export default function MatchesTabView({
   const expandedMatchIds = useTradeStore((s) => s.expandedMatchIds);
   const toggleExpandMatch = useTradeStore((s) => s.toggleExpandMatch);
   const syncPlayersFromMatches = useTradeStore((s) => s.syncPlayersFromMatches);
+  const setTodayMatches = useTradeStore((s) => s.setTodayMatches);
 
   const visibleHoldings = user ? holdings : EMPTY_HOLDINGS;
 
@@ -186,78 +160,40 @@ export default function MatchesTabView({
         setDataSource(data.source || "UNKNOWN");
 
         const isTodaySelected = dateStr === todayStr;
+        const mergedList = resolveFetchedMatchesForDate({
+          source: data.source,
+          matches: Array.isArray(data.matches) ? (data.matches as Match[]) : null,
+          fallbackMatches,
+          fixturePool: INITIAL_MATCHES,
+          requestedDateStr: dateStr,
+          todayStr,
+        });
 
-        if (data.source === "FOOTBALL_DATA_API") {
-          const fetchedList = finalizePastMatches(
-            Array.isArray(data.matches) ? data.matches : [],
-            dateStr,
-            todayStr,
-            true
-          );
-          const mergedList = mergePinnedFixturesForToday(
-            fetchedList,
-            INITIAL_MATCHES,
-            isTodaySelected
-          );
-          setApiMatches(mergedList);
-          syncPlayersFromMatches(mergedList);
-          setStatusMessage(null);
-        } else if (data.source === "AMATCH_FALLBACK") {
-          const fallbackList = finalizePastMatches(
-            Array.isArray(data.matches) ? data.matches : fallbackMatches,
-            dateStr,
-            todayStr,
-            false
-          );
-          const mergedList = mergePinnedFixturesForToday(
-            fallbackList,
-            INITIAL_MATCHES,
-            isTodaySelected
-          );
-          setApiMatches(mergedList);
-          syncPlayersFromMatches(mergedList);
-          setStatusMessage(data.message || null);
-        } else {
-          // Fallback when API key is empty or error occurs
-          const diffDays = Math.round(
-            (parseDateStr(dateStr).getTime() -
-              parseDateStr(todayStr).getTime()) /
-              (1000 * 60 * 60 * 24)
-          );
-          const targetKey =
-            diffDays === -1
-              ? "YESTERDAY"
-              : diffDays === 0
-              ? "TODAY"
-              : diffDays === 1
-              ? "TOMORROW"
-              : "WEEKEND";
-
-          const filteredMock = fallbackMatches.filter(
-            (m) => m.dateKey === targetKey
-          );
-          const resolvedFallback = finalizePastMatches(
-            filteredMock.length > 0 ? filteredMock : fallbackMatches,
-            dateStr,
-            todayStr,
-            false
-          );
-          const mergedList = mergePinnedFixturesForToday(
-            resolvedFallback,
-            INITIAL_MATCHES,
-            isTodaySelected
-          );
-          setApiMatches(mergedList);
-          syncPlayersFromMatches(mergedList);
-          setStatusMessage(data.message || null);
+        setApiMatches(mergedList);
+        if (isTodaySelected) {
+          setTodayMatches(mergedList);
         }
+        syncPlayersFromMatches(mergedList);
+        setStatusMessage(
+          data.source === "FOOTBALL_DATA_API" ? null : data.message || null
+        );
       } catch {
         // An aborted request is superseded by a newer one that owns the state.
         if (controller.signal.aborted) return;
         setDataSource("CLIENT_FALLBACK");
-        setApiMatches(
-          finalizePastMatches(fallbackMatches, dateStr, todayStr, false)
-        );
+        const fallbackList = resolveFetchedMatchesForDate({
+          source: "CLIENT_FALLBACK",
+          matches: null,
+          fallbackMatches,
+          fixturePool: INITIAL_MATCHES,
+          requestedDateStr: dateStr,
+          todayStr,
+        });
+        setApiMatches(fallbackList);
+        if (dateStr === todayStr) {
+          setTodayMatches(fallbackList);
+        }
+        syncPlayersFromMatches(fallbackList);
         setStatusMessage(
           "네트워크 연결 상태를 확인해주세요. 데모 경기를 표시합니다."
         );
@@ -265,7 +201,7 @@ export default function MatchesTabView({
         if (!controller.signal.aborted) setIsLoading(false);
       }
     },
-    [syncPlayersFromMatches, todayStr]
+    [setTodayMatches, syncPlayersFromMatches, todayStr]
   );
 
   useEffect(() => {
@@ -276,18 +212,11 @@ export default function MatchesTabView({
 
   useEffect(() => () => fetchControllerRef.current?.abort(), []);
 
-  // Overlay live store match state (scores/minutes) onto fetched matches;
+  // Overlay live store match state (clock/scores) through the single synced resolver;
   // finished matches keep their FT state so a past date never shows LIVE.
-  const resolvedMatches = apiMatches.map((m) => {
-    if (m.status === "FT") return m;
-    const sm = storeMockMatches.find((s) => s.id === m.id);
-    if (!sm) return m;
-    return {
-      ...sm,
-      leagueId: m.leagueId,
-      ...(m.leagueEmblem ? { leagueEmblem: m.leagueEmblem } : {}),
-    };
-  });
+  const resolvedMatches = apiMatches.map((m) =>
+    resolveSyncedMatch(m, storeMockMatches)
+  );
 
   // Group fetched matches by leagueId
   const leagueGroups = resolvedMatches.reduce<
@@ -500,15 +429,10 @@ export default function MatchesTabView({
       {(() => {
         const allFinished =
           resolvedMatches.length > 0 &&
-          resolvedMatches.every((m) => m.status === "FT");
+          resolvedMatches.every((m) => resolveMatchClock(m).isFinished);
         const allUpcoming =
           resolvedMatches.length > 0 &&
-          resolvedMatches.every(
-            (m) =>
-              m.status === "UPCOMING" ||
-              m.rawStatus === "TIMED" ||
-              m.rawStatus === "SCHEDULED"
-          );
+          resolvedMatches.every((m) => resolveMatchClock(m).isUpcoming);
         return (
           <div className="mx-4 mt-3.5 space-y-2">
             <div className="flex items-center justify-between rounded-xl bg-emerald-50/90 border border-emerald-200/70 px-3.5 py-2 text-xs text-emerald-900">
