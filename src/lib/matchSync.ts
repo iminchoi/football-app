@@ -933,8 +933,8 @@ export function resolveMatchClock(
       isFinished: false,
       isUpcoming: false,
       shortLabel: "HT",
-      cardLabel: "HT 45'",
-      chartLabel: "HT 45'",
+      cardLabel: "하프타임 (HT)",
+      chartLabel: "LIVE HT",
     };
   }
 

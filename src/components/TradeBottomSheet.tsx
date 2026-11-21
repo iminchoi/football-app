@@ -18,6 +18,7 @@ import {
   useTradeStore,
   roundToTen,
   clampToPriceLimit,
+  doesPlayerBelongToMatch,
   normalizeAccountKey,
 } from "@/store/useTradeStore";
 import {
@@ -25,8 +26,11 @@ import {
   calculateDiffFromOpen,
   derivePlayerMarketData,
   extractInitialMatchEvents,
-  resolvePlayerMatchContext,
 } from "@/lib/priceEngine";
+import {
+  resolveMatchClock,
+  resolveMatchForPlayerView,
+} from "@/lib/matchSync";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
 import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
 import { WEIGHTS } from "@/lib/weights";
@@ -530,18 +534,15 @@ export default function TradeBottomSheet({
   const rawOpenPrice = roundToTen(
     player.openPrice ?? player.priceHistory[0]?.price ?? basePrice
   );
-  const ctx = resolvePlayerMatchContext(player, matches);
-  const effectiveStatus = activeMatchContext
-    ? activeMatchContext.status === "PRE"
-      ? "UPCOMING"
-      : activeMatchContext.status
-    : ctx.status;
-  const effectiveMinute =
-    effectiveStatus === "UPCOMING"
-      ? 0
-      : effectiveStatus === "FT"
-      ? 90
-      : activeMatchContext?.minute ?? ctx.minute;
+  const playerMatch = resolveMatchForPlayerView({
+    player,
+    storeMatches: matches,
+    activeMatchContext,
+    belongsToMatch: doesPlayerBelongToMatch,
+  });
+  const matchClock = resolveMatchClock(playerMatch, activeMatchContext);
+  const effectiveStatus = matchClock.status;
+  const effectiveMinute = matchClock.minute;
 
   const fallbackSsot = derivePlayerMarketData({
     playerId: player.id,
@@ -998,7 +999,7 @@ export default function TradeBottomSheet({
               </span>
             </div>
 
-            {ctx.match?.providerMode === "SCORE_ONLY" &&
+            {playerMatch?.providerMode === "SCORE_ONLY" &&
             !(player.events ?? []).some((e) => e.source === "SIMULATED") ? (
               <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-xs font-bold text-slate-600">
                 데이터 없음 (실제 스코어 전용 모드)

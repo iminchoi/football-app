@@ -14,11 +14,15 @@ import {
 import {
   useTradeStore,
   roundToTen,
+  doesPlayerBelongToMatch,
   calculateChangePercentFromOpen,
   calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
-import { resolvePlayerMatchContext } from "@/lib/priceEngine";
+import {
+  resolveMatchClock,
+  resolveMatchForPlayerView,
+} from "@/lib/matchSync";
 import { WEIGHTS } from "@/lib/weights";
 import { TradeType } from "@/types";
 import { getTierConfig } from "@/utils/tier";
@@ -100,14 +104,15 @@ export default function RightTradeDockPanel({
   );
   const capPrice = roundToTen(basePrice * (1 + WEIGHTS.CAP_LIMIT));
   const floorPrice = roundToTen(basePrice * (1 - WEIGHTS.CAP_LIMIT));
-  const matchCtx = resolvePlayerMatchContext(player, matches);
-  const effectiveStatus = activeMatchContext
-    ? activeMatchContext.status === "PRE"
-      ? "UPCOMING"
-      : activeMatchContext.status
-    : matchCtx.status;
-  const isMatchFinished = effectiveStatus === "FT";
-  const isMatchUpcoming = effectiveStatus === "UPCOMING";
+  const playerMatch = resolveMatchForPlayerView({
+    player,
+    storeMatches: matches,
+    activeMatchContext,
+    belongsToMatch: doesPlayerBelongToMatch,
+  });
+  const matchClock = resolveMatchClock(playerMatch, activeMatchContext);
+  const isMatchFinished = matchClock.isFinished;
+  const isMatchUpcoming = matchClock.isUpcoming;
   const displayPrice = isMatchUpcoming ? basePrice : player.currentPrice;
   const effectiveOpenPrice = isMatchUpcoming ? basePrice : openPrice;
   const isAtUpperLimit = displayPrice >= capPrice;
