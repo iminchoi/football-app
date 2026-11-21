@@ -43,6 +43,7 @@ export type PlayerEventType =
   | "LINEUP_CONFIRMED"
   | "LINEUP_EXCLUDED"
   | "SUB_IN"
+  | "SUB_OUT"
   | "PENALTY";
 
 export type EventSource = "REAL" | "SIMULATED";
@@ -103,7 +104,8 @@ export interface TeamMatchRawEvent {
     | "TEAM_CONCEDED"
     | "LINEUP_CONFIRMED"
     | "LINEUP_EXCLUDED"
-    | "SUB_IN";
+    | "SUB_IN"
+    | "SUB_OUT";
   actorPlayerId?: string;
   goalContext?: GoalContext;
   description?: string;
@@ -250,6 +252,7 @@ export function eventDelta(event: PlayerEvent, ctx: PlayerContext): number {
       return WEIGHTS.BIG_CHANCE_MISS;
     case "PENALTY":
     case "SUB_IN":
+    case "SUB_OUT":
     default:
       return 0;
   }
@@ -431,15 +434,17 @@ export function fanOutTeamEventsToPlayers(
         continue;
       }
 
-      if (raw.kind === "SUB_IN") {
+      if (raw.kind === "SUB_IN" || raw.kind === "SUB_OUT") {
         if (raw.actorPlayerId === p.playerId) {
           result[p.playerId].push({
             id: `${raw.id}-${p.playerId}`,
             playerId: p.playerId,
             minute: raw.minute,
-            type: "SUB_IN",
+            type: raw.kind,
             source: rawSource,
-            description: raw.description ?? "교체 투입",
+            description:
+              raw.description ??
+              (raw.kind === "SUB_IN" ? "교체 투입" : "교체 아웃"),
             ...extraMeta,
           });
         }

@@ -8,6 +8,8 @@ import {
   Users,
   Sparkles,
   ShoppingBag,
+  ArrowLeft,
+  ArrowRight,
 } from "lucide-react";
 import {
   ActiveMatchContext,
@@ -32,6 +34,12 @@ import {
 } from "@/store/useTradeStore";
 import { getTierConfig } from "@/utils/tier";
 import { WEIGHTS } from "@/lib/weights";
+import { formatMinuteLabel, type PlayerEvent } from "@/lib/priceEngine";
+import {
+  applyLineupEntryMeta,
+  resolvePlayerMatchStatus,
+  type PlayerMatchLineupStatus,
+} from "@/lib/lineupStatus";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface FormationPitchModalProps {
@@ -811,7 +819,7 @@ export function buildTeamLineupForMatch(
     ? activeTeam.lineup.slice(0, 11)
     : [];
   const apiBench: ApiLineupPlayer[] = Array.isArray(activeTeam.bench)
-    ? activeTeam.bench.slice(0, 5)
+    ? activeTeam.bench
     : [];
 
   const usedIds = new Set<string>();
@@ -873,10 +881,11 @@ export function buildTeamLineupForMatch(
           ? entryPos
           : matchedPos;
 
-      const candidate: Player =
+      const baseCandidate: Player =
         effectivePosition !== matched.position
           ? { ...matched, position: effectivePosition }
           : matched;
+      const candidate = applyLineupEntryMeta(baseCandidate, entry);
 
       if (!seenCandidateIds.has(candidate.id)) {
         seenCandidateIds.add(candidate.id);
@@ -904,45 +913,52 @@ export function buildTeamLineupForMatch(
 
       if (!seenCandidateIds.has(tempId)) {
         seenCandidateIds.add(tempId);
-        starterCandidates.push({
-          id: tempId,
-          name: entry.name.trim(),
-          englishName: entry.name.trim(),
-          nationalTeam: entry.nationalTeam || activeTeam.name,
-          matchId: match.id,
-          teamId: activeTeam.id,
-          teamName: entry.team || activeTeam.name,
-          teamShort: activeTeam.shortName,
-          teamColor: activeTeam.color,
-          position: normalizedPos,
-          backNumber: entry.shirtNumber || pool.defaultBackNumber,
-          tier: tierCfg.tier,
-          totalShares: tierCfg.totalShares,
-          marketSupply: tierCfg.marketSupply,
-          basePrice,
-          initialPrice: basePrice,
-          currentPrice,
-          previousPrice: basePrice,
-          priceHistory: buildSparklineHistory(
-            basePrice,
-            currentPrice,
-            teamSeed + idx
-          ),
-          lastEvent: {
-            text: "⚡ 포지션 정상 소화 · 실시간 시세 거래 가능",
-            sentiment: currentPrice >= basePrice ? "positive" : "neutral",
-            minute: match.minute ?? 45,
-          },
-          stats: {
-            rating: Number(
-              (6.5 + ((teamSeed + idx * 11) % 14) * 0.1).toFixed(1)
-            ),
-            goals: 0,
-            assists: 0,
-            shotsOnTarget: 1,
-            keyPasses: 1,
-          },
-        });
+        starterCandidates.push(
+          applyLineupEntryMeta(
+            {
+              id: tempId,
+              name: entry.name.trim(),
+              englishName: entry.name.trim(),
+              nationalTeam: entry.nationalTeam || activeTeam.name,
+              matchId: match.id,
+              teamId: activeTeam.id,
+              teamName: entry.team || activeTeam.name,
+              teamShort: activeTeam.shortName,
+              teamColor: activeTeam.color,
+              position: normalizedPos,
+              backNumber: entry.shirtNumber || pool.defaultBackNumber,
+              tier: tierCfg.tier,
+              totalShares: tierCfg.totalShares,
+              marketSupply: tierCfg.marketSupply,
+              basePrice,
+              initialPrice: basePrice,
+              currentPrice,
+              previousPrice: basePrice,
+              priceHistory: buildSparklineHistory(
+                basePrice,
+                currentPrice,
+                teamSeed + idx
+              ),
+              lastEvent: {
+                text: "⚡ 포지션 정상 소화 · 실시간 시세 거래 가능",
+                sentiment: currentPrice >= basePrice ? "positive" : "neutral",
+                minute: match.minute ?? 45,
+              },
+              stats: {
+                rating:
+                  entry.rating ??
+                  Number(
+                    (6.5 + ((teamSeed + idx * 11) % 14) * 0.1).toFixed(1)
+                  ),
+                goals: 0,
+                assists: 0,
+                shotsOnTarget: 1,
+                keyPasses: 1,
+              },
+            },
+            entry
+          )
+        );
       }
     }
   });
@@ -1127,25 +1143,93 @@ export function buildTeamLineupForMatch(
     );
   });
 
-  // Build 5-player bench:
-  // 1) Explicit apiBench matches
+  // Build bench list:
+  // 1) Explicit apiBench matches (preserving all explicit entries and metadata)
   // 2) Remaining unused baseTeamPlayersFromStore
   // 3) Role-specific bench fallback (for club teams with < 16 store players)
   const bench: Player[] = [];
-  for (const entry of apiBench) {
-    if (bench.length >= 5) break;
+  apiBench.forEach((entry, idx) => {
     const matched = findStorePlayerForEntry(entry);
     if (matched && !usedIds.has(matched.id) && !usedNames.has(matched.name.trim())) {
       markUsed(matched);
-      bench.push({
-        ...matched,
-        position: normalizeDetailedPosition(entry.position || matched.position),
-      });
+      bench.push(
+        applyLineupEntryMeta(
+          {
+            ...matched,
+            position: normalizeDetailedPosition(entry.position || matched.position),
+          },
+          entry
+        )
+      );
+      return;
     }
-  }
 
+    if (entry && entry.name && !usedNames.has(entry.name.trim())) {
+      const normalizedPos = normalizeDetailedPosition(entry.position);
+      const pool = FALLBACK_POOL_BY_POSITION[normalizedPos];
+      const basePrice = roundToTen(
+        pool.basePriceSeed + ((teamSeed + (idx + 12) * 17) % 8) * 100
+      );
+      const tierCfg = getTierConfig(basePrice);
+      const tempId =
+        entry.id !== undefined
+          ? String(entry.id)
+          : `pitch-api-bench-${match.id}-${activeTeam.id}-${idx}`;
+      if (!usedIds.has(tempId)) {
+        usedIds.add(tempId);
+        usedNames.add(entry.name.trim());
+        bench.push(
+          applyLineupEntryMeta(
+            {
+              id: tempId,
+              name: entry.name.trim(),
+              englishName: entry.name.trim(),
+              nationalTeam: entry.nationalTeam || activeTeam.name,
+              matchId: match.id,
+              teamId: activeTeam.id,
+              teamName: entry.team || activeTeam.name,
+              teamShort: activeTeam.shortName,
+              teamColor: activeTeam.color,
+              position: normalizedPos,
+              backNumber: entry.shirtNumber || pool.defaultBackNumber,
+              tier: tierCfg.tier,
+              totalShares: tierCfg.totalShares,
+              marketSupply: tierCfg.marketSupply,
+              basePrice,
+              initialPrice: basePrice,
+              currentPrice: basePrice,
+              previousPrice: basePrice,
+              priceHistory: [
+                {
+                  minute: 0,
+                  timeLabel: "0'",
+                  price: basePrice,
+                  changePercentFromOpen: 0,
+                },
+              ],
+              lastEvent: {
+                text: "📋 벤치 대기 중 · 교체 투입 시 시세 변동",
+                sentiment: "neutral",
+                minute: match.minute ?? 0,
+              },
+              stats: {
+                rating: entry.rating ?? 6.5,
+                goals: 0,
+                assists: 0,
+                shotsOnTarget: 0,
+                keyPasses: 0,
+              },
+            },
+            entry
+          )
+        );
+      }
+    }
+  });
+
+  const maxBenchSize = Math.max(5, apiBench.length);
   for (const baseP of baseTeamPlayersFromStore) {
-    if (bench.length >= 5) break;
+    if (bench.length >= maxBenchSize) break;
     if (!usedIds.has(baseP.id) && !usedNames.has(baseP.name.trim())) {
       markUsed(baseP);
       bench.push({
@@ -1186,6 +1270,10 @@ export function buildTeamLineupForMatch(
         currentPrice: base,
         highPrice: base,
         lowPrice: base,
+        subInMinute: undefined,
+        subOutMinute: undefined,
+        yellowCards: 0,
+        redCards: 0,
         events: [],
         priceHistory: [
           {
@@ -1222,15 +1310,110 @@ export function buildTeamLineupForMatch(
 
   return {
     startingLineup: starters.slice(0, 11).map(applySelectedMatchContext),
-    benchLineup: bench.slice(0, 5).map(applySelectedMatchContext),
+    benchLineup: bench.slice(0, maxBenchSize).map(applySelectedMatchContext),
     formation,
   };
+}
+
+interface MatchCardBadgesProps {
+  yellowCards: number;
+  redCards: number;
+  size?: "xs" | "sm";
+}
+
+function MatchCardBadges({
+  yellowCards,
+  redCards,
+  size = "xs",
+}: MatchCardBadgesProps) {
+  if (yellowCards <= 0 && redCards <= 0) return null;
+  const cardDim =
+    size === "xs"
+      ? "h-[10px] w-[7px] rounded-[1.5px]"
+      : "h-[12px] w-[8.5px] rounded-[2px]";
+  const yellowCount = Math.min(2, yellowCards);
+  const redCount = Math.min(1, redCards);
+
+  return (
+    <span
+      data-testid="match-card-badges"
+      className="inline-flex shrink-0 items-center gap-0.5"
+      aria-label={[
+        yellowCount > 0 ? `옐로카드 ${yellowCount}장` : "",
+        redCount > 0 ? `레드카드 ${redCount}장` : "",
+      ]
+        .filter(Boolean)
+        .join(", ")}
+    >
+      {Array.from({ length: yellowCount }).map((_, idx) => (
+        <span
+          key={`yc-${idx}`}
+          data-testid="yellow-card-badge"
+          title="옐로카드"
+          className={`inline-block ${cardDim} border border-amber-500/60 bg-[#FACC15] shadow-[0_1px_1px_rgba(0,0,0,0.16)]`}
+        />
+      ))}
+      {Array.from({ length: redCount }).map((_, idx) => (
+        <span
+          key={`rc-${idx}`}
+          data-testid="red-card-badge"
+          title="레드카드"
+          className={`inline-block ${cardDim} border border-rose-700/60 bg-[#EF4444] shadow-[0_1px_1px_rgba(0,0,0,0.18)]`}
+        />
+      ))}
+    </span>
+  );
+}
+
+interface SubTimeBadgeProps {
+  direction: "IN" | "OUT";
+  minute: number;
+  compact?: boolean;
+}
+
+function SubTimeBadge({
+  direction,
+  minute,
+  compact = false,
+}: SubTimeBadgeProps) {
+  const isIn = direction === "IN";
+  const label = formatMinuteLabel(minute);
+
+  return (
+    <span
+      data-testid={isIn ? "sub-in-badge" : "sub-out-badge"}
+      title={isIn ? `${label} 교체 투입` : `${label} 교체 아웃`}
+      className={`inline-flex shrink-0 items-center gap-0.5 rounded-full border font-mono font-extrabold tabular-nums leading-none whitespace-nowrap ${
+        compact
+          ? "px-1 py-0.5 text-[8px] sm:text-[9px] shadow-xs"
+          : "px-1.5 py-0.5 text-[10px]"
+      } ${
+        isIn
+          ? "border-emerald-200 bg-emerald-50 text-[#00A878]"
+          : "border-rose-200 bg-white/95 text-[#E11D48]"
+      }`}
+    >
+      <span>{label}</span>
+      {isIn ? (
+        <ArrowRight
+          className={compact ? "h-2.5 w-2.5 text-[#00A878]" : "h-3 w-3 text-[#00A878]"}
+          strokeWidth={2.75}
+        />
+      ) : (
+        <ArrowLeft
+          className={compact ? "h-2.5 w-2.5 text-[#E11D48]" : "h-3 w-3 text-[#E11D48]"}
+          strokeWidth={2.75}
+        />
+      )}
+    </span>
+  );
 }
 
 interface PitchPlayerNodeProps {
   player: Player;
   teamColor: string;
   holdingQty: number;
+  status: PlayerMatchLineupStatus;
   isUpcoming?: boolean;
   onSelect: (player: Player, type: TradeType) => void;
 }
@@ -1239,6 +1422,7 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
   player,
   teamColor,
   holdingQty,
+  status,
   isUpcoming = false,
   onSelect,
 }: PitchPlayerNodeProps) {
@@ -1257,27 +1441,76 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
     <button
       type="button"
       onClick={() => onSelect(player, "BUY")}
-      className="group relative flex min-w-0 flex-1 max-w-[74px] sm:max-w-[92px] flex-col items-center rounded-xl sm:rounded-2xl border border-gray-200/90 bg-[#FFFFFF] px-1 pt-2 pb-1.5 sm:px-2.5 sm:pt-2.5 sm:pb-2 shadow-xs transition hover:-translate-y-0.5 hover:border-[#00A878] hover:shadow-sm focus:outline-none active:scale-95"
+      className="group relative flex min-w-0 flex-1 max-w-[74px] sm:max-w-[92px] flex-col items-center rounded-xl sm:rounded-2xl border border-gray-200/90 bg-[#FFFFFF] px-1 pt-1.5 pb-1.5 sm:px-2 sm:pt-2 sm:pb-2 shadow-xs transition hover:-translate-y-0.5 hover:border-[#00A878] hover:shadow-sm focus:outline-none active:scale-95"
     >
-      {/* Top-Left: Owned Holdings Dot */}
-      {holdingQty > 0 && (
-        <span className="absolute left-1 top-1 sm:left-1.5 sm:top-1.5 flex h-3.5 min-w-[14px] sm:h-4 sm:min-w-[16px] items-center justify-center rounded-full bg-[#00A878] px-1 text-[8px] sm:text-[9px] font-black text-white">
-          {holdingQty}
+      {/* Top Bar: Left (Holdings + Captain) / Right (Match Rating) — flex layout prevents corner overlap */}
+      <div className="flex w-full items-center justify-between gap-0.5 min-h-[14px]">
+        <div className="flex items-center gap-0.5 min-w-0">
+          {holdingQty > 0 && (
+            <span className="flex h-3.5 min-w-[14px] sm:h-4 sm:min-w-[16px] items-center justify-center rounded-full bg-[#00A878] px-1 text-[8px] sm:text-[9px] font-black text-white">
+              {holdingQty}
+            </span>
+          )}
+          {status.isCaptain && (
+            <span
+              data-testid="captain-badge"
+              title="주장"
+              className="flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-gray-900 px-1 text-[8px] font-black text-white leading-none"
+            >
+              C
+            </span>
+          )}
+        </div>
+
+        <span className="rounded bg-[#F7F9F8] px-1 py-0.5 font-mono text-[8px] sm:text-[9px] font-extrabold text-gray-700 tabular-nums border border-gray-200/70 leading-none">
+          {player.stats.rating.toFixed(1)}
         </span>
-      )}
+      </div>
 
-      {/* Top-Right: Match Rating Chip */}
-      <span className="absolute right-1 top-1 sm:right-1.5 sm:top-1.5 rounded bg-[#F7F9F8] px-1 py-0.5 font-mono text-[8px] sm:text-[9px] font-extrabold text-gray-700 tabular-nums border border-gray-200/70 leading-none">
-        {player.stats.rating.toFixed(1)}
-      </span>
-
-      {/* Top-Center: Minimal Team Jersey Avatar */}
-      <div className="mt-1 mb-1 sm:mt-1.5 sm:mb-1.5">
+      {/* Avatar Area with Dedicated Non-Overlapping Corner Anchors */}
+      <div className="relative my-1 flex items-center justify-center">
         <PlayerAvatar
           player={player}
           teamColorOverride={teamColor}
           size={34}
         />
+
+        {/* Avatar Top-Left: Sub-Out Minute + Red ← Icon */}
+        {status.subOutMinute !== undefined && (
+          <div className="pointer-events-none absolute -left-3.5 -top-1 z-10">
+            <SubTimeBadge direction="OUT" minute={status.subOutMinute} compact />
+          </div>
+        )}
+
+        {/* Avatar Left/Bottom-Left: Yellow / Red Card Badges (flex-gap prevents multi-card overlap) */}
+        {(status.yellowCards > 0 || status.redCards > 0) && (
+          <div className="pointer-events-none absolute -left-2.5 -bottom-0.5 z-10 flex items-center gap-0.5 rounded bg-white/90 px-0.5 py-0.5 shadow-xs border border-gray-200/70">
+            <MatchCardBadges
+              yellowCards={status.yellowCards}
+              redCards={status.redCards}
+              size="xs"
+            />
+          </div>
+        )}
+
+        {/* Avatar Bottom-Right: Goal / Assist Markers (separated from cards & rating) */}
+        {(status.goals > 0 || status.assists > 0) && (
+          <div
+            data-testid="pitch-goal-assist-badges"
+            className="pointer-events-none absolute -right-2.5 -bottom-0.5 z-10 flex items-center gap-0.5 rounded-full bg-white/95 px-1 py-0.5 text-[8px] font-black leading-none shadow-xs border border-gray-200/70"
+          >
+            {status.goals > 0 && (
+              <span title={`득점 ${status.goals}`}>
+                ⚽{status.goals > 1 ? status.goals : ""}
+              </span>
+            )}
+            {status.assists > 0 && (
+              <span title={`도움 ${status.assists}`} className="text-sky-700">
+                🅰️{status.assists > 1 ? status.assists : ""}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Middle: Player Name + Subtle Position Label */}
@@ -1316,6 +1549,7 @@ interface BenchPlayerRowProps {
   sub: Player;
   teamColor: string;
   holdingQty: number;
+  status: PlayerMatchLineupStatus;
   isUpcoming?: boolean;
   onSelect: (player: Player, type: TradeType) => void;
 }
@@ -1324,11 +1558,16 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
   sub,
   teamColor,
   holdingQty,
+  status,
   isUpcoming = false,
   onSelect,
 }: BenchPlayerRowProps) {
   const base = sub.openPrice ?? sub.basePrice ?? sub.initialPrice;
-  const hasPlayed = (sub.events?.length ?? 0) > 0;
+  const hasPlayed =
+    status.subInMinute !== undefined ||
+    (sub.events?.length ?? 0) > 0 ||
+    status.yellowCards > 0 ||
+    status.redCards > 0;
   // Pre-match bench exclusion: -2.00%; unused bench during LIVE/FT: fixed 0.00%
   const displayPrice = isUpcoming
     ? Math.round((base * (1 + WEIGHTS.LINEUP_EXCLUDED)) / 10) * 10
@@ -1346,25 +1585,47 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
 
   return (
     <div
+      data-testid={`bench-row-${sub.id}`}
       onClick={() => onSelect(sub, "BUY")}
-      className="flex cursor-pointer items-center justify-between py-2.5 px-1 transition hover:bg-gray-50"
+      className="flex cursor-pointer items-center justify-between gap-2 py-2.5 px-1 transition hover:bg-gray-50"
     >
-      <div className="flex items-center gap-2.5 min-w-0">
+      {/* Left: Avatar + Name + Position + Rating + Card Badges + Holdings */}
+      <div className="flex items-center gap-2.5 min-w-0 flex-1">
         <PlayerAvatar
           player={sub}
           teamColorOverride={teamColor}
           size={32}
         />
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-xs font-bold text-gray-900 truncate">
               {sub.name}
             </span>
-            <span className="rounded bg-gray-100 px-1.5 py-0.2 text-[10px] font-bold text-gray-600">
+            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600 leading-none">
               {sub.position}
             </span>
+            {!isUpcoming && (
+              <span className="rounded bg-[#F7F9F8] border border-gray-200/80 px-1 py-0.5 font-mono text-[10px] font-extrabold text-gray-700 tabular-nums leading-none">
+                {sub.stats.rating.toFixed(1)}
+              </span>
+            )}
+            <MatchCardBadges
+              yellowCards={status.yellowCards}
+              redCards={status.redCards}
+              size="sm"
+            />
+            {status.goals > 0 && (
+              <span className="text-[10px] font-bold text-gray-800">
+                ⚽{status.goals > 1 ? status.goals : ""}
+              </span>
+            )}
+            {status.assists > 0 && (
+              <span className="text-[10px] font-bold text-sky-700">
+                🅰️{status.assists > 1 ? status.assists : ""}
+              </span>
+            )}
             {holdingQty > 0 && (
-              <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-50 px-1.5 py-0.2 text-[10px] font-bold text-[#00985f]">
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-[#00985f] leading-none">
                 <ShoppingBag className="h-2.5 w-2.5" />
                 {holdingQty}주
               </span>
@@ -1373,8 +1634,23 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
         </div>
       </div>
 
+      {/* Right: Substitution Badges (IN → / OUT ←) + Price + Buy */}
       <div className="flex items-center gap-2 shrink-0">
-        <div className="text-right font-mono text-xs">
+        {(status.subInMinute !== undefined || status.subOutMinute !== undefined) && (
+          <div
+            data-testid="bench-sub-badges"
+            className="flex items-center gap-1"
+          >
+            {status.subInMinute !== undefined && (
+              <SubTimeBadge direction="IN" minute={status.subInMinute} />
+            )}
+            {status.subOutMinute !== undefined && (
+              <SubTimeBadge direction="OUT" minute={status.subOutMinute} />
+            )}
+          </div>
+        )}
+
+        <div className="text-right font-mono text-xs tabular-nums">
           <span className="font-black text-gray-900">
             {displayPrice.toLocaleString()}P
           </span>
@@ -1410,6 +1686,7 @@ export interface FormationPitchContentProps {
   match: Match;
   players: Player[];
   holdings: Record<string, Holding>;
+  providerEventsByPlayer?: Record<string, PlayerEvent[]>;
   onSelectPlayerTrade: (
     player: Player,
     type: TradeType,
@@ -1422,6 +1699,7 @@ export function FormationPitchContent({
   match,
   players,
   holdings,
+  providerEventsByPlayer,
   onSelectPlayerTrade,
   onCollapseInline,
 }: FormationPitchContentProps) {
@@ -1429,7 +1707,7 @@ export function FormationPitchContent({
   const [pitchPlayers, setPitchPlayers] = useState<Player[]>([]);
   const [benchPlayers, setBenchPlayers] = useState<Player[]>([]);
   const [formationLabel, setFormationLabel] = useState<string>("4-3-3");
-  const [isBenchOpen, setIsBenchOpen] = useState<boolean>(false);
+  const [isBenchOpen, setIsBenchOpen] = useState<boolean>(true);
 
   const activeTeam =
     selectedSide === "HOME" ? match.homeTeam : match.awayTeam;
@@ -1439,7 +1717,7 @@ export function FormationPitchContent({
       setSelectedSide(side);
       const selectedLineup = buildTeamLineupForMatch(match, side, players);
       setPitchPlayers(selectedLineup.startingLineup.slice(0, 11));
-      setBenchPlayers(selectedLineup.benchLineup.slice(0, 5));
+      setBenchPlayers(selectedLineup.benchLineup);
       setFormationLabel(selectedLineup.formation);
     },
     [match, players]
@@ -1447,7 +1725,7 @@ export function FormationPitchContent({
 
   useEffect(() => {
     setSelectedSide("HOME");
-    setIsBenchOpen(false);
+    setIsBenchOpen(true);
   }, [match.id]);
 
   useEffect(() => {
@@ -1457,7 +1735,7 @@ export function FormationPitchContent({
       players
     );
     setPitchPlayers(currentTeamLineup.startingLineup.slice(0, 11));
-    setBenchPlayers(currentTeamLineup.benchLineup.slice(0, 5));
+    setBenchPlayers(currentTeamLineup.benchLineup);
     setFormationLabel(currentTeamLineup.formation);
   }, [match, activeTeam.id, selectedSide, players]);
 
@@ -1600,6 +1878,11 @@ export function FormationPitchContent({
                   player={player}
                   teamColor={activeTeam.color}
                   holdingQty={holdings[player.id]?.quantity ?? 0}
+                  status={resolvePlayerMatchStatus({
+                    player,
+                    match,
+                    providerPlayerEvents: providerEventsByPlayer?.[player.id],
+                  })}
                   isUpcoming={isUpcoming}
                   onSelect={handleSelectWithContext}
                 />
@@ -1609,7 +1892,7 @@ export function FormationPitchContent({
         </div>
       </div>
 
-      {/* Collapsible Bench (Substitutes) Accordion */}
+      {/* Collapsible Bench (Substitutes / 교체명단) Accordion */}
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
         <button
           type="button"
@@ -1618,8 +1901,11 @@ export function FormationPitchContent({
         >
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-[#00A878]" />
-            <span className="text-xs font-extrabold text-gray-900">
-              후보 선수 (Bench) 목록 ({benchPlayers.slice(0, 5).length}명)
+            <span
+              data-testid="bench-section-title"
+              className="text-xs font-extrabold text-gray-900"
+            >
+              교체명단 ({benchPlayers.length}명)
             </span>
           </div>
           <div className="flex items-center gap-1 text-[11px] font-semibold text-gray-400">
@@ -1634,12 +1920,17 @@ export function FormationPitchContent({
 
         {isBenchOpen && (
           <div className="divide-y divide-gray-100 border-t border-gray-100 px-3 py-1">
-            {benchPlayers.slice(0, 5).map((sub) => (
+            {benchPlayers.map((sub) => (
               <BenchPlayerRow
                 key={`${sub.id}-${sub.position}`}
                 sub={sub}
                 teamColor={activeTeam.color}
                 holdingQty={holdings[sub.id]?.quantity ?? 0}
+                status={resolvePlayerMatchStatus({
+                  player: sub,
+                  match,
+                  providerPlayerEvents: providerEventsByPlayer?.[sub.id],
+                })}
                 isUpcoming={isUpcoming}
                 onSelect={handleSelectWithContext}
               />

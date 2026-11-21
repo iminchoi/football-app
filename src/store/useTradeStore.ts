@@ -1214,6 +1214,22 @@ export const useTradeStore = create<TradeStoreState>()(
                   }
                 }
 
+                if (item.isCaptain !== undefined && existing.isCaptain !== item.isCaptain) {
+                  updated = { ...updated, isCaptain: item.isCaptain };
+                }
+                if (item.subInMinute !== undefined && existing.subInMinute !== item.subInMinute) {
+                  updated = { ...updated, subInMinute: item.subInMinute };
+                }
+                if (item.subOutMinute !== undefined && existing.subOutMinute !== item.subOutMinute) {
+                  updated = { ...updated, subOutMinute: item.subOutMinute };
+                }
+                if (item.yellowCards !== undefined && existing.yellowCards !== item.yellowCards) {
+                  updated = { ...updated, yellowCards: item.yellowCards };
+                }
+                if (item.redCards !== undefined && existing.redCards !== item.redCards) {
+                  updated = { ...updated, redCards: item.redCards };
+                }
+
                 if (updated !== existing) {
                   nextPlayers[existingIdx] = updated;
                   playersChanged = true;
@@ -1321,12 +1337,19 @@ export const useTradeStore = create<TradeStoreState>()(
                   minute: match.minute ?? 0,
                 },
                 stats: {
-                  rating: 7.3,
+                  rating: item.rating ?? 7.3,
                   goals: 0,
                   assists: 0,
                   shotsOnTarget: 1,
                   keyPasses: 1,
+                  ...(item.yellowCards !== undefined ? { yellowCards: item.yellowCards } : {}),
+                  ...(item.redCards !== undefined ? { redCards: item.redCards } : {}),
                 },
+                ...(item.isCaptain !== undefined ? { isCaptain: item.isCaptain } : {}),
+                ...(item.subInMinute !== undefined ? { subInMinute: item.subInMinute } : {}),
+                ...(item.subOutMinute !== undefined ? { subOutMinute: item.subOutMinute } : {}),
+                ...(item.yellowCards !== undefined ? { yellowCards: item.yellowCards } : {}),
+                ...(item.redCards !== undefined ? { redCards: item.redCards } : {}),
               };
 
               nextPlayers.push(newListedPlayer);
@@ -1347,7 +1370,33 @@ export const useTradeStore = create<TradeStoreState>()(
 
           // Bind real match events (goals, assists, cards, substitutions) idempotently to player SSOT events
           if (Array.isArray(match.events) && match.events.length > 0) {
-            for (const ev of match.events) {
+            const expandedEvents = match.events.flatMap((ev) => {
+              if (ev.type === "SUB") {
+                const pairs: NonNullable<typeof match.events> = [];
+                if (ev.playerOutId || ev.playerOutName) {
+                  pairs.push({
+                    ...ev,
+                    id: `${ev.id}-out`,
+                    type: "SUB_OUT",
+                    playerId: ev.playerOutId,
+                    playerName: ev.playerOutName ?? ev.playerName,
+                  });
+                }
+                if (ev.playerInId || ev.playerInName) {
+                  pairs.push({
+                    ...ev,
+                    id: `${ev.id}-in`,
+                    type: "SUB_IN",
+                    playerId: ev.playerInId,
+                    playerName: ev.playerInName ?? ev.playerName,
+                  });
+                }
+                return pairs;
+              }
+              return [ev];
+            });
+
+            for (const ev of expandedEvents) {
               const evNameLower = ev.playerName.trim().toLowerCase();
               const evIdStr = ev.playerId ? String(ev.playerId).trim() : "";
 
@@ -1372,12 +1421,47 @@ export const useTradeStore = create<TradeStoreState>()(
               if (targetIdx === -1) continue;
 
               const target = nextPlayers[targetIdx];
-              const minute = Math.min(90, Math.max(1, ev.minute));
-              const normalizedType = normalizeMatchEventType(
-                ev.type,
-                0,
-                target.position
-              );
+              const minute = Math.min(95, Math.max(1, ev.minute));
+
+              if (ev.type === "SUB_IN" || ev.type === "SUB_OUT") {
+                const alreadySubbed =
+                  (ev.type === "SUB_IN" && target.subInMinute === minute) ||
+                  (ev.type === "SUB_OUT" && target.subOutMinute === minute);
+                if (alreadySubbed) continue;
+
+                const updatedPlayer: Player = {
+                  ...target,
+                  ...(ev.type === "SUB_IN"
+                    ? {
+                        subInMinute:
+                          target.subInMinute === undefined
+                            ? minute
+                            : Math.min(target.subInMinute, minute),
+                      }
+                    : {
+                        subOutMinute:
+                          target.subOutMinute === undefined
+                            ? minute
+                            : Math.max(target.subOutMinute, minute),
+                      }),
+                  lastEvent: {
+                    text:
+                      ev.type === "SUB_IN"
+                        ? `🔄 ${minute}' 교체 투입`
+                        : `🔄 ${minute}' 교체 아웃`,
+                    sentiment: "neutral",
+                    minute,
+                  },
+                };
+                nextPlayers[targetIdx] = updatedPlayer;
+                playersChanged = true;
+                continue;
+              }
+
+              const normalizedType =
+                ev.type === "YELLOW_CARD" || ev.type === "RED_CARD"
+                  ? ev.type
+                  : normalizeMatchEventType(ev.type, 0, target.position);
               const existingEvents = target.events ?? [];
               const alreadyApplied = existingEvents.some(
                 (e) => e.minute === minute && e.type === normalizedType
@@ -1457,10 +1541,22 @@ export const useTradeStore = create<TradeStoreState>()(
                   bannerText: `🟥 ${minute}' 실경기 레드카드 퇴장`,
                 },
                 SUB_OUT: {
-                  baseRate: -0.015,
+                  baseRate: 0,
                   sentiment: "neutral",
                   description: "실경기 교체 아웃",
                   bannerText: `🔄 ${minute}' 실경기 교체 아웃`,
+                },
+                SUB_IN: {
+                  baseRate: 0,
+                  sentiment: "neutral",
+                  description: "실경기 교체 투입",
+                  bannerText: `🔄 ${minute}' 실경기 교체 투입`,
+                },
+                SUB: {
+                  baseRate: 0,
+                  sentiment: "neutral",
+                  description: "실경기 선수 교체",
+                  bannerText: `🔄 ${minute}' 실경기 선수 교체`,
                 },
               };
 
@@ -1476,13 +1572,19 @@ export const useTradeStore = create<TradeStoreState>()(
                 type: normalizedType,
                 description: spec.description,
                 priceImpactPercent: impactPct,
+                source: ev.source ?? "REAL",
               };
 
-              const nextEvents = normalizeMatchEvents(
-                [...existingEvents, newMatchEvent],
-                target.id,
-                target.position
-              );
+              const nextEvents =
+                normalizedType === "YELLOW_CARD" || normalizedType === "RED_CARD"
+                  ? [...existingEvents, newMatchEvent].sort(
+                      (a, b) => a.minute - b.minute
+                    )
+                  : normalizeMatchEvents(
+                      [...existingEvents, newMatchEvent],
+                      target.id,
+                      target.position
+                    );
               const derived = derivePlayerMarketData({
                 playerId: target.id,
                 openPrice,
@@ -1506,10 +1608,12 @@ export const useTradeStore = create<TradeStoreState>()(
                   Math.min(9.9, nextStats.rating + 0.3).toFixed(1)
                 );
               } else if (ev.type === "YELLOW_CARD") {
+                nextStats.yellowCards = (nextStats.yellowCards ?? target.yellowCards ?? 0) + 1;
                 nextStats.rating = Number(
                   Math.max(4.5, nextStats.rating - 0.2).toFixed(1)
                 );
               } else if (ev.type === "RED_CARD") {
+                nextStats.redCards = (nextStats.redCards ?? target.redCards ?? 0) + 1;
                 nextStats.rating = Number(
                   Math.max(3.5, nextStats.rating - 0.8).toFixed(1)
                 );
@@ -1528,6 +1632,12 @@ export const useTradeStore = create<TradeStoreState>()(
                 volume: derived.volume,
                 events: derived.events,
                 priceHistory: derived.priceHistory,
+                ...(ev.type === "YELLOW_CARD"
+                  ? { yellowCards: nextStats.yellowCards }
+                  : {}),
+                ...(ev.type === "RED_CARD"
+                  ? { redCards: nextStats.redCards }
+                  : {}),
                 lastEvent: {
                   text: spec.bannerText,
                   sentiment: spec.sentiment,
@@ -2220,11 +2330,23 @@ export const useTradeStore = create<TradeStoreState>()(
             feedText: "🔄 전술 변화 및 체력 안배를 위한 교체 아웃",
             sentiment: "neutral",
           },
+          SUB_IN: {
+            baseRate: 0,
+            title: "🔄 교체 투입",
+            feedText: "🔄 경기 후반 흐름 변화를 위한 교체 투입",
+            sentiment: "neutral",
+          },
+          SUB: {
+            baseRate: 0,
+            title: "🔄 선수 교체",
+            feedText: "🔄 전술 변화에 따른 선수 교체",
+            sentiment: "neutral",
+          },
         };
 
         const sanitizedTriggerType: ChartEventType =
-          eventType === "SUB_OUT"
-            ? "SUB_OUT"
+          eventType === "SUB_OUT" || eventType === "SUB_IN" || eventType === "SUB"
+            ? eventType
             : sanitizeEventTypeForPosition(
                 eventType,
                 target.position,

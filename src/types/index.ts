@@ -160,7 +160,7 @@ export type MatchEventType =
   | "KEY_PLAY" // MF/FW: killer pass, shot on target
   | "BIG_CHANCE_MISS"; // FW: big chance missed
 
-export type ChartEventType = MatchEventType | "SUB_OUT";
+export type ChartEventType = MatchEventType | "SUB_OUT" | "SUB_IN" | "SUB";
 
 export type EventSource = "REAL" | "SIMULATED";
 
@@ -256,6 +256,11 @@ export interface Player {
   lastMajorEventAt?: number; // Epoch ms for 30s circuit breaker (GOAL, RED_CARD, PENALTY)
   rawReturnPercent?: number; // Unclamped cumulative return (%)
   clampedReturnPercent?: number; // [-30, +30] clamped return (%)
+  isCaptain?: boolean;
+  subInMinute?: number;
+  subOutMinute?: number;
+  yellowCards?: number;
+  redCards?: number;
   lastEvent: {
     text: string;
     sentiment: EventSentiment;
@@ -267,6 +272,8 @@ export interface Player {
     assists: number;
     shotsOnTarget: number;
     keyPasses: number;
+    yellowCards?: number;
+    redCards?: number;
   };
 }
 
@@ -279,6 +286,12 @@ export interface ApiLineupPlayer {
   team?: string;
   nationalTeam?: string;
   age?: number;
+  isCaptain?: boolean;
+  subInMinute?: number;
+  subOutMinute?: number;
+  yellowCards?: number;
+  redCards?: number;
+  rating?: number;
 }
 
 export interface ApiMatchEvent {
@@ -288,6 +301,10 @@ export interface ApiMatchEvent {
   playerId?: string;
   playerName: string;
   teamName?: string;
+  playerInId?: string;
+  playerInName?: string;
+  playerOutId?: string;
+  playerOutName?: string;
   source?: EventSource;
   estimated?: boolean;
   metadata?: { estimated?: boolean };

@@ -84,6 +84,8 @@ function getEventMarkerText(type: ChartEventType, minute: number): string {
     KEY_PLAY: `🎯 ${minute}'`,
     BIG_CHANCE_MISS: `😣 ${minute}'`,
     SUB_OUT: `🔄 ${minute}'`,
+    SUB_IN: `🔄 ${minute}'`,
+    SUB: `🔄 ${minute}'`,
   };
   return labelMap[type] ?? `• ${minute}'`;
 }
@@ -100,6 +102,8 @@ function getEventChipLabel(type: ChartEventType): string {
     KEY_PLAY: "KEY",
     BIG_CHANCE_MISS: "MISS",
     SUB_OUT: "SUB",
+    SUB_IN: "SUB",
+    SUB: "SUB",
   };
   return map[type] ?? EVENT_PIN_CONFIG[type]?.shortTitle ?? type;
 }

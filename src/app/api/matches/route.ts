@@ -202,6 +202,12 @@ interface FootballDataLineupPlayerRaw {
   nationality?: string;
   dateOfBirth?: string;
   age?: number;
+  isCaptain?: boolean;
+  subInMinute?: number;
+  subOutMinute?: number;
+  yellowCards?: number;
+  redCards?: number;
+  rating?: number;
 }
 
 interface FootballDataTeamRaw {
@@ -289,6 +295,7 @@ function normalizeMatchEvents(
           playerId: scorerId,
           playerName: scorerName,
           teamName: goal.team?.name,
+          source: "REAL",
         });
       }
 
@@ -303,6 +310,7 @@ function normalizeMatchEvents(
           playerId: assistId,
           playerName: assistName,
           teamName: goal.team?.name,
+          source: "REAL",
         });
       }
     });
@@ -312,7 +320,7 @@ function normalizeMatchEvents(
     rawMatch.bookings.forEach((booking, idx) => {
       const playerName = String(booking.player?.name || "").trim();
       if (!playerName) return;
-      const minute = Math.min(90, Math.max(1, Number(booking.minute ?? 45)));
+      const minute = Math.min(95, Math.max(1, Number(booking.minute ?? 45)));
       const cardUpper = String(booking.card || "YELLOW").toUpperCase();
       const eventType =
         cardUpper.includes("RED") ? "RED_CARD" : "YELLOW_CARD";
@@ -328,6 +336,7 @@ function normalizeMatchEvents(
         playerId,
         playerName,
         teamName: booking.team?.name,
+        source: "REAL",
       });
     });
   }
@@ -335,21 +344,38 @@ function normalizeMatchEvents(
   if (Array.isArray(rawMatch.substitutions)) {
     rawMatch.substitutions.forEach((sub, idx) => {
       const outName = String(sub.playerOut?.name || "").trim();
-      if (!outName) return;
-      const minute = Math.min(90, Math.max(1, Number(sub.minute ?? 60)));
-      const outId =
-        sub.playerOut?.id !== undefined
-          ? String(sub.playerOut.id)
-          : undefined;
+      const inName = String(sub.playerIn?.name || "").trim();
+      const minute = Math.min(95, Math.max(1, Number(sub.minute ?? 60)));
+      if (outName) {
+        const outId =
+          sub.playerOut?.id !== undefined
+            ? String(sub.playerOut.id)
+            : undefined;
 
-      events.push({
-        id: `${matchId}-subout-${minute}-${outId ?? idx}`,
-        minute,
-        type: "SUB_OUT",
-        playerId: outId,
-        playerName: outName,
-        teamName: sub.team?.name,
-      });
+        events.push({
+          id: `${matchId}-subout-${minute}-${outId ?? idx}`,
+          minute,
+          type: "SUB_OUT",
+          playerId: outId,
+          playerName: outName,
+          teamName: sub.team?.name,
+          source: "REAL",
+        });
+      }
+      if (inName) {
+        const inId =
+          sub.playerIn?.id !== undefined ? String(sub.playerIn.id) : undefined;
+
+        events.push({
+          id: `${matchId}-subin-${minute}-${inId ?? idx}`,
+          minute,
+          type: "SUB_IN",
+          playerId: inId,
+          playerName: inName,
+          teamName: sub.team?.name,
+          source: "REAL",
+        });
+      }
     });
   }
 
@@ -424,6 +450,12 @@ function normalizeLineupPlayers(
       team: clubOrTeamName,
       nationalTeam,
       ...(age !== undefined ? { age } : {}),
+      ...(raw.isCaptain !== undefined ? { isCaptain: raw.isCaptain } : {}),
+      ...(raw.subInMinute !== undefined ? { subInMinute: raw.subInMinute } : {}),
+      ...(raw.subOutMinute !== undefined ? { subOutMinute: raw.subOutMinute } : {}),
+      ...(raw.yellowCards !== undefined ? { yellowCards: raw.yellowCards } : {}),
+      ...(raw.redCards !== undefined ? { redCards: raw.redCards } : {}),
+      ...(raw.rating !== undefined ? { rating: raw.rating } : {}),
     };
   });
 }
