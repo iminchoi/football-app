@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyLineupEntryMeta,
+  doesIdentityMatchPlayer,
+  hasConflictingAuthoritativeIds,
   mergePinnedFixturesForToday,
   reconcileTeamGoalMarkers,
   resolveMatchManagers,
@@ -891,4 +893,135 @@ test("teamSide scoping blocks opposing-team lineup metadata and cross-team match
   assert.equal(orphanStatus.redCards, 0);
   assert.equal(orphanStatus.subInMinute, undefined);
   assert.equal(orphanStatus.subOutMinute, undefined);
+});
+
+test("extractInitialMatchEvents preserves SIMULATED source and never turns priceHistory SUB markers into cards or assists", () => {
+  const playerWithHistoryMarkers = makeBasePlayer({
+    id: "api-p-7701",
+    matchId: "m-live-hist",
+    position: "CM",
+    openPrice: 10000,
+    basePrice: 10000,
+    currentPrice: 9800,
+    events: undefined,
+    priceHistory: [
+      { minute: 0, timeLabel: "0'", price: 10000 },
+      {
+        minute: 35,
+        timeLabel: "35'",
+        price: 9750,
+        event: {
+          type: "YELLOW_CARD",
+          label: "🟨 시뮬레이션 경고 (-2.5%)",
+          impactPercent: -2.5,
+          source: "SIMULATED",
+        },
+      },
+      {
+        minute: 68,
+        timeLabel: "68'",
+        price: 9700,
+        event: {
+          type: "SUB_OUT",
+          label: "🔄 교체 아웃 (-0.5%)",
+          impactPercent: -0.5,
+          source: "REAL",
+        },
+      },
+      {
+        minute: 84,
+        timeLabel: "84'",
+        price: 9820,
+        event: {
+          type: "SUB_IN",
+          label: "🔄 교체 투입 (+1.2%)",
+          impactPercent: 1.2,
+          source: "REAL",
+        },
+      },
+    ],
+  });
+
+  const extracted = extractInitialMatchEvents(playerWithHistoryMarkers, "LIVE");
+  // SUB_OUT (-0.5%) must NOT become YELLOW_CARD and SUB_IN (+1.2%) must NOT become ASSIST
+  assert.equal(extracted.length, 1);
+  assert.equal(extracted[0].minute, 35);
+  assert.equal(extracted[0].type, "YELLOW_CARD");
+  assert.equal(extracted[0].source, "SIMULATED");
+
+  // Because SIMULATED source is preserved, resolvePlayerMatchStatus never renders a card badge
+  const status = resolvePlayerMatchStatus({
+    player: { ...playerWithHistoryMarkers, events: extracted },
+    match: makeBaseMatch({ id: "m-live-hist", events: undefined }),
+  });
+  assert.equal(status.yellowCards, 0);
+  assert.equal(status.redCards, 0);
+  assert.equal(status.assists, 0);
+});
+
+test("distinct authoritative IDs block same-team alias collisions while keeping curated multi-ID and cross-namespace matching intact", () => {
+  assert.equal(hasConflictingAuthoritativeIds("api-p-101", "202"), true);
+  assert.equal(hasConflictingAuthoritativeIds("api-p-101", "101"), false);
+  assert.equal(hasConflictingAuthoritativeIds("p-odegaard", "p-ars-odegaard"), false);
+  assert.equal(hasConflictingAuthoritativeIds("p-new-barnes", "p-other-barnes"), true);
+  assert.equal(hasConflictingAuthoritativeIds("api-p-991", "p-new-schar"), false);
+
+  const gabrielMagalhaes = makeBasePlayer({
+    id: "api-p-101",
+    name: "가브리에우 마갈량이스",
+    englishName: "Gabriel Magalhães",
+    matchId: "m-same-team-id",
+    teamId: "ars",
+    teamName: "Arsenal",
+    teamShort: "ARS",
+    position: "CB",
+  });
+
+  // Same-team teammate with distinct numeric API ID ("202") and surname/alias "Gabriel" must not match "api-p-101"
+  assert.equal(doesIdentityMatchPlayer(gabrielMagalhaes, "202", "Gabriel"), false);
+  assert.equal(doesIdentityMatchPlayer(gabrielMagalhaes, "101", "Gabriel"), true);
+
+  const sameTeamMatch = makeBaseMatch({
+    id: "m-same-team-id",
+    awayTeam: {
+      id: "ars",
+      name: "Arsenal",
+      shortName: "ARS",
+      color: "#EF0107",
+      score: 1,
+      formation: "4-2-3-1",
+      lineup: [
+        { id: "api-p-101", name: "Gabriel Magalhães", position: "CB" },
+        { id: "api-p-202", name: "Gabriel", position: "ST", yellowCards: 1, subOutMinute: 72 },
+      ],
+    },
+    events: [
+      {
+        id: "ev-202-yc",
+        minute: 44,
+        type: "YELLOW_CARD",
+        playerId: "202",
+        playerName: "Gabriel",
+        teamName: "Arsenal FC",
+        source: "REAL",
+      },
+      {
+        id: "ev-202-sub",
+        minute: 72,
+        type: "SUB_OUT",
+        playerId: "202",
+        playerName: "Gabriel",
+        teamName: "Arsenal FC",
+        source: "REAL",
+      },
+    ],
+  });
+
+  const status101 = resolvePlayerMatchStatus({
+    player: gabrielMagalhaes,
+    match: sameTeamMatch,
+    teamSide: "AWAY",
+  });
+  assert.equal(status101.yellowCards, 0);
+  assert.equal(status101.subOutMinute, undefined);
 });

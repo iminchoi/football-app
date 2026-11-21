@@ -1063,6 +1063,14 @@ export function extractInitialMatchEvents(
 
   for (const pt of player.priceHistory ?? []) {
     if (pt.event && typeof pt.minute === "number" && pt.minute > 0) {
+      // Substitution chart markers are tracked via subInMinute/subOutMinute, never converted into cards or assists.
+      if (
+        pt.event.type === "SUB_IN" ||
+        pt.event.type === "SUB_OUT" ||
+        pt.event.type === "SUB"
+      ) {
+        continue;
+      }
       const min = Math.max(1, Math.min(95, Math.round(pt.minute)));
       const type = normalizeMatchEventType(
         pt.event.type,
@@ -1076,6 +1084,7 @@ export function extractInitialMatchEvents(
         type,
         description: cleanEventDescription(pt.event.label, type),
         priceImpactPercent: Number((pt.event.impactPercent ?? 0).toFixed(1)),
+        ...(pt.event.source ? { source: pt.event.source } : {}),
       });
     }
   }

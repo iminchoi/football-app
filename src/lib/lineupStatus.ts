@@ -5,7 +5,10 @@ import type {
   Player,
 } from "../types/index.ts";
 import { canonicalizeTeamKey, resolveMatchClock } from "./matchSync.ts";
-import { doesPlayerNameMatch } from "./playerDisplayName.ts";
+import {
+  doesPlayerNameMatch,
+  findKnownPlayerNameEntry,
+} from "./playerDisplayName.ts";
 import type { PlayerEvent } from "./priceEngine.ts";
 
 export interface PlayerMatchLineupStatus {
@@ -58,6 +61,48 @@ function isVerifiedRealEvent(ev?: {
   return true;
 }
 
+function extractNumericApiId(id: string): string | null {
+  const m = /^(?:api-p-)?(\d+)$/.exec(id);
+  return m ? m[1] : null;
+}
+
+/**
+ * Return true when two player IDs belong to the same authoritative ID namespace
+ * and unambiguously identify different players (preventing alias/surname collisions).
+ */
+export function hasConflictingAuthoritativeIds(
+  playerId?: string | number,
+  candidateId?: string | number
+): boolean {
+  const a = normalizeId(playerId);
+  const b = normalizeId(candidateId);
+  if (!a || !b) return false;
+  if (a === b || a === `api-p-${b}` || `api-p-${a}` === b) return false;
+
+  const numA = extractNumericApiId(a);
+  const numB = extractNumericApiId(b);
+  if (numA && numB) {
+    return numA !== numB;
+  }
+
+  const isExplicitApiA = a.startsWith("api-p-") && !a.startsWith("api-p-ext-");
+  const isExplicitApiB = b.startsWith("api-p-") && !b.startsWith("api-p-ext-");
+  if (isExplicitApiA && isExplicitApiB && !numA && !numB) {
+    return a !== b;
+  }
+
+  if (a.startsWith("p-") && b.startsWith("p-")) {
+    const entryA = findKnownPlayerNameEntry({ id: a });
+    const entryB = findKnownPlayerNameEntry({ id: b });
+    if (entryA && entryB && entryA === entryB) {
+      return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 export function doesIdentityMatchPlayer(
   player: Pick<Player, "id" | "name" | "englishName">,
   candidateId?: string | number,
@@ -71,6 +116,9 @@ export function doesIdentityMatchPlayer(
       `api-p-${player.id}` === idStr
     ) {
       return true;
+    }
+    if (hasConflictingAuthoritativeIds(player.id, idStr)) {
+      return false;
     }
   }
   const nameLower = normalizeName(candidateName);

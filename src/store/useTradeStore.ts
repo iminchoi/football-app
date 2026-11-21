@@ -62,7 +62,10 @@ import {
   getCircuitBreakerRemainingSec,
   validateTradeOrder,
 } from "@/lib/orderGate";
-import { doesIdentityMatchPlayer } from "@/lib/lineupStatus";
+import {
+  doesIdentityMatchPlayer,
+  hasConflictingAuthoritativeIds,
+} from "@/lib/lineupStatus";
 import {
   canonicalizeIncomingPlayerNames,
   formatPlayerDisplayName,
@@ -591,19 +594,34 @@ function applyPersistedPrices(
       basePrice
     );
 
+    const directMatch = matches.find((m) => m.id === player.matchId);
+    const directClock = directMatch ? resolveMatchClock(directMatch) : null;
+    const allowCardAndSub =
+      !player.id.startsWith("pitch-") &&
+      (!directMatch ||
+        (!directClock!.isUpcoming &&
+          directMatch.providerMode !== "SCORE_ONLY" &&
+          !directMatch.usesDummyLineup));
+    const allowSavedCardAndSub =
+      allowCardAndSub && !(directMatch && Array.isArray(directMatch.events));
+
     const savedEvents = sanitizePersistedEvents(
       Array.isArray(saved.events) && saved.events.length > 0
         ? normalizeMatchEvents(saved.events, player.id, player.position)
-        : extractInitialMatchEvents({
-            ...player,
-            openPrice,
-            basePrice,
-            priceHistory:
-              Array.isArray(saved.priceHistory) && saved.priceHistory.length > 0
-                ? saved.priceHistory
-                : player.priceHistory,
-          }),
-      true
+        : extractInitialMatchEvents(
+            {
+              ...player,
+              events: undefined,
+              openPrice,
+              basePrice,
+              priceHistory:
+                Array.isArray(saved.priceHistory) && saved.priceHistory.length > 0
+                  ? saved.priceHistory
+                  : player.priceHistory,
+            },
+            directClock?.status
+          ),
+      allowSavedCardAndSub
     );
 
     // Ensure base events (like 27' Goal) are preserved alongside any newly saved events
@@ -614,10 +632,13 @@ function applyPersistedPrices(
     for (const ev of savedEvents) {
       mergedEventMap.set(ev.minute, ev);
     }
-    const events = normalizeMatchEvents(
-      Array.from(mergedEventMap.values()),
-      player.id,
-      player.position
+    const events = sanitizePersistedEvents(
+      normalizeMatchEvents(
+        Array.from(mergedEventMap.values()),
+        player.id,
+        player.position
+      ),
+      allowCardAndSub
     );
 
     const ctx = resolvePlayerMatchContext({ ...player, events }, matches);
@@ -945,6 +966,7 @@ export const useTradeStore = create<TradeStoreState>()(
             p.id === newPlayer.id ||
             (!newPlayer.id.startsWith("pitch-") &&
               !p.id.startsWith("pitch-") &&
+              !hasConflictingAuthoritativeIds(p.id, newPlayer.id) &&
               (p.name.trim() === newPlayer.name.trim() ||
                 p.name.trim() === canonicalNames.name ||
                 doesIdentityMatchPlayer(p, newPlayer.id, newPlayer.name)))
@@ -1032,17 +1054,20 @@ export const useTradeStore = create<TradeStoreState>()(
               !directMatch.usesDummyLineup));
 
         // Clicking or listing a player must never synthesize or leak stale card/sub events.
-        const rawInitialEvents =
+        const useSavedEvents =
           !newPlayer.id.startsWith("pitch-") &&
-          savedPrice?.events &&
-          savedPrice.events.length > 0
-            ? normalizeMatchEvents(savedPrice.events, newPlayer.id, newPlayer.position)
-            : Array.isArray(newPlayer.events) && newPlayer.events.length > 0
-            ? normalizeMatchEvents(newPlayer.events, newPlayer.id, newPlayer.position)
-            : [];
+          Boolean(savedPrice?.events && savedPrice.events.length > 0);
+        const rawInitialEvents = useSavedEvents
+          ? normalizeMatchEvents(savedPrice!.events!, newPlayer.id, newPlayer.position)
+          : Array.isArray(newPlayer.events) && newPlayer.events.length > 0
+          ? normalizeMatchEvents(newPlayer.events, newPlayer.id, newPlayer.position)
+          : [];
+        const allowInitialCardAndSub =
+          allowNewPlayerCardAndSub &&
+          !(useSavedEvents && directMatch && Array.isArray(directMatch.events));
         const initialEvents = sanitizePersistedEvents(
           rawInitialEvents,
-          allowNewPlayerCardAndSub
+          allowInitialCardAndSub
         );
 
         const ctx = resolvePlayerMatchContext(
@@ -1280,15 +1305,25 @@ export const useTradeStore = create<TradeStoreState>()(
                 englishName: rawName,
               });
 
+              const incomingId = itemIdStr || extIdStr || undefined;
+              const oppositeTeam =
+                team === match.homeTeam ? match.awayTeam : match.homeTeam;
               const existingIdx = nextPlayers.findIndex((p) => {
                 if (p.id.startsWith("pitch-")) return false;
                 if (
-                  doesIdentityMatchPlayer(
-                    p,
-                    itemIdStr || extIdStr || undefined,
-                    rawName
-                  )
+                  incomingId &&
+                  hasConflictingAuthoritativeIds(p.id, incomingId)
                 ) {
+                  return false;
+                }
+                if (
+                  p.matchId === match.id &&
+                  doesPlayerBelongToTeam(p, oppositeTeam, isAMatch) &&
+                  !doesPlayerBelongToTeam(p, team, isAMatch)
+                ) {
+                  return false;
+                }
+                if (doesIdentityMatchPlayer(p, incomingId, rawName)) {
                   return true;
                 }
                 if (p.name.trim() === canonicalNames.name) return true;
@@ -1364,11 +1399,19 @@ export const useTradeStore = create<TradeStoreState>()(
                     updated = { ...updated, isCaptain: item.isCaptain };
                   }
                   if (!allowLineupEvents) {
+                    const sanitizedExistingEvents = Array.isArray(updated.events)
+                      ? sanitizePersistedEvents(updated.events, false)
+                      : updated.events;
+                    const eventsHadBlockedCardOrSub =
+                      Array.isArray(updated.events) &&
+                      Array.isArray(sanitizedExistingEvents) &&
+                      sanitizedExistingEvents.length !== updated.events.length;
                     if (
                       existing.subInMinute !== undefined ||
                       existing.subOutMinute !== undefined ||
                       (existing.yellowCards ?? 0) !== 0 ||
-                      (existing.redCards ?? 0) !== 0
+                      (existing.redCards ?? 0) !== 0 ||
+                      eventsHadBlockedCardOrSub
                     ) {
                       updated = {
                         ...updated,
@@ -1376,6 +1419,9 @@ export const useTradeStore = create<TradeStoreState>()(
                         subOutMinute: undefined,
                         yellowCards: 0,
                         redCards: 0,
+                        ...(eventsHadBlockedCardOrSub
+                          ? { events: sanitizedExistingEvents }
+                          : {}),
                         stats: {
                           ...updated.stats,
                           yellowCards: 0,
@@ -1459,7 +1505,7 @@ export const useTradeStore = create<TradeStoreState>()(
                 savedPrice?.events && savedPrice.events.length > 0
                   ? sanitizePersistedEvents(
                       normalizeMatchEvents(savedPrice.events, newId, position),
-                      allowLineupEvents
+                      allowLineupEvents && !Array.isArray(match.events)
                     )
                   : [];
 
@@ -1624,10 +1670,37 @@ export const useTradeStore = create<TradeStoreState>()(
               }
 
               const evIdStr = ev.playerId ? String(ev.playerId).trim() : "";
+              const evTeamKey = ev.teamName
+                ? canonicalizeTeamKey({ id: "", name: ev.teamName, shortName: "" })
+                : "";
+              const homeTeamKey = canonicalizeTeamKey(match.homeTeam);
+              const awayTeamKey = canonicalizeTeamKey(match.awayTeam);
+              const evTeamSide: "HOME" | "AWAY" | undefined =
+                evTeamKey &&
+                evTeamKey !== "UNKNOWN" &&
+                homeTeamKey !== awayTeamKey
+                  ? evTeamKey === homeTeamKey
+                    ? "HOME"
+                    : evTeamKey === awayTeamKey
+                    ? "AWAY"
+                    : undefined
+                  : undefined;
 
               const targetIdx = nextPlayers.findIndex((p) => {
                 if (p.id.startsWith("pitch-")) return false;
                 if (p.matchId !== match.id) return false;
+                if (evTeamSide) {
+                  const ownTeam =
+                    evTeamSide === "HOME" ? match.homeTeam : match.awayTeam;
+                  const oppTeam =
+                    evTeamSide === "HOME" ? match.awayTeam : match.homeTeam;
+                  if (
+                    doesPlayerBelongToTeam(p, oppTeam, isAMatch) &&
+                    !doesPlayerBelongToTeam(p, ownTeam, isAMatch)
+                  ) {
+                    return false;
+                  }
+                }
                 return doesIdentityMatchPlayer(
                   p,
                   evIdStr || undefined,
