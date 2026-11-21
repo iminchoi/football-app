@@ -608,7 +608,7 @@ export const useTradeStore = create<TradeStoreState>()(
       watchlist: [],
       selectedDate: "TODAY",
       activeTab: "MATCHES",
-      expandedMatchIds: ["m-tot-ars", "m-mci-liv", "m-kor-jpn"],
+      expandedMatchIds: ["m-new-ars", "m-tot-ars", "m-mci-liv", "m-kor-jpn"],
       activeMatchContext: null,
 
       login: (id, password) => {
@@ -871,8 +871,15 @@ export const useTradeStore = create<TradeStoreState>()(
         );
 
         if (existingIdx !== -1) {
-          // Existing player: preserve currentPrice, priceHistory, marketSupply; only update team/nationalTeam metadata if changed
+          // Existing player: never fabricate events or overwrite another match's state on click
           const existing = players[existingIdx];
+          if (
+            existing.matchId &&
+            newPlayer.matchId &&
+            existing.matchId !== newPlayer.matchId
+          ) {
+            return;
+          }
           const incomingNat = resolveNationalTeamName(newPlayer.nationalTeam) || newPlayer.nationalTeam || existing.nationalTeam;
           const isIncomingNatTeam = isNationalTeamInfo({
             id: newPlayer.teamId,
@@ -898,48 +905,19 @@ export const useTradeStore = create<TradeStoreState>()(
               ? newPlayer.teamColor
               : existing.teamColor;
 
-          const isMatchChanged =
-            Boolean(newPlayer.matchId) && newPlayer.matchId !== existing.matchId;
-          const targetMatch = get().matches.find(
-            (m) => m.id === newPlayer.matchId
-          );
-          const isIncomingUpcoming =
-            targetMatch?.status === "UPCOMING" ||
-            targetMatch?.rawStatus === "TIMED" ||
-            targetMatch?.rawStatus === "SCHEDULED" ||
-            (isMatchChanged &&
-              Array.isArray(newPlayer.events) &&
-              newPlayer.events.length === 0 &&
-              newPlayer.currentPrice === newPlayer.previousPrice);
-
           if (
             existing.teamName !== nextTeamName ||
             existing.teamId !== nextTeamId ||
-            existing.nationalTeam !== incomingNat ||
-            isMatchChanged
+            existing.nationalTeam !== incomingNat
           ) {
             const nextPlayers = [...players];
             nextPlayers[existingIdx] = {
               ...existing,
-              ...(newPlayer.matchId ? { matchId: newPlayer.matchId } : {}),
               teamName: nextTeamName,
               teamId: nextTeamId,
               teamShort: nextTeamShort,
               teamColor: nextTeamColor,
               nationalTeam: incomingNat,
-              ...(isIncomingUpcoming
-                ? {
-                    openPrice: newPlayer.openPrice ?? existing.basePrice ?? existing.initialPrice,
-                    previousPrice: newPlayer.previousPrice ?? newPlayer.openPrice ?? existing.basePrice ?? existing.initialPrice,
-                    currentPrice: newPlayer.currentPrice,
-                    highPrice: newPlayer.highPrice ?? newPlayer.currentPrice,
-                    lowPrice: newPlayer.lowPrice ?? newPlayer.currentPrice,
-                    events: [],
-                    priceHistory: newPlayer.priceHistory,
-                    stats: newPlayer.stats,
-                    lastEvent: newPlayer.lastEvent,
-                  }
-                : {}),
             };
             set({ players: nextPlayers });
           }
@@ -959,6 +937,10 @@ export const useTradeStore = create<TradeStoreState>()(
         const initialEvents =
           savedPrice?.events && savedPrice.events.length > 0
             ? normalizeMatchEvents(savedPrice.events, newPlayer.id)
+            : Array.isArray(newPlayer.events)
+            ? normalizeMatchEvents(newPlayer.events, newPlayer.id)
+            : newPlayer.id.startsWith("pitch-")
+            ? []
             : extractInitialMatchEvents({
                 ...newPlayer,
                 openPrice,
@@ -1815,20 +1797,26 @@ export const useTradeStore = create<TradeStoreState>()(
             Math.min(95, match?.minute ?? player.lastEvent.minute ?? 46)
           );
 
+          const allowRandomEvents =
+            !player.id.startsWith("pitch-") &&
+            match?.providerMode !== "SCORE_ONLY" &&
+            !Array.isArray(match?.events);
+
           const isMilestoneChartEvent =
-            isSpecialGoalOrAssist ||
-            (Boolean(chosen.chartEventType) &&
-              chosen.chartEventType !== "GOAL" &&
-              chosen.chartEventType !== "ASSIST" &&
-              Math.random() < 0.14 &&
-              (((chosen.chartEventType === "YELLOW_CARD" ||
-                chosen.chartEventType === "CONCEDED" ||
-                chosen.chartEventType === "BIG_CHANCE_MISS") &&
-                tickImpactPct < 0) ||
-                ((chosen.chartEventType === "SAVE" ||
-                  chosen.chartEventType === "DEFENSIVE_ACTION" ||
-                  chosen.chartEventType === "KEY_PLAY") &&
-                  tickImpactPct > 0)));
+            allowRandomEvents &&
+            (isSpecialGoalOrAssist ||
+              (Boolean(chosen.chartEventType) &&
+                chosen.chartEventType !== "GOAL" &&
+                chosen.chartEventType !== "ASSIST" &&
+                Math.random() < 0.14 &&
+                (((chosen.chartEventType === "YELLOW_CARD" ||
+                  chosen.chartEventType === "CONCEDED" ||
+                  chosen.chartEventType === "BIG_CHANCE_MISS") &&
+                  tickImpactPct < 0) ||
+                  ((chosen.chartEventType === "SAVE" ||
+                    chosen.chartEventType === "DEFENSIVE_ACTION" ||
+                    chosen.chartEventType === "KEY_PLAY") &&
+                    tickImpactPct > 0))));
 
           let nextEvents = player.events ?? [];
           if (isMilestoneChartEvent && chosen.chartEventType && tickImpactPct !== 0) {
@@ -1869,9 +1857,10 @@ export const useTradeStore = create<TradeStoreState>()(
 
           const nextPrice = derived.currentPrice;
           const nextStats = { ...player.stats };
-          if (isSpecialGoalOrAssist && chosen.statEffect === "goal") {
+          if (allowRandomEvents && isSpecialGoalOrAssist && chosen.statEffect === "goal") {
             nextStats.goals += 1;
           } else if (
+            allowRandomEvents &&
             isSpecialGoalOrAssist &&
             chosen.statEffect === "assist"
           ) {
@@ -2583,7 +2572,7 @@ export const useTradeStore = create<TradeStoreState>()(
           transactions: [],
           watchlist: [],
           selectedDate: "TODAY",
-          expandedMatchIds: ["m-tot-ars", "m-mci-liv", "m-kor-jpn"],
+          expandedMatchIds: ["m-new-ars", "m-tot-ars", "m-mci-liv", "m-kor-jpn"],
       activeMatchContext: null,
         });
       },

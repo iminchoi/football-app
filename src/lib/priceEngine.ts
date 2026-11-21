@@ -1050,8 +1050,10 @@ export function extractInitialMatchEvents(
   if (matchStatus === "UPCOMING") {
     return [];
   }
-  if (Array.isArray(player.events) && player.events.length > 0) {
-    return normalizeMatchEvents(player.events, player.id, player.position);
+  if (Array.isArray(player.events)) {
+    return player.events.length > 0
+      ? normalizeMatchEvents(player.events, player.id, player.position)
+      : [];
   }
 
   const extracted: MatchEvent[] = [];
@@ -1080,6 +1082,7 @@ export function extractInitialMatchEvents(
 
   if (
     extracted.length === 0 &&
+    !player.id.startsWith("pitch-") &&
     player.lastEvent &&
     player.lastEvent.minute > 0 &&
     player.currentPrice !== openPrice

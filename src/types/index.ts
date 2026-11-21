@@ -318,6 +318,7 @@ export interface TeamInfo {
   crest?: string;
   score?: number;
   formation?: string;
+  manager?: string;
   lineup?: ApiLineupPlayer[];
   bench?: ApiLineupPlayer[];
 }
@@ -337,6 +338,8 @@ export interface Match {
   kickoffTime: string;
   homeTeam: TeamInfo;
   awayTeam: TeamInfo;
+  homeManager?: string;
+  awayManager?: string;
   highlightText?: string;
   events?: ApiMatchEvent[];
   providerMode?: ProviderMode;

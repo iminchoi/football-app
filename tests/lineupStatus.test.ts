@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyLineupEntryMeta,
+  reconcileTeamGoalMarkers,
+  resolveMatchManagers,
   resolvePlayerMatchStatus,
 } from "../src/lib/lineupStatus.ts";
+import { extractInitialMatchEvents } from "../src/lib/priceEngine.ts";
 import { FixtureReplayProvider } from "../src/lib/providers/index.ts";
 import type { Match, Player } from "../src/types/index.ts";
 
@@ -273,4 +276,135 @@ test("clears cards and substitutions for UPCOMING matches while preserving capta
   assert.equal(applied.isCaptain, true);
   assert.equal(applied.subOutMinute, undefined);
   assert.equal(applied.yellowCards, 0);
+});
+
+test("ScoreOnly mode and 0-score teams suppress spurious individual goal/assist markers and reconcileTeamGoalMarkers caps to teamScore", () => {
+  const staleScorer = makeBasePlayer({
+    id: "p-stale-fw",
+    matchId: "m-score-only",
+    teamId: "eng",
+    teamShort: "ENG",
+    teamName: "잉글랜드",
+    stats: { rating: 8.2, goals: 2, assists: 1, shotsOnTarget: 3, keyPasses: 2 },
+    events: [
+      { id: "stale-g", playerId: "p-stale-fw", minute: 20, type: "GOAL", description: "득점", priceImpactPercent: 8.5, source: "REAL" },
+    ],
+  });
+
+  const scoreOnlyMatch = makeBaseMatch({
+    id: "m-score-only",
+    providerMode: "SCORE_ONLY",
+    homeTeam: {
+      id: "eng",
+      name: "잉글랜드",
+      shortName: "ENG",
+      color: "#1E3A8A",
+      score: 1,
+      formation: "4-2-3-1",
+    },
+    events: [],
+  });
+
+  const scoreOnlyStatus = resolvePlayerMatchStatus({
+    player: staleScorer,
+    match: scoreOnlyMatch,
+    teamSide: "HOME",
+  });
+  assert.equal(scoreOnlyStatus.goals, 0);
+  assert.equal(scoreOnlyStatus.assists, 0);
+
+  const zeroScoreMatch = makeBaseMatch({
+    id: "m-score-only",
+    homeTeam: {
+      id: "eng",
+      name: "잉글랜드",
+      shortName: "ENG",
+      color: "#1E3A8A",
+      score: 0,
+      formation: "4-2-3-1",
+    },
+  });
+  const zeroScoreStatus = resolvePlayerMatchStatus({
+    player: staleScorer,
+    match: zeroScoreMatch,
+    teamSide: "HOME",
+  });
+  assert.equal(zeroScoreStatus.goals, 0);
+  assert.equal(zeroScoreStatus.assists, 0);
+
+  // Reconcile caps total goal/assist badges across team players to match teamScore
+  const reconciled = reconcileTeamGoalMarkers(
+    ["p1", "p2"],
+    {
+      p1: { yellowCards: 0, redCards: 0, goals: 1, assists: 1, isCaptain: false },
+      p2: { yellowCards: 0, redCards: 0, goals: 1, assists: 1, isCaptain: false },
+    },
+    1
+  );
+  assert.equal(reconciled.p1.goals + reconciled.p2.goals, 1);
+  assert.equal(reconciled.p1.assists + reconciled.p2.assists, 1);
+});
+
+test("clicking a pitch or cross-match player never fabricates yellow cards or assists", () => {
+  // 1) Synthetic/API pitch player with price variation and empty events array
+  const clickedPitchPlayer = makeBasePlayer({
+    id: "pitch-api-m-new-ars-new-2",
+    matchId: "m-new-ars",
+    position: "CAM",
+    openPrice: 10000,
+    basePrice: 10000,
+    currentPrice: 9850, // negative diff must NOT synthesize YELLOW_CARD when events is []
+    events: [],
+    lastEvent: { text: "⚡ 포지션 정상 소화", sentiment: "neutral", minute: 45 },
+  });
+  assert.deepEqual(extractInitialMatchEvents(clickedPitchPlayer, "LIVE"), []);
+
+  const positivePitchPlayer = makeBasePlayer({
+    id: "pitch-api-m-new-ars-ars-4",
+    matchId: "m-new-ars",
+    position: "CM",
+    openPrice: 10000,
+    basePrice: 10000,
+    currentPrice: 10200, // positive diff must NOT synthesize ASSIST when pitch-
+    events: undefined,
+    lastEvent: { text: "⚡ 포지션 정상 소화", sentiment: "positive", minute: 45 },
+  });
+  assert.deepEqual(extractInitialMatchEvents(positivePitchPlayer, "LIVE"), []);
+
+  // 2) Cross-match player (from m-tot-ars) evaluated inside m-new-ars does not leak m-tot-ars yellow card/assist
+  const crossMatchOdegaard = makeBasePlayer({
+    id: "p-odegaard",
+    name: "마르틴 외데고르",
+    englishName: "Martin Odegaard",
+    matchId: "m-tot-ars",
+    teamId: "ars",
+    stats: { rating: 7.1, goals: 0, assists: 1, shotsOnTarget: 1, keyPasses: 3 },
+    events: [
+      { id: "tot-ars-a", playerId: "p-odegaard", minute: 32, type: "ASSIST", description: "도움", priceImpactPercent: 3.2, source: "REAL" },
+      { id: "tot-ars-yc", playerId: "p-odegaard", minute: 58, type: "YELLOW_CARD", description: "경고", priceImpactPercent: -1.9, source: "REAL" },
+    ],
+  });
+
+  const newArsMatch = makeBaseMatch({
+    id: "m-new-ars",
+    homeManager: "Matthias Jaissle",
+    awayManager: "Mikel Arteta",
+    homeTeam: { id: "new", name: "Newcastle", shortName: "NEW", color: "#241F20", score: 1, formation: "4-2-3-1", manager: "Matthias Jaissle" },
+    awayTeam: { id: "ars", name: "Arsenal", shortName: "ARS", color: "#EF0107", score: 2, formation: "4-2-3-1", manager: "Mikel Arteta" },
+    events: [],
+  });
+
+  const statusInNewMatch = resolvePlayerMatchStatus({
+    player: crossMatchOdegaard,
+    match: newArsMatch,
+    teamSide: "AWAY",
+  });
+  assert.equal(statusInNewMatch.yellowCards, 0);
+  assert.equal(statusInNewMatch.assists, 0);
+  assert.equal(statusInNewMatch.goals, 0);
+
+  // Manager metadata resolves cleanly for non-tradable manager display
+  const managers = resolveMatchManagers(newArsMatch);
+  assert.equal(managers.homeManager, "Matthias Jaissle");
+  assert.equal(managers.awayManager, "Mikel Arteta");
 });

@@ -16,12 +16,25 @@ export interface PlayerMatchLineupStatus {
   isCaptain: boolean;
 }
 
+export interface MatchManagers {
+  homeManager?: string;
+  awayManager?: string;
+}
+
 function normalizeId(raw?: string | number): string {
   return raw !== undefined ? String(raw).trim() : "";
 }
 
 function normalizeName(raw?: string): string {
   return (raw || "").trim().toLowerCase();
+}
+
+export function resolveMatchManagers(match?: Match | null): MatchManagers {
+  const homeManager =
+    match?.homeTeam?.manager?.trim() || match?.homeManager?.trim() || undefined;
+  const awayManager =
+    match?.awayTeam?.manager?.trim() || match?.awayManager?.trim() || undefined;
+  return { homeManager, awayManager };
 }
 
 export function doesIdentityMatchPlayer(
@@ -86,10 +99,60 @@ function isMatchUpcoming(match?: Match | null): boolean {
   );
 }
 
+function resolveTeamScoreForPlayer(
+  player: Pick<Player, "id" | "name" | "englishName" | "teamId" | "teamShort" | "teamName">,
+  match?: Match | null,
+  explicitSide?: "HOME" | "AWAY"
+): number | undefined {
+  if (!match) return undefined;
+  if (explicitSide === "HOME") return match.homeTeam?.score;
+  if (explicitSide === "AWAY") return match.awayTeam?.score;
+
+  const inHomeRoster =
+    (match.homeTeam?.lineup ?? []).some((e) =>
+      doesIdentityMatchPlayer(player, e.id ?? e.externalId, e.name)
+    ) ||
+    (match.homeTeam?.bench ?? []).some((e) =>
+      doesIdentityMatchPlayer(player, e.id ?? e.externalId, e.name)
+    );
+  if (inHomeRoster) return match.homeTeam?.score;
+
+  const inAwayRoster =
+    (match.awayTeam?.lineup ?? []).some((e) =>
+      doesIdentityMatchPlayer(player, e.id ?? e.externalId, e.name)
+    ) ||
+    (match.awayTeam?.bench ?? []).some((e) =>
+      doesIdentityMatchPlayer(player, e.id ?? e.externalId, e.name)
+    );
+  if (inAwayRoster) return match.awayTeam?.score;
+
+  const pTeamId = normalizeName(player.teamId);
+  const pTeamShort = normalizeName(player.teamShort);
+  const pTeamName = normalizeName(player.teamName);
+
+  if (
+    (pTeamId && pTeamId === normalizeName(match.homeTeam?.id)) ||
+    (pTeamShort && pTeamShort === normalizeName(match.homeTeam?.shortName)) ||
+    (pTeamName && pTeamName === normalizeName(match.homeTeam?.name))
+  ) {
+    return match.homeTeam?.score;
+  }
+
+  if (
+    (pTeamId && pTeamId === normalizeName(match.awayTeam?.id)) ||
+    (pTeamShort && pTeamShort === normalizeName(match.awayTeam?.shortName)) ||
+    (pTeamName && pTeamName === normalizeName(match.awayTeam?.name))
+  ) {
+    return match.awayTeam?.score;
+  }
+
+  return undefined;
+}
+
 /**
- * Resolve substitution minutes and card counts for a player node or bench row
- * from lineup metadata, match events, player SSOT events, price history, and
- * optional provider/replay/test PlayerEvent arrays without double-counting.
+ * Resolve substitution minutes, card counts, and score-aligned goal/assist counts
+ * for a player node or bench row from lineup metadata, match events, provider/replay/test
+ * PlayerEvent arrays, and same-match player SSOT events without double-counting.
  */
 export function resolvePlayerMatchStatus(params: {
   player: Pick<
@@ -98,6 +161,9 @@ export function resolvePlayerMatchStatus(params: {
     | "name"
     | "englishName"
     | "matchId"
+    | "teamId"
+    | "teamShort"
+    | "teamName"
     | "events"
     | "priceHistory"
     | "stats"
@@ -110,8 +176,9 @@ export function resolvePlayerMatchStatus(params: {
   match?: Match | null;
   lineupEntry?: ApiLineupPlayer;
   providerPlayerEvents?: PlayerEvent[];
+  teamSide?: "HOME" | "AWAY";
 }): PlayerMatchLineupStatus {
-  const { player, match, providerPlayerEvents } = params;
+  const { player, match, providerPlayerEvents, teamSide } = params;
   const entry = params.lineupEntry ?? findLineupEntryForPlayer(player, match);
   const isCaptain = Boolean(entry?.isCaptain ?? player.isCaptain);
 
@@ -143,8 +210,10 @@ export function resolvePlayerMatchStatus(params: {
 
   const yellowMinutes = new Set<number>();
   const redMinutes = new Set<number>();
-  const goalMinutes = new Set<number>();
-  const assistMinutes = new Set<number>();
+  const explicitGoalMinutes = new Set<number>();
+  const explicitAssistMinutes = new Set<number>();
+  const fallbackGoalMinutes = new Set<number>();
+  const fallbackAssistMinutes = new Set<number>();
 
   const recordSubIn = (minute: number) => {
     const safeMin = Math.max(1, Math.min(95, Math.round(minute)));
@@ -159,9 +228,12 @@ export function resolvePlayerMatchStatus(params: {
   };
 
   // 1) Match-level events (live API, fixture replay, dummy match events)
-  const matchEvents: ApiMatchEvent[] = Array.isArray(match?.events)
-    ? match.events
+  const hasMatchEventsProp = Array.isArray(match?.events);
+  const matchEvents: ApiMatchEvent[] = hasMatchEventsProp
+    ? (match?.events as ApiMatchEvent[])
     : [];
+  const isScoreOnlyMode = match?.providerMode === "SCORE_ONLY";
+
   for (const ev of matchEvents) {
     const minute = Math.max(1, Math.min(95, Math.round(ev.minute)));
     if (ev.type === "SUB") {
@@ -187,9 +259,9 @@ export function resolvePlayerMatchStatus(params: {
     } else if (ev.type === "RED_CARD") {
       redMinutes.add(minute);
     } else if (ev.type === "GOAL") {
-      goalMinutes.add(minute);
+      explicitGoalMinutes.add(minute);
     } else if (ev.type === "ASSIST") {
-      assistMinutes.add(minute);
+      explicitAssistMinutes.add(minute);
     }
   }
 
@@ -207,23 +279,30 @@ export function resolvePlayerMatchStatus(params: {
       } else if (pev.type === "RED_CARD") {
         redMinutes.add(minute);
       } else if (pev.type === "GOAL") {
-        goalMinutes.add(minute);
+        explicitGoalMinutes.add(minute);
       } else if (pev.type === "ASSIST") {
-        assistMinutes.add(minute);
+        explicitAssistMinutes.add(minute);
       }
     }
   }
 
-  // 3) Player SSOT events & priceHistory markers (only when player belongs to this match or no match filter applies)
-  const sameMatchAsPlayer = !match || player.matchId === match.id;
+  // 3) Player SSOT events & priceHistory markers
+  // Only read player-level fallback when:
+  // - player belongs to this exact match (never cross-match)
+  // - not a ScoreOnly match (ScoreOnly has no individual scorer/assister data)
+  const sameMatchAsPlayer =
+    !match || (!player.id.startsWith("pitch-") && player.matchId === match.id);
+
   if (sameMatchAsPlayer) {
     if (Array.isArray(player.events)) {
       for (const ev of player.events) {
         const minute = Math.max(1, Math.min(95, Math.round(ev.minute)));
         if (ev.type === "YELLOW_CARD") yellowMinutes.add(minute);
         else if (ev.type === "RED_CARD") redMinutes.add(minute);
-        else if (ev.type === "GOAL") goalMinutes.add(minute);
-        else if (ev.type === "ASSIST") assistMinutes.add(minute);
+        else if (!isScoreOnlyMode && !hasMatchEventsProp) {
+          if (ev.type === "GOAL") fallbackGoalMinutes.add(minute);
+          else if (ev.type === "ASSIST") fallbackAssistMinutes.add(minute);
+        }
       }
     }
 
@@ -236,8 +315,10 @@ export function resolvePlayerMatchStatus(params: {
         else if (ev.type === "SUB_OUT") recordSubOut(minute);
         else if (ev.type === "YELLOW_CARD") yellowMinutes.add(minute);
         else if (ev.type === "RED_CARD") redMinutes.add(minute);
-        else if (ev.type === "GOAL") goalMinutes.add(minute);
-        else if (ev.type === "ASSIST") assistMinutes.add(minute);
+        else if (!isScoreOnlyMode && !hasMatchEventsProp) {
+          if (ev.type === "GOAL") fallbackGoalMinutes.add(minute);
+          else if (ev.type === "ASSIST") fallbackAssistMinutes.add(minute);
+        }
       }
     }
   }
@@ -251,19 +332,73 @@ export function resolvePlayerMatchStatus(params: {
     entry?.redCards ?? player.redCards ?? player.stats?.redCards ?? 0
   );
 
+  let goals = 0;
+  let assists = 0;
+
+  if (isScoreOnlyMode) {
+    // In ScoreOnly mode, individual GOAL/ASSIST markers only appear if explicitly present
+    goals = explicitGoalMinutes.size;
+    assists = explicitAssistMinutes.size;
+  } else if (hasMatchEventsProp) {
+    // When match.events is explicitly provided, it is the single source of truth for goals/assists
+    goals = explicitGoalMinutes.size;
+    assists = explicitAssistMinutes.size;
+  } else if (sameMatchAsPlayer) {
+    goals = Math.max(player.stats?.goals ?? 0, fallbackGoalMinutes.size);
+    assists = Math.max(player.stats?.assists ?? 0, fallbackAssistMinutes.size);
+  }
+
+  const teamScore = resolveTeamScoreForPlayer(player, match, teamSide);
+  if (typeof teamScore === "number") {
+    if (teamScore <= 0) {
+      goals = 0;
+      assists = 0;
+    } else {
+      goals = Math.min(goals, teamScore);
+      assists = Math.min(assists, teamScore);
+    }
+  }
+
   return {
     subInMinute,
     subOutMinute,
     yellowCards: Math.max(explicitYellows, yellowMinutes.size),
     redCards: Math.max(explicitReds, redMinutes.size),
-    goals: sameMatchAsPlayer
-      ? Math.max(player.stats?.goals ?? 0, goalMinutes.size)
-      : goalMinutes.size,
-    assists: sameMatchAsPlayer
-      ? Math.max(player.stats?.assists ?? 0, assistMinutes.size)
-      : assistMinutes.size,
+    goals,
+    assists,
     isCaptain,
   };
+}
+
+/**
+ * Reconcile a team's player status map against the team's scoreboard total so that
+ * total displayed goal (⚽) and assist (🅰️) markers never exceed `teamScore`.
+ */
+export function reconcileTeamGoalMarkers(
+  orderedPlayerIds: string[],
+  statusById: Record<string, PlayerMatchLineupStatus>,
+  teamScore?: number
+): Record<string, PlayerMatchLineupStatus> {
+  if (typeof teamScore !== "number") return statusById;
+  const safeScore = Math.max(0, Math.floor(teamScore));
+  let remainingGoals = safeScore;
+  let remainingAssists = safeScore;
+
+  const reconciled: Record<string, PlayerMatchLineupStatus> = {};
+  for (const id of orderedPlayerIds) {
+    const st = statusById[id];
+    if (!st) continue;
+    const allowedGoals = Math.min(st.goals, remainingGoals);
+    remainingGoals -= allowedGoals;
+    const allowedAssists = Math.min(st.assists, remainingAssists);
+    remainingAssists -= allowedAssists;
+
+    reconciled[id] =
+      allowedGoals === st.goals && allowedAssists === st.assists
+        ? st
+        : { ...st, goals: allowedGoals, assists: allowedAssists };
+  }
+  return reconciled;
 }
 
 export function applyLineupEntryMeta(

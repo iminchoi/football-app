@@ -217,6 +217,8 @@ interface FootballDataTeamRaw {
   tla?: string;
   crest?: string;
   formation?: string;
+  manager?: string;
+  coach?: { id?: number | string; name?: string; nationality?: string };
   lineup?: FootballDataLineupPlayerRaw[];
   bench?: FootballDataLineupPlayerRaw[];
 }
@@ -752,6 +754,15 @@ export async function GET(request: NextRequest) {
           }
         }
 
+        const homeManager =
+          m.homeTeam?.coach?.name?.trim() ||
+          m.homeTeam?.manager?.trim() ||
+          undefined;
+        const awayManager =
+          m.awayTeam?.coach?.name?.trim() ||
+          m.awayTeam?.manager?.trim() ||
+          undefined;
+
         return {
           id: matchId,
           utcDate: m.utcDate,
@@ -767,6 +778,8 @@ export async function GET(request: NextRequest) {
             status === "FT" ? "종료" : formatKstTime(m.utcDate || ""),
           providerMode: activeProvider.mode,
           usesDummyLineup,
+          ...(homeManager ? { homeManager } : {}),
+          ...(awayManager ? { awayManager } : {}),
           homeTeam: {
             id: homeTla.toLowerCase(),
             name: homeTeamName,
@@ -775,6 +788,7 @@ export async function GET(request: NextRequest) {
             crest: m.homeTeam?.crest || undefined,
             score: homeScore ?? undefined,
             formation: normalizeFormationCode(m.homeTeam?.formation, "4-3-3"),
+            ...(homeManager ? { manager: homeManager } : {}),
             lineup: homeLineup,
             bench: normalizeLineupPlayers(
               m.homeTeam?.bench,
@@ -790,6 +804,7 @@ export async function GET(request: NextRequest) {
             crest: m.awayTeam?.crest || undefined,
             score: awayScore ?? undefined,
             formation: normalizeFormationCode(m.awayTeam?.formation, "4-2-3-1"),
+            ...(awayManager ? { manager: awayManager } : {}),
             lineup: awayLineup,
             bench: normalizeLineupPlayers(
               m.awayTeam?.bench,
