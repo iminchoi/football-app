@@ -19,6 +19,7 @@ import { useTradeStore, roundToTen } from "@/store/useTradeStore";
 import { INITIAL_CASH } from "@/data/dummyData";
 import { Player, TradeType } from "@/types";
 import { getTierConfig } from "@/utils/tier";
+import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface PortfolioTabViewProps {
@@ -418,7 +419,7 @@ export default function PortfolioTabView({
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <h3 className="text-sm font-extrabold text-gray-900 truncate">
-                              {player.name}
+                              {formatPlayerDisplayName(player, "full")}
                             </h3>
                             <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">
                               {player.position}
@@ -564,7 +565,10 @@ export default function PortfolioTabView({
                       <div>
                         <div className="flex items-center gap-1.5">
                           <p className="font-bold text-gray-900">
-                            {tx.playerName}{" "}
+                            {formatPlayerDisplayName(
+                              { id: tx.playerId, name: tx.playerName },
+                              "full"
+                            )}{" "}
                             <span className="font-mono font-semibold text-gray-500">
                               {tx.quantity}주
                             </span>

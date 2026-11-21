@@ -8,6 +8,7 @@ import {
   calculateChangePercentFromOpen,
 } from "@/store/useTradeStore";
 import { Player } from "@/types";
+import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 type QuickRailTab = "INVEST" | "WATCHLIST" | "RECENT" | null;
@@ -99,7 +100,7 @@ export default function RightQuickRail({
           <PlayerAvatar player={player} size={30} />
           <div className="min-w-0">
             <p className="truncate text-xs font-extrabold text-gray-900">
-              {player.name}
+              {formatPlayerDisplayName(player, "full")}
             </p>
             <p className="truncate text-[10px] text-gray-400">
               {subtitle ?? `${player.teamShort} · ${player.position}`}

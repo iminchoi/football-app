@@ -38,11 +38,17 @@ import { WEIGHTS } from "@/lib/weights";
 import { formatMinuteLabel, type PlayerEvent } from "@/lib/priceEngine";
 import {
   applyLineupEntryMeta,
+  doesIdentityMatchPlayer,
   reconcileTeamGoalMarkers,
   resolveMatchManagers,
   resolvePlayerMatchStatus,
   type PlayerMatchLineupStatus,
 } from "@/lib/lineupStatus";
+import {
+  canonicalizeIncomingPlayerNames,
+  formatPlayerDisplayName,
+  resolvePlayerDisplayName,
+} from "@/lib/playerDisplayName";
 import {
   resolveMatchClock,
   resolveMatchScore,
@@ -731,13 +737,6 @@ export function normalizeSupportedFormation(
   return side === "HOME" ? "4-3-3" : "4-2-3-1";
 }
 
-function extractLastName(player: Player): string {
-  const koTrimmed = player.name.trim();
-  if (koTrimmed.length <= 4) return koTrimmed;
-  const parts = koTrimmed.split(" ");
-  return parts[parts.length - 1];
-}
-
 function hashSeed(str: string): number {
   let h = 0;
   for (let i = 0; i < str.length; i++) {
@@ -830,11 +829,18 @@ export function buildTeamLineupForMatch(
     ? activeTeam.bench
     : [];
 
+  const isMatchUpcoming = resolveMatchClock(match).isUpcoming;
+  const isScoreOnlyMatch = match.providerMode === "SCORE_ONLY";
+  const stripMatchEvents =
+    isMatchUpcoming || isScoreOnlyMatch || Boolean(match.usesDummyLineup);
+
   const usedIds = new Set<string>();
   const usedNames = new Set<string>();
+  const entryByPlayerId = new Map<string, ApiLineupPlayer>();
 
   const markUsed = (p: Player) => {
     usedIds.add(p.id);
+    usedNames.add(formatPlayerDisplayName(p, "full"));
     usedNames.add(p.name.trim());
   };
 
@@ -856,14 +862,12 @@ export function buildTeamLineupForMatch(
     const entryNameTrimmed = (entry.name || "").trim();
 
     return (
-      baseTeamPlayersFromStore.find(
-        (p) =>
-          (entryId && p.id === entryId) ||
-          (extId && (p.id === extId || p.id === `api-p-${extId}`)) ||
-          (entryNameTrimmed && p.name.trim() === entryNameTrimmed) ||
-          (entryNameTrimmed &&
-            p.englishName.trim().toLowerCase() ===
-              entryNameTrimmed.toLowerCase())
+      baseTeamPlayersFromStore.find((p) =>
+        doesIdentityMatchPlayer(
+          p,
+          entryId || extId || undefined,
+          entryNameTrimmed
+        )
       ) ??
       (!isAMatch
         ? storePlayers.find(
@@ -893,7 +897,12 @@ export function buildTeamLineupForMatch(
         effectivePosition !== matched.position
           ? { ...matched, position: effectivePosition }
           : matched;
-      const candidate = applyLineupEntryMeta(baseCandidate, entry);
+      const candidate = applyLineupEntryMeta(
+        baseCandidate,
+        entry,
+        stripMatchEvents
+      );
+      entryByPlayerId.set(candidate.id, entry);
 
       if (!seenCandidateIds.has(candidate.id)) {
         seenCandidateIds.add(candidate.id);
@@ -913,15 +922,21 @@ export function buildTeamLineupForMatch(
         entry.id !== undefined
           ? String(entry.id)
           : `pitch-api-${match.id}-${activeTeam.id}-${idx}`;
+      const canonicalNames = canonicalizeIncomingPlayerNames({
+        id: tempId,
+        name: entry.name.trim(),
+        englishName: entry.name.trim(),
+      });
 
       if (!seenCandidateIds.has(tempId)) {
         seenCandidateIds.add(tempId);
+        entryByPlayerId.set(tempId, entry);
         starterCandidates.push(
           applyLineupEntryMeta(
             {
               id: tempId,
-              name: entry.name.trim(),
-              englishName: entry.name.trim(),
+              name: canonicalNames.name,
+              englishName: canonicalNames.englishName,
               nationalTeam: entry.nationalTeam || activeTeam.name,
               matchId: match.id,
               teamId: activeTeam.id,
@@ -963,7 +978,8 @@ export function buildTeamLineupForMatch(
                 keyPasses: 0,
               },
             },
-            entry
+            entry,
+            stripMatchEvents
           )
         );
       }
@@ -1158,13 +1174,15 @@ export function buildTeamLineupForMatch(
     const matched = findStorePlayerForEntry(entry);
     if (matched && !usedIds.has(matched.id) && !usedNames.has(matched.name.trim())) {
       markUsed(matched);
+      entryByPlayerId.set(matched.id, entry);
       bench.push(
         applyLineupEntryMeta(
           {
             ...matched,
             position: normalizeDetailedPosition(entry.position || matched.position),
           },
-          entry
+          entry,
+          stripMatchEvents
         )
       );
       return;
@@ -1181,15 +1199,22 @@ export function buildTeamLineupForMatch(
         entry.id !== undefined
           ? String(entry.id)
           : `pitch-api-bench-${match.id}-${activeTeam.id}-${idx}`;
-      if (!usedIds.has(tempId)) {
+      const canonicalNames = canonicalizeIncomingPlayerNames({
+        id: tempId,
+        name: entry.name.trim(),
+        englishName: entry.name.trim(),
+      });
+      if (!usedIds.has(tempId) && !usedNames.has(canonicalNames.name)) {
         usedIds.add(tempId);
         usedNames.add(entry.name.trim());
+        usedNames.add(canonicalNames.name);
+        entryByPlayerId.set(tempId, entry);
         bench.push(
           applyLineupEntryMeta(
             {
               id: tempId,
-              name: entry.name.trim(),
-              englishName: entry.name.trim(),
+              name: canonicalNames.name,
+              englishName: canonicalNames.englishName,
               nationalTeam: entry.nationalTeam || activeTeam.name,
               matchId: match.id,
               teamId: activeTeam.id,
@@ -1227,7 +1252,8 @@ export function buildTeamLineupForMatch(
                 keyPasses: 0,
               },
             },
-            entry
+            entry,
+            stripMatchEvents
           )
         );
       }
@@ -1237,7 +1263,11 @@ export function buildTeamLineupForMatch(
   const maxBenchSize = Math.max(5, apiBench.length);
   for (const baseP of baseTeamPlayersFromStore) {
     if (bench.length >= maxBenchSize) break;
-    if (!usedIds.has(baseP.id) && !usedNames.has(baseP.name.trim())) {
+    if (
+      !usedIds.has(baseP.id) &&
+      !usedNames.has(baseP.name.trim()) &&
+      !usedNames.has(formatPlayerDisplayName(baseP, "full"))
+    ) {
       markUsed(baseP);
       bench.push({
         ...baseP,
@@ -1254,15 +1284,23 @@ export function buildTeamLineupForMatch(
   }
 
   const applySelectedMatchContext = (p: Player): Player => {
-    const isMatchUpcoming = resolveMatchClock(match).isUpcoming;
     const base = roundToTen(
       p.basePrice ?? p.openPrice ?? p.initialPrice ?? p.currentPrice ?? 10000
     );
     const isCrossMatchPlayer = p.matchId !== match.id;
+    const matchedEntry = entryByPlayerId.get(p.id);
+    const canonicalNames = canonicalizeIncomingPlayerNames({
+      id: p.id,
+      name: p.name,
+      englishName: p.englishName,
+    });
 
-    if (isMatchUpcoming || isCrossMatchPlayer) {
-      return {
+    if (isMatchUpcoming || isCrossMatchPlayer || isScoreOnlyMatch) {
+      // Never carry over another match's substitution/card/event fields when projecting onto this match.
+      const resetPlayer: Player = {
         ...p,
+        name: canonicalNames.name,
+        englishName: canonicalNames.englishName,
         matchId: match.id,
         teamId: activeTeam.id,
         teamName: activeTeam.name,
@@ -1275,10 +1313,11 @@ export function buildTeamLineupForMatch(
         currentPrice: base,
         highPrice: base,
         lowPrice: base,
-        subInMinute: isMatchUpcoming ? undefined : p.subInMinute,
-        subOutMinute: isMatchUpcoming ? undefined : p.subOutMinute,
-        yellowCards: isMatchUpcoming ? 0 : p.yellowCards ?? 0,
-        redCards: isMatchUpcoming ? 0 : p.redCards ?? 0,
+        isCaptain: matchedEntry?.isCaptain ?? false,
+        subInMinute: undefined,
+        subOutMinute: undefined,
+        yellowCards: 0,
+        redCards: 0,
         events: [],
         priceHistory: [
           {
@@ -1289,11 +1328,13 @@ export function buildTeamLineupForMatch(
           },
         ],
         stats: {
-          rating: p.stats?.rating ?? 7.2,
+          rating: matchedEntry?.rating ?? p.stats?.rating ?? 7.2,
           goals: 0,
           assists: 0,
           shotsOnTarget: 0,
           keyPasses: 0,
+          yellowCards: 0,
+          redCards: 0,
         },
         lastEvent: isMatchUpcoming
           ? {
@@ -1307,10 +1348,16 @@ export function buildTeamLineupForMatch(
               minute: 0,
             },
       };
+
+      return matchedEntry
+        ? applyLineupEntryMeta(resetPlayer, matchedEntry, stripMatchEvents)
+        : resetPlayer;
     }
 
     return {
       ...p,
+      name: canonicalNames.name,
+      englishName: canonicalNames.englishName,
       matchId: match.id,
       teamId: activeTeam.id,
       teamName: activeTeam.name,
@@ -1447,10 +1494,12 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
     : calculateChangePercentFromOpen(displayPrice, base).toFixed(2);
   const isUp = diff > 0;
   const isDown = diff < 0;
+  const displayName = resolvePlayerDisplayName(player);
 
   return (
     <button
       type="button"
+      title={displayName.full}
       onClick={() => onSelect(player, "BUY")}
       className="group relative flex min-w-0 flex-1 max-w-[74px] sm:max-w-[92px] flex-col items-center rounded-xl sm:rounded-2xl border border-gray-200/90 bg-[#FFFFFF] px-1 pt-1.5 pb-1.5 sm:px-2 sm:pt-2 sm:pb-2 shadow-xs transition hover:-translate-y-0.5 hover:border-[#00A878] hover:shadow-sm focus:outline-none active:scale-95"
     >
@@ -1527,7 +1576,7 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
       {/* Middle: Player Name + Subtle Position Label */}
       <div className="flex w-full items-center justify-center gap-0.5 sm:gap-1 px-0.5">
         <span className="truncate text-[10px] sm:text-[11px] font-extrabold text-gray-900 leading-tight">
-          {extractLastName(player)}
+          {displayName.pitch}
         </span>
         <span className="shrink-0 text-[8px] sm:text-[9px] font-semibold text-gray-400 leading-tight">
           {player.position}
@@ -1576,9 +1625,12 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
   const base = sub.openPrice ?? sub.basePrice ?? sub.initialPrice;
   const hasPlayed =
     status.subInMinute !== undefined ||
-    (sub.events?.length ?? 0) > 0 ||
+    status.subOutMinute !== undefined ||
+    status.goals > 0 ||
+    status.assists > 0 ||
     status.yellowCards > 0 ||
     status.redCards > 0;
+  const displayName = formatPlayerDisplayName(sub, "full");
   // Pre-match bench exclusion: -2.00%; unused bench during LIVE/FT: fixed 0.00%
   const displayPrice = isUpcoming
     ? Math.round((base * (1 + WEIGHTS.LINEUP_EXCLUDED)) / 10) * 10
@@ -1610,7 +1662,7 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-xs font-bold text-gray-900 truncate">
-              {sub.name}
+              {displayName}
             </span>
             <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600 leading-none">
               {sub.position}

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useTradeStore, roundToTen } from "@/store/useTradeStore";
 import { WEIGHTS } from "@/lib/weights";
+import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
 import { ChartEventType } from "@/types";
 
 export default function AdminPanel() {
@@ -53,12 +54,12 @@ export default function AdminPanel() {
     }
     if (res.capped) {
       showTempLog(
-        `🔥 ${res.player.name} 이미 상한가(+15% · ${res.nextPrice.toLocaleString()}P) 도달! 득점(+1골) 및 경기 스코어 반영됨`
+        `🔥 ${formatPlayerDisplayName(res.player, "full")} 이미 상한가(+15% · ${res.nextPrice.toLocaleString()}P) 도달! 득점(+1골) 및 경기 스코어 반영됨`
       );
       return;
     }
     showTempLog(
-      `⚽ ${res.player.name} 골 급등! ${res.prevPrice.toLocaleString()}P → ${res.nextPrice.toLocaleString()}P (+${res.ratePct.toFixed(
+      `⚽ ${formatPlayerDisplayName(res.player, "full")} 골 급등! ${res.prevPrice.toLocaleString()}P → ${res.nextPrice.toLocaleString()}P (+${res.ratePct.toFixed(
         1
       )}%) · 스코어 반영`
     );
@@ -73,7 +74,7 @@ export default function AdminPanel() {
     }
     const sign = res.ratePct >= 0 ? "+" : "";
     showTempLog(
-      `${label} · ${res.player.name}: ${res.prevPrice.toLocaleString()}P → ${res.nextPrice.toLocaleString()}P (${sign}${res.ratePct.toFixed(
+      `${label} · ${formatPlayerDisplayName(res.player, "full")}: ${res.prevPrice.toLocaleString()}P → ${res.nextPrice.toLocaleString()}P (${sign}${res.ratePct.toFixed(
         1
       )}%)`
     );
@@ -132,7 +133,7 @@ export default function AdminPanel() {
               p.currentPrice >= roundToTen(base * (1 + WEIGHTS.CAP_LIMIT));
                 return (
                   <option key={p.id} value={p.id}>
-                    {p.name} ({p.teamShort}) · {p.currentPrice.toLocaleString()}P
+                    {formatPlayerDisplayName(p, "full")} ({p.teamShort}) · {p.currentPrice.toLocaleString()}P
                     {owned > 0 ? ` [보유 ${owned}주]` : ""}
                     {isAtCap ? " [상한가]" : ""}
                   </option>

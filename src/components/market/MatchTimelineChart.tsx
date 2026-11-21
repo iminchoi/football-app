@@ -30,6 +30,7 @@ import {
   resolveMatchForPlayerView,
   resolveMatchScore,
 } from "@/lib/matchSync";
+import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
 import MatchEventTimeline from "@/components/MatchEventTimeline";
 import {
   ChartEventMarker,
@@ -557,6 +558,7 @@ export default function MatchTimelineChart({
   );
 
   const matchTabLabel = matchClock.chartLabel;
+  const playerDisplayName = formatPlayerDisplayName(player, "full");
 
   // Standardized PitchTrade Palette: Up = #00A878, Down = #F07868, Flat = #A8B2BC
   const strokeColor = isUpFromOpen
@@ -647,7 +649,7 @@ export default function MatchTimelineChart({
                 </span>
               </>
             ) : (
-              <span>매치 타임라인 시세</span>
+              <span>{playerDisplayName} · 매치 타임라인 시세</span>
             )}
           </p>
           {hasSimulatedEvents && (

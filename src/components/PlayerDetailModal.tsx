@@ -25,6 +25,7 @@ import {
 } from "@/types";
 import { useTradeStore, doesPlayerBelongToMatch } from "@/store/useTradeStore";
 import { resolveMatchForPlayerView } from "@/lib/matchSync";
+import { resolvePlayerDisplayName } from "@/lib/playerDisplayName";
 import {
   PLAYER_DETAILED_PROFILES,
   PlayerDetailedProfile,
@@ -198,7 +199,10 @@ function buildDetailedProfileForPlayer(player: Player): PlayerDetailedProfile {
   const footOptions = ["오른발", "오른발", "왼발", "양발"];
   const preferredFoot = footOptions[seed % footOptions.length];
 
+  const resolvedName = resolvePlayerDisplayName(player);
   const nationality =
+    NATIONALITY_BY_NAME[resolvedName.full] ||
+    NATIONALITY_BY_NAME[resolvedName.pitch] ||
     NATIONALITY_BY_NAME[player.name] ||
     (player.nationalTeam ? `🌍 ${player.nationalTeam}` : "") ||
     FALLBACK_NATIONALITIES[seed % FALLBACK_NATIONALITIES.length];
@@ -382,6 +386,8 @@ export default function PlayerDetailModal({
 
   if (!isOpen || !player || !profile) return null;
 
+  const displayName = resolvePlayerDisplayName(player);
+
   const activeMatch = resolveMatchForPlayerView({
     player,
     storeMatches: matches,
@@ -462,7 +468,7 @@ export default function PlayerDetailModal({
               FotMob 선수 리포트
             </span>
             <h2 className="text-sm font-extrabold text-gray-900">
-              {player.name} 상세 프로필 & 시즌 통계
+              {displayName.full} 상세 프로필 & 시즌 통계
             </h2>
           </div>
 
@@ -505,11 +511,13 @@ export default function PlayerDetailModal({
                     </span>
                   </div>
                   <h3 className="mt-0.5 truncate text-xl font-black tracking-tight text-gray-900">
-                    {player.name}
+                    {displayName.full}
                   </h3>
-                  <p className="truncate text-xs font-medium text-gray-400">
-                    {player.englishName}
-                  </p>
+                  {displayName.hasDistinctEnglish && (
+                    <p className="truncate text-xs font-medium text-gray-400">
+                      {displayName.english}
+                    </p>
+                  )}
                 </div>
               </div>
 

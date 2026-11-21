@@ -31,6 +31,7 @@ import {
   resolveMatchClock,
   resolveMatchForPlayerView,
 } from "@/lib/matchSync";
+import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
 import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
 import { WEIGHTS } from "@/lib/weights";
@@ -524,6 +525,8 @@ export default function TradeBottomSheet({
 
   if (!playerId || !player) return null;
 
+  const playerDisplayName = formatPlayerDisplayName(player, "full");
+
   const holding = user ? holdings[player.id] : undefined;
   const ownedQty = holding?.quantity ?? 0;
   const avgBuyPrice = holding ? roundToTen(holding.avgBuyPrice) : 0;
@@ -719,7 +722,7 @@ export default function TradeBottomSheet({
         const nextRemaining = Math.max(0, availableShares - execQty);
         setQuantity(nextRemaining > 0 ? Math.min(quantity, nextRemaining) : 1);
         triggerToast(
-          `✓ 체결 완료: ${player.name} ${execQty}주를 ${execTotal.toLocaleString()}P (단가 ${unitExec.toLocaleString()}P)에 매수했습니다.`,
+          `✓ 체결 완료: ${playerDisplayName} ${execQty}주를 ${execTotal.toLocaleString()}P (단가 ${unitExec.toLocaleString()}P)에 매수했습니다.`,
           "BUY"
         );
       }
@@ -735,7 +738,7 @@ export default function TradeBottomSheet({
         const nextOwned = Math.max(0, ownedQty - execQty);
         setQuantity(nextOwned > 0 ? Math.min(quantity, nextOwned) : 1);
         triggerToast(
-          `✓ 체결 완료: ${player.name} ${execQty}주를 ${execTotal.toLocaleString()}P (단가 ${unitExec.toLocaleString()}P)에 매도했습니다.`,
+          `✓ 체결 완료: ${playerDisplayName} ${execQty}주를 ${execTotal.toLocaleString()}P (단가 ${unitExec.toLocaleString()}P)에 매도했습니다.`,
           "SELL"
         );
       }
@@ -866,7 +869,7 @@ export default function TradeBottomSheet({
                   </span>
                 </div>
                 <h3 className="mt-0.5 truncate text-lg font-black tracking-tight text-gray-900">
-                  {player.name}
+                  {playerDisplayName}
                 </h3>
               </div>
             </div>
@@ -1325,8 +1328,8 @@ export default function TradeBottomSheet({
               : isBuySoldOut
               ? "물량 소진 (Sold Out)"
               : tradeType === "BUY"
-              ? `${player.name} ${quantity}주 매수 확정`
-              : `${player.name} ${quantity}주 매도 확정`}
+              ? `${playerDisplayName} ${quantity}주 매수 확정`
+              : `${playerDisplayName} ${quantity}주 매도 확정`}
           </button>
         </form>
       </div>

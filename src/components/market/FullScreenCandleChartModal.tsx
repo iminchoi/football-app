@@ -38,6 +38,7 @@ import {
   resolveMatchForPlayerView,
   resolveMatchScore,
 } from "@/lib/matchSync";
+import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
 import {
   CandleData,
   CandleTimeframe,
@@ -700,7 +701,7 @@ export default function FullScreenCandleChartModal({
 
             <div className="flex min-w-0 items-baseline gap-1.5">
               <h2 className="truncate text-base font-bold tracking-[-0.02em] text-[#0F172A]">
-                {player.name}
+                {formatPlayerDisplayName(player, "full")}
               </h2>
               <span className="shrink-0 text-xs font-medium text-[#64748B]">
                 · {player.position} ·

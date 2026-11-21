@@ -26,6 +26,8 @@ import {
 } from "@/store/useTradeStore";
 import { getAvailableShares } from "@/utils/tier";
 import { resolvePlayerMatchStatus } from "@/lib/lineupStatus";
+import { formatMinuteLabel } from "@/lib/priceEngine";
+import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
 import {
   resolveMatchClock,
   resolveMatchScore,
@@ -129,9 +131,12 @@ export default function MatchAccordionCard({
       const merged: Player[] = [...baseTeamPlayers];
       for (const candidate of lineup.startingLineup) {
         if (merged.length >= 3) break;
+        const candidateDisplay = formatPlayerDisplayName(candidate, "full");
         if (
           !merged.some(
-            (m) => m.id === candidate.id || m.name === candidate.name
+            (m) =>
+              m.id === candidate.id ||
+              formatPlayerDisplayName(m, "full") === candidateDisplay
           )
         ) {
           merged.push(candidate);
@@ -385,7 +390,7 @@ export default function MatchAccordionCard({
                         <PlayerAvatar player={player} size={30} />
 
                         <span className="truncate text-xs font-extrabold text-gray-900">
-                          {player.name}
+                          {formatPlayerDisplayName(player, "full")}
                         </span>
 
                         <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">
@@ -402,21 +407,36 @@ export default function MatchAccordionCard({
                             🅰️{playerStatus.assists > 1 ? playerStatus.assists : ""}
                           </span>
                         )}
-                        {playerStatus.yellowCards > 0 && (
-                          <span
-                            title="옐로카드"
-                            className="inline-block h-[10px] w-[7px] shrink-0 rounded-[1.5px] border border-amber-500/60 bg-[#FACC15]"
-                          />
-                        )}
+                        {playerStatus.yellowCards > 0 &&
+                          Array.from({
+                            length: Math.min(2, playerStatus.yellowCards),
+                          }).map((_, idx) => (
+                            <span
+                              key={`yc-${idx}`}
+                              title="옐로카드"
+                              className="inline-block h-[10px] w-[7px] shrink-0 rounded-[1.5px] border border-amber-500/60 bg-[#FACC15]"
+                            />
+                          ))}
                         {playerStatus.redCards > 0 && (
                           <span
                             title="레드카드"
                             className="inline-block h-[10px] w-[7px] shrink-0 rounded-[1.5px] border border-rose-700/60 bg-[#EF4444]"
                           />
                         )}
+                        {playerStatus.subInMinute !== undefined && (
+                          <span
+                            title={`${formatMinuteLabel(playerStatus.subInMinute)} 교체 투입`}
+                            className="shrink-0 font-mono text-[9px] font-extrabold text-[#00A878]"
+                          >
+                            {formatMinuteLabel(playerStatus.subInMinute)}→
+                          </span>
+                        )}
                         {playerStatus.subOutMinute !== undefined && (
-                          <span className="shrink-0 font-mono text-[9px] font-extrabold text-[#E11D48]">
-                            {playerStatus.subOutMinute}&apos;←
+                          <span
+                            title={`${formatMinuteLabel(playerStatus.subOutMinute)} 교체 아웃`}
+                            className="shrink-0 font-mono text-[9px] font-extrabold text-[#E11D48]"
+                          >
+                            {formatMinuteLabel(playerStatus.subOutMinute)}←
                           </span>
                         )}
 

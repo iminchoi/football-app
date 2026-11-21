@@ -31,6 +31,10 @@ import {
   resolveMatchScore,
   resolveSyncedMatch,
 } from "@/lib/matchSync";
+import {
+  formatPlayerDisplayName,
+  matchesPlayerSearchQuery,
+} from "@/lib/playerDisplayName";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface MarketChartTabViewProps {
@@ -236,14 +240,8 @@ export default function MarketChartTabView({
     const q = searchQuery.trim().toLowerCase();
 
     const filtered = players.filter((p) => {
-      if (q) {
-        const hit =
-          p.name.toLowerCase().includes(q) ||
-          p.englishName.toLowerCase().includes(q) ||
-          p.teamName.toLowerCase().includes(q) ||
-          p.teamShort.toLowerCase().includes(q) ||
-          (p.nationalTeam && p.nationalTeam.toLowerCase().includes(q));
-        if (!hit) return false;
+      if (q && !matchesPlayerSearchQuery(p, q)) {
+        return false;
       }
 
       if (posFilter !== "ALL" && getPositionLine(p.position) !== posFilter) {
@@ -362,7 +360,7 @@ export default function MarketChartTabView({
                   {/* 2단: 독립 1줄 선수명 + 포지션·팀 약자 */}
                   <div className="mt-2 w-full min-w-0">
                     <p className="truncate whitespace-nowrap text-[13px] sm:text-sm font-bold text-slate-900">
-                      {p.name}
+                      {formatPlayerDisplayName(p, "full")}
                     </p>
                     <p className="mt-0.5 whitespace-nowrap text-[11px] font-semibold text-slate-500">
                       {p.position} · {p.teamShort}
@@ -650,7 +648,7 @@ export default function MarketChartTabView({
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="truncate text-sm font-extrabold text-gray-900">
-                          {p.name}
+                          {formatPlayerDisplayName(p, "full")}
                         </span>
                         <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">
                           {p.position}

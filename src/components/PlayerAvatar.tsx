@@ -2,6 +2,7 @@
 
 import React from "react";
 import { Player } from "@/types";
+import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
 
 export interface PlayerAvatarProps {
   player: Pick<
@@ -52,7 +53,7 @@ const PlayerAvatar = React.memo(function PlayerAvatar({
     <div
       style={{ width: size, height: size }}
       className={`relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-gray-200/80 bg-[#F7F9F8] ${className}`}
-      aria-label={`${player.name} #${numberText} 유니폼`}
+      aria-label={`${formatPlayerDisplayName(player, "full")} #${numberText} 유니폼`}
     >
       <svg
         viewBox="0 0 64 64"

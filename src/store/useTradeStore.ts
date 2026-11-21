@@ -61,6 +61,11 @@ import {
   getCircuitBreakerRemainingSec,
   validateTradeOrder,
 } from "@/lib/orderGate";
+import { doesIdentityMatchPlayer } from "@/lib/lineupStatus";
+import {
+  canonicalizeIncomingPlayerNames,
+  formatPlayerDisplayName,
+} from "@/lib/playerDisplayName";
 import { WEIGHTS } from "@/lib/weights";
 
 export {
@@ -888,12 +893,18 @@ export const useTradeStore = create<TradeStoreState>()(
 
       ensurePlayerInStore: (newPlayer) => {
         const { players, playerPrices } = get();
+        const canonicalNames = canonicalizeIncomingPlayerNames({
+          id: newPlayer.id,
+          name: newPlayer.name,
+          englishName: newPlayer.englishName,
+        });
         const existingIdx = players.findIndex(
           (p) =>
             p.id === newPlayer.id ||
             (!newPlayer.id.startsWith("pitch-") &&
               !p.id.startsWith("pitch-") &&
-              p.name.trim() === newPlayer.name.trim())
+              (p.name.trim() === newPlayer.name.trim() ||
+                p.name.trim() === canonicalNames.name))
         );
 
         if (existingIdx !== -1) {
@@ -960,23 +971,13 @@ export const useTradeStore = create<TradeStoreState>()(
           base
         );
 
+        // Clicking or listing a player must never synthesize cards/subs from price diffs.
         const initialEvents =
           savedPrice?.events && savedPrice.events.length > 0
-            ? normalizeMatchEvents(savedPrice.events, newPlayer.id)
-            : Array.isArray(newPlayer.events)
-            ? normalizeMatchEvents(newPlayer.events, newPlayer.id)
-            : newPlayer.id.startsWith("pitch-")
-            ? []
-            : extractInitialMatchEvents({
-                ...newPlayer,
-                openPrice,
-                basePrice: base,
-                priceHistory:
-                  savedPrice?.priceHistory &&
-                  savedPrice.priceHistory.length > 0
-                    ? savedPrice.priceHistory
-                    : newPlayer.priceHistory,
-              });
+            ? normalizeMatchEvents(savedPrice.events, newPlayer.id, newPlayer.position)
+            : Array.isArray(newPlayer.events) && newPlayer.events.length > 0
+            ? normalizeMatchEvents(newPlayer.events, newPlayer.id, newPlayer.position)
+            : [];
 
         const ctx = resolvePlayerMatchContext(
           { ...newPlayer, events: initialEvents },
@@ -993,6 +994,8 @@ export const useTradeStore = create<TradeStoreState>()(
 
         const normalized: Player = {
           ...newPlayer,
+          name: canonicalNames.name,
+          englishName: canonicalNames.englishName,
           nationalTeam:
             resolveNationalTeamName(newPlayer.nationalTeam) ||
             newPlayer.nationalTeam ||
@@ -1167,6 +1170,11 @@ export const useTradeStore = create<TradeStoreState>()(
 
         for (const match of incomingMatches) {
           const isAMatch = isNationalTeamMatch(match);
+          const matchClock = resolveMatchClock(match);
+          const allowLineupEvents =
+            !matchClock.isUpcoming &&
+            match.providerMode !== "SCORE_ONLY" &&
+            !match.usesDummyLineup;
           const sides: TeamInfo[] = [match.homeTeam, match.awayTeam].filter(
             Boolean
           );
@@ -1186,18 +1194,24 @@ export const useTradeStore = create<TradeStoreState>()(
                 item.externalId !== undefined
                   ? String(item.externalId).trim()
                   : "";
+              const canonicalNames = canonicalizeIncomingPlayerNames({
+                id: itemIdStr || extIdStr || undefined,
+                name: rawName,
+                englishName: rawName,
+              });
 
               const existingIdx = nextPlayers.findIndex((p) => {
                 if (p.id.startsWith("pitch-")) return false;
-                if (itemIdStr && p.id === itemIdStr) return true;
-                if (extIdStr && (p.id === extIdStr || p.id === `api-p-${extIdStr}`))
-                  return true;
-                if (p.name.trim() === rawName) return true;
                 if (
-                  p.englishName &&
-                  p.englishName.trim().toLowerCase() === rawName.toLowerCase()
-                )
+                  doesIdentityMatchPlayer(
+                    p,
+                    itemIdStr || extIdStr || undefined,
+                    rawName
+                  )
+                ) {
                   return true;
+                }
+                if (p.name.trim() === canonicalNames.name) return true;
                 return false;
               });
 
@@ -1253,17 +1267,55 @@ export const useTradeStore = create<TradeStoreState>()(
                   if (item.isCaptain !== undefined && existing.isCaptain !== item.isCaptain) {
                     updated = { ...updated, isCaptain: item.isCaptain };
                   }
-                  if (item.subInMinute !== undefined && existing.subInMinute !== item.subInMinute) {
-                    updated = { ...updated, subInMinute: item.subInMinute };
-                  }
-                  if (item.subOutMinute !== undefined && existing.subOutMinute !== item.subOutMinute) {
-                    updated = { ...updated, subOutMinute: item.subOutMinute };
-                  }
-                  if (item.yellowCards !== undefined && existing.yellowCards !== item.yellowCards) {
-                    updated = { ...updated, yellowCards: item.yellowCards };
-                  }
-                  if (item.redCards !== undefined && existing.redCards !== item.redCards) {
-                    updated = { ...updated, redCards: item.redCards };
+                  if (!allowLineupEvents) {
+                    if (
+                      existing.subInMinute !== undefined ||
+                      existing.subOutMinute !== undefined ||
+                      (existing.yellowCards ?? 0) !== 0 ||
+                      (existing.redCards ?? 0) !== 0
+                    ) {
+                      updated = {
+                        ...updated,
+                        subInMinute: undefined,
+                        subOutMinute: undefined,
+                        yellowCards: 0,
+                        redCards: 0,
+                        stats: {
+                          ...updated.stats,
+                          yellowCards: 0,
+                          redCards: 0,
+                        },
+                      };
+                    }
+                  } else {
+                    if (
+                      typeof item.subInMinute === "number" &&
+                      item.subInMinute >= 1 &&
+                      existing.subInMinute !== item.subInMinute
+                    ) {
+                      updated = { ...updated, subInMinute: item.subInMinute };
+                    }
+                    if (
+                      typeof item.subOutMinute === "number" &&
+                      item.subOutMinute >= 1 &&
+                      existing.subOutMinute !== item.subOutMinute
+                    ) {
+                      updated = { ...updated, subOutMinute: item.subOutMinute };
+                    }
+                    if (
+                      typeof item.yellowCards === "number" &&
+                      item.yellowCards > 0 &&
+                      existing.yellowCards !== item.yellowCards
+                    ) {
+                      updated = { ...updated, yellowCards: item.yellowCards };
+                    }
+                    if (
+                      typeof item.redCards === "number" &&
+                      item.redCards > 0 &&
+                      existing.redCards !== item.redCards
+                    ) {
+                      updated = { ...updated, redCards: item.redCards };
+                    }
                   }
                 }
 
@@ -1302,7 +1354,6 @@ export const useTradeStore = create<TradeStoreState>()(
                 basePrice
               );
 
-              const matchClock = resolveMatchClock(match);
               const resolvedStatus = matchClock.status;
 
               const curMin = matchClock.isUpcoming
@@ -1331,8 +1382,8 @@ export const useTradeStore = create<TradeStoreState>()(
 
               const newListedPlayer: Player = {
                 id: newId,
-                name: rawName,
-                englishName: rawName,
+                name: canonicalNames.name,
+                englishName: canonicalNames.englishName,
                 nationalTeam: resolvedNat || (isAMatch ? team.name : "기타"),
                 matchId: match.id,
                 teamId: team.id,
@@ -1369,14 +1420,38 @@ export const useTradeStore = create<TradeStoreState>()(
                   assists: 0,
                   shotsOnTarget: 1,
                   keyPasses: 1,
-                  ...(item.yellowCards !== undefined ? { yellowCards: item.yellowCards } : {}),
-                  ...(item.redCards !== undefined ? { redCards: item.redCards } : {}),
+                  ...(allowLineupEvents &&
+                  typeof item.yellowCards === "number" &&
+                  item.yellowCards > 0
+                    ? { yellowCards: item.yellowCards }
+                    : {}),
+                  ...(allowLineupEvents &&
+                  typeof item.redCards === "number" &&
+                  item.redCards > 0
+                    ? { redCards: item.redCards }
+                    : {}),
                 },
                 ...(item.isCaptain !== undefined ? { isCaptain: item.isCaptain } : {}),
-                ...(item.subInMinute !== undefined ? { subInMinute: item.subInMinute } : {}),
-                ...(item.subOutMinute !== undefined ? { subOutMinute: item.subOutMinute } : {}),
-                ...(item.yellowCards !== undefined ? { yellowCards: item.yellowCards } : {}),
-                ...(item.redCards !== undefined ? { redCards: item.redCards } : {}),
+                ...(allowLineupEvents &&
+                typeof item.subInMinute === "number" &&
+                item.subInMinute >= 1
+                  ? { subInMinute: item.subInMinute }
+                  : {}),
+                ...(allowLineupEvents &&
+                typeof item.subOutMinute === "number" &&
+                item.subOutMinute >= 1
+                  ? { subOutMinute: item.subOutMinute }
+                  : {}),
+                ...(allowLineupEvents &&
+                typeof item.yellowCards === "number" &&
+                item.yellowCards > 0
+                  ? { yellowCards: item.yellowCards }
+                  : {}),
+                ...(allowLineupEvents &&
+                typeof item.redCards === "number" &&
+                item.redCards > 0
+                  ? { redCards: item.redCards }
+                  : {}),
               };
 
               nextPlayers.push(newListedPlayer);
@@ -1396,7 +1471,11 @@ export const useTradeStore = create<TradeStoreState>()(
           }
 
           // Bind real match events (goals, assists, cards, substitutions) idempotently to player SSOT events
-          if (Array.isArray(match.events) && match.events.length > 0) {
+          if (
+            !matchClock.isUpcoming &&
+            Array.isArray(match.events) &&
+            match.events.length > 0
+          ) {
             const expandedEvents = match.events.flatMap((ev) => {
               if (ev.type === "SUB") {
                 const pairs: NonNullable<typeof match.events> = [];
@@ -1424,26 +1503,30 @@ export const useTradeStore = create<TradeStoreState>()(
             });
 
             for (const ev of expandedEvents) {
-              const evNameLower = ev.playerName.trim().toLowerCase();
+              const isSimulatedOrEstimated =
+                ev.source === "SIMULATED" ||
+                ev.estimated === true ||
+                ev.metadata?.estimated === true;
+              if (
+                isSimulatedOrEstimated &&
+                (ev.type === "SUB_IN" ||
+                  ev.type === "SUB_OUT" ||
+                  ev.type === "YELLOW_CARD" ||
+                  ev.type === "RED_CARD")
+              ) {
+                continue;
+              }
+
               const evIdStr = ev.playerId ? String(ev.playerId).trim() : "";
 
               const targetIdx = nextPlayers.findIndex((p) => {
                 if (p.id.startsWith("pitch-")) return false;
                 if (p.matchId !== match.id) return false;
-                if (
-                  evIdStr &&
-                  (p.id === evIdStr || p.id === `api-p-${evIdStr}`)
-                ) {
-                  return true;
-                }
-                if (p.name.trim().toLowerCase() === evNameLower) return true;
-                if (
-                  p.englishName &&
-                  p.englishName.trim().toLowerCase() === evNameLower
-                ) {
-                  return true;
-                }
-                return false;
+                return doesIdentityMatchPlayer(
+                  p,
+                  evIdStr || undefined,
+                  ev.playerName
+                );
               });
 
               if (targetIdx === -1) continue;
@@ -1636,12 +1719,24 @@ export const useTradeStore = create<TradeStoreState>()(
                   Math.min(9.9, nextStats.rating + 0.3).toFixed(1)
                 );
               } else if (ev.type === "YELLOW_CARD") {
-                nextStats.yellowCards = (nextStats.yellowCards ?? target.yellowCards ?? 0) + 1;
+                const yellowEventCount = nextEvents.filter(
+                  (e) => e.type === "YELLOW_CARD" && e.source !== "SIMULATED"
+                ).length;
+                nextStats.yellowCards = Math.max(
+                  nextStats.yellowCards ?? target.yellowCards ?? 0,
+                  yellowEventCount
+                );
                 nextStats.rating = Number(
                   Math.max(4.5, nextStats.rating - 0.2).toFixed(1)
                 );
               } else if (ev.type === "RED_CARD") {
-                nextStats.redCards = (nextStats.redCards ?? target.redCards ?? 0) + 1;
+                const redEventCount = nextEvents.filter(
+                  (e) => e.type === "RED_CARD" && e.source !== "SIMULATED"
+                ).length;
+                nextStats.redCards = Math.max(
+                  nextStats.redCards ?? target.redCards ?? 0,
+                  redEventCount
+                );
                 nextStats.rating = Number(
                   Math.max(3.5, nextStats.rating - 0.8).toFixed(1)
                 );
@@ -1970,9 +2065,13 @@ export const useTradeStore = create<TradeStoreState>()(
               (Boolean(chosen.chartEventType) &&
                 chosen.chartEventType !== "GOAL" &&
                 chosen.chartEventType !== "ASSIST" &&
+                chosen.chartEventType !== "YELLOW_CARD" &&
+                chosen.chartEventType !== "RED_CARD" &&
+                chosen.chartEventType !== "SUB_IN" &&
+                chosen.chartEventType !== "SUB_OUT" &&
+                chosen.chartEventType !== "SUB" &&
                 Math.random() < 0.14 &&
-                (((chosen.chartEventType === "YELLOW_CARD" ||
-                  chosen.chartEventType === "CONCEDED" ||
+                (((chosen.chartEventType === "CONCEDED" ||
                   chosen.chartEventType === "BIG_CHANCE_MISS") &&
                   tickImpactPct < 0) ||
                   ((chosen.chartEventType === "SAVE" ||
@@ -1987,25 +2086,29 @@ export const useTradeStore = create<TradeStoreState>()(
               tickImpactPct,
               player.position
             );
-            const newEv: MatchEvent = {
-              id: `ev-${player.id}-${currentMinute}-${evType}`,
-              playerId: player.id,
-              minute: currentMinute,
-              type: evType,
-              description: cleanEventDescription(
-                chosen.chartEventTitle ?? chosen.text,
-                evType
-              ),
-              priceImpactPercent: tickImpactPct,
-            };
-            nextEvents = normalizeMatchEvents(
-              [
-                ...nextEvents.filter((e) => e.minute < currentMinute),
-                newEv,
-              ],
-              player.id,
-              player.position
-            );
+            // Random market ticks must never fabricate synthetic card badges
+            if (evType !== "YELLOW_CARD" && evType !== "RED_CARD") {
+              const newEv: MatchEvent = {
+                id: `ev-${player.id}-${currentMinute}-${evType}`,
+                playerId: player.id,
+                minute: currentMinute,
+                type: evType,
+                description: cleanEventDescription(
+                  chosen.chartEventTitle ?? chosen.text,
+                  evType
+                ),
+                priceImpactPercent: tickImpactPct,
+                source: "SIMULATED",
+              };
+              nextEvents = normalizeMatchEvents(
+                [
+                  ...nextEvents.filter((e) => e.minute < currentMinute),
+                  newEv,
+                ],
+                player.id,
+                player.position
+              );
+            }
           }
 
           const derived = derivePlayerMarketData({
@@ -2178,11 +2281,12 @@ export const useTradeStore = create<TradeStoreState>()(
         const newAvg = roundToTen((prevInvested + totalCost) / newQty);
         const nextCash = roundToTen(cash - totalCost);
 
+        const displayName = formatPlayerDisplayName(player, "full");
         const newTx: PointTransaction = {
           id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           type: "BUY",
           playerId: player.id,
-          playerName: player.name,
+          playerName: displayName,
           teamShort: player.teamShort,
           quantity,
           unitPrice: executedPrice,
@@ -2224,7 +2328,7 @@ export const useTradeStore = create<TradeStoreState>()(
         return {
           success: true,
           executedPrice,
-          message: `${player.name} ${quantity}주 매수 완료 (-${totalCost.toLocaleString()} P)`,
+          message: `${displayName} ${quantity}주 매수 완료 (-${totalCost.toLocaleString()} P)`,
         };
       },
 
@@ -2302,11 +2406,12 @@ export const useTradeStore = create<TradeStoreState>()(
 
         const nextCash = roundToTen(cash + totalProceeds);
 
+        const displayName = formatPlayerDisplayName(player, "full");
         const newTx: PointTransaction = {
           id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           type: "SELL",
           playerId: player.id,
-          playerName: player.name,
+          playerName: displayName,
           teamShort: player.teamShort,
           quantity,
           unitPrice: executedPrice,
@@ -2343,7 +2448,7 @@ export const useTradeStore = create<TradeStoreState>()(
         return {
           success: true,
           executedPrice,
-          message: `${player.name} ${quantity}주 매도 완료 (+${totalProceeds.toLocaleString()} P)`,
+          message: `${displayName} ${quantity}주 매도 완료 (+${totalProceeds.toLocaleString()} P)`,
         };
       },
 
@@ -2680,6 +2785,7 @@ export const useTradeStore = create<TradeStoreState>()(
           },
         };
 
+        const updatedDisplayName = formatPlayerDisplayName(updatedPlayer, "full");
         const nextMatches = matches.map((m) => {
           if (!resolveMatchClock(m).isLive) return m;
           if (!doesPlayerBelongToMatch(updatedPlayer, m)) return m;
@@ -2688,8 +2794,24 @@ export const useTradeStore = create<TradeStoreState>()(
           const isAway = doesPlayerBelongToTeam(updatedPlayer, m.awayTeam, isAMatch);
           if (!isHome && !isAway) return m;
 
+          const appendedEvents = Array.isArray(m.events)
+            ? [
+                ...m.events,
+                {
+                  id: newEv.id,
+                  minute: currentMinute,
+                  type: sanitizedTriggerType,
+                  playerId: updatedPlayer.id,
+                  playerName: updatedDisplayName,
+                  teamName: isHome ? m.homeTeam.name : m.awayTeam.name,
+                  source: "REAL" as const,
+                },
+              ]
+            : m.events;
+
           return {
             ...m,
+            ...(appendedEvents !== undefined ? { events: appendedEvents } : {}),
             homeTeam:
               eventType === "GOAL" && isHome
                 ? { ...m.homeTeam, score: (m.homeTeam.score ?? 0) + 1 }
@@ -2700,8 +2822,8 @@ export const useTradeStore = create<TradeStoreState>()(
                 : m.awayTeam,
             highlightText:
               eventType === "GOAL"
-                ? `⚽ ${updatedPlayer.name} 추가골 작렬! (통산 ${updatedPlayer.stats.goals}골) · 실시간 시세 급등`
-                : `${meta.title} · ${updatedPlayer.name} (${currentMinute}') 실시간 시세 반영`,
+                ? `⚽ ${updatedDisplayName} 추가골 작렬! (통산 ${updatedPlayer.stats.goals}골) · 실시간 시세 급등`
+                : `${meta.title} · ${updatedDisplayName} (${currentMinute}') 실시간 시세 반영`,
           };
         });
 

@@ -23,6 +23,7 @@ import {
   resolveMatchClock,
   resolveMatchForPlayerView,
 } from "@/lib/matchSync";
+import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
 import { WEIGHTS } from "@/lib/weights";
 import { TradeType } from "@/types";
 import { getTierConfig } from "@/utils/tier";
@@ -200,7 +201,7 @@ export default function RightTradeDockPanel({
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <h3 className="truncate text-sm font-extrabold text-gray-900">
-                  {player.name}
+                  {formatPlayerDisplayName(player, "full")}
                 </h3>
                 <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-bold text-gray-600">
                   {player.position}

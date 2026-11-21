@@ -20,6 +20,10 @@ import {
   resolveMatchScore,
   resolveSyncedMatchFromContext,
 } from "@/lib/matchSync";
+import {
+  formatPlayerDisplayName,
+  matchesPlayerSearchQuery,
+} from "@/lib/playerDisplayName";
 import { BottomTab, Player } from "@/types";
 
 interface TopAssetHeaderProps {
@@ -162,17 +166,10 @@ export default function TopAssetHeader({
   const totalAssets = roundToTen(cash + holdingsValue);
 
   const searchResults = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = searchQuery.trim();
     if (!q) return [];
     return players
-      .filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.englishName.toLowerCase().includes(q) ||
-          p.teamName.toLowerCase().includes(q) ||
-          p.teamShort.toLowerCase().includes(q) ||
-          (p.nationalTeam && p.nationalTeam.toLowerCase().includes(q))
-      )
+      .filter((p) => matchesPlayerSearchQuery(p, q))
       .slice(0, 6);
   }, [players, searchQuery]);
 
@@ -322,7 +319,7 @@ export default function TopAssetHeader({
                         >
                           <div className="min-w-0">
                             <p className="truncate text-xs font-extrabold text-gray-900">
-                              {p.name}{" "}
+                              {formatPlayerDisplayName(p, "full")}{" "}
                               <span className="font-semibold text-gray-400">
                                 {p.position}
                               </span>

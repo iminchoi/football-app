@@ -493,3 +493,245 @@ test("mergePinnedFixturesForToday merges m-new-ars into a matching live API fixt
   assert.equal(otherDay.length, 1);
   assert.equal(otherDay[0].id, "fd-560700");
 });
+
+test("strict event-only gating blocks stale, simulated, estimated, ScoreOnly, and invalid-minute sub/card badges", () => {
+  // 1) Stale player-level fields without matching real event or verified lineup entry
+  const stalePlayer = makeBasePlayer({
+    id: "p-stale-meta",
+    matchId: "m-strict-1",
+    subInMinute: 60,
+    subOutMinute: 82,
+    yellowCards: 1,
+    redCards: 1,
+    stats: {
+      rating: 7.0,
+      goals: 0,
+      assists: 0,
+      shotsOnTarget: 0,
+      keyPasses: 0,
+      yellowCards: 1,
+      redCards: 1,
+    },
+    events: [
+      {
+        id: "ev-sim-yc",
+        playerId: "p-stale-meta",
+        minute: 41,
+        type: "YELLOW_CARD",
+        description: "시뮬레이션 경고",
+        priceImpactPercent: -2.0,
+        source: "SIMULATED",
+      },
+      {
+        id: "ev-est-rc",
+        playerId: "p-stale-meta",
+        minute: 70,
+        type: "RED_CARD",
+        description: "추정 퇴장",
+        priceImpactPercent: -8.0,
+        source: "REAL",
+        estimated: true,
+      },
+    ],
+    priceHistory: [
+      { minute: 0, timeLabel: "0'", price: 12000 },
+      {
+        minute: 55,
+        timeLabel: "55'",
+        price: 11800,
+        event: {
+          type: "SUB_OUT",
+          label: "교체 아웃",
+          impactPercent: 0,
+          source: "SIMULATED",
+        },
+      },
+    ],
+  });
+
+  const liveMatchNoEvents = makeBaseMatch({
+    id: "m-strict-1",
+    events: undefined,
+  });
+  const strictStatus = resolvePlayerMatchStatus({
+    player: stalePlayer,
+    match: liveMatchNoEvents,
+  });
+  assert.equal(strictStatus.subInMinute, undefined);
+  assert.equal(strictStatus.subOutMinute, undefined);
+  assert.equal(strictStatus.yellowCards, 0);
+  assert.equal(strictStatus.redCards, 0);
+
+  // 2) Explicit match.events: [] suppresses stale player.events even for same matchId
+  const sameMatchStaleEventPlayer = makeBasePlayer({
+    id: "p-stale-ev",
+    matchId: "m-strict-empty",
+    events: [
+      {
+        id: "ev-old-yc",
+        playerId: "p-stale-ev",
+        minute: 33,
+        type: "YELLOW_CARD",
+        description: "이전 캐시 경고",
+        priceImpactPercent: -2.0,
+        source: "REAL",
+      },
+    ],
+  });
+  const emptyEventsMatch = makeBaseMatch({
+    id: "m-strict-empty",
+    events: [],
+  });
+  const emptyEventsStatus = resolvePlayerMatchStatus({
+    player: sameMatchStaleEventPlayer,
+    match: emptyEventsMatch,
+  });
+  assert.equal(emptyEventsStatus.yellowCards, 0);
+  assert.equal(emptyEventsStatus.redCards, 0);
+  assert.equal(emptyEventsStatus.subInMinute, undefined);
+  assert.equal(emptyEventsStatus.subOutMinute, undefined);
+
+  // 3) Simulated / estimated / 0-minute events in match.events & providerPlayerEvents never render badges
+  const matchWithInvalidAndSimulated = makeBaseMatch({
+    id: "m-strict-sim",
+    events: [
+      {
+        id: "sim-sub",
+        minute: 62,
+        type: "SUB",
+        playerName: "테스트 선수",
+        playerOutId: "p-test-1",
+        playerOutName: "테스트 선수",
+        source: "SIMULATED",
+      },
+      {
+        id: "est-yc",
+        minute: 40,
+        type: "YELLOW_CARD",
+        playerId: "p-test-1",
+        playerName: "테스트 선수",
+        source: "REAL",
+        metadata: { estimated: true },
+      },
+      {
+        id: "zero-min-sub",
+        minute: 0,
+        type: "SUB_IN",
+        playerId: "p-test-1",
+        playerName: "테스트 선수",
+        source: "REAL",
+      },
+    ],
+  });
+  const cleanPlayer = makeBasePlayer({ id: "p-test-1", matchId: "m-strict-sim" });
+  const simStatus = resolvePlayerMatchStatus({
+    player: cleanPlayer,
+    match: matchWithInvalidAndSimulated,
+    providerPlayerEvents: [
+      {
+        id: "pev-sim-rc",
+        playerId: "p-test-1",
+        minute: 77,
+        type: "RED_CARD",
+        source: "SIMULATED",
+      },
+    ],
+  });
+  assert.equal(simStatus.subInMinute, undefined);
+  assert.equal(simStatus.subOutMinute, undefined);
+  assert.equal(simStatus.yellowCards, 0);
+  assert.equal(simStatus.redCards, 0);
+
+  // 4) SCORE_ONLY & usesDummyLineup ignore lineup entry card/sub metadata
+  const scoreOnlyDummyMatch = makeBaseMatch({
+    id: "m-score-only-badges",
+    providerMode: "SCORE_ONLY",
+    usesDummyLineup: true,
+    homeTeam: {
+      id: "eng",
+      name: "잉글랜드",
+      shortName: "ENG",
+      color: "#1E3A8A",
+      score: 0,
+      formation: "4-2-3-1",
+      lineup: [
+        {
+          id: "p-test-1",
+          name: "테스트 선수",
+          position: "LW",
+          subOutMinute: 70,
+          yellowCards: 1,
+          redCards: 1,
+        },
+      ],
+    },
+  });
+  const scoreOnlyBadgeStatus = resolvePlayerMatchStatus({
+    player: makeBasePlayer({ id: "p-test-1", matchId: "m-score-only-badges" }),
+    match: scoreOnlyDummyMatch,
+  });
+  assert.equal(scoreOnlyBadgeStatus.subOutMinute, undefined);
+  assert.equal(scoreOnlyBadgeStatus.yellowCards, 0);
+  assert.equal(scoreOnlyBadgeStatus.redCards, 0);
+});
+
+test("cross-script and accented names preserve exact player event matching for badges without leaking to teammates", () => {
+  const odegaard = makeBasePlayer({
+    id: "p-odegaard",
+    name: "마르틴 외데고르",
+    englishName: "Martin Odegaard",
+    matchId: "m-new-ars",
+    teamId: "ars",
+    teamName: "아스날",
+    teamShort: "ARS",
+  });
+  const timber = makeBasePlayer({
+    id: "p-ars-timber",
+    name: "위리엔 팀버",
+    englishName: "Jurriën Timber",
+    matchId: "m-new-ars",
+    teamId: "ars",
+    teamName: "아스날",
+    teamShort: "ARS",
+  });
+
+  const match = makeBaseMatch({
+    id: "m-new-ars",
+    homeTeam: {
+      id: "new",
+      name: "Newcastle",
+      shortName: "NEW",
+      color: "#241F20",
+      score: 1,
+      formation: "4-2-3-1",
+    },
+    awayTeam: {
+      id: "ars",
+      name: "Arsenal",
+      shortName: "ARS",
+      color: "#EF0107",
+      score: 2,
+      formation: "4-2-3-1",
+      lineup: [
+        { id: "p-ars-odegaard", name: "Ødegaard", position: "CAM", isCaptain: true, subOutMinute: 78 },
+        { id: "p-ars-timber", name: "Timber", position: "RB", yellowCards: 1 },
+      ],
+    },
+    events: [
+      { id: "ev-a1", minute: 19, type: "ASSIST", playerId: "p-ars-odegaard", playerName: "Ødegaard", source: "REAL" },
+      { id: "ev-yc1", minute: 56, type: "YELLOW_CARD", playerId: "p-ars-timber", playerName: "Timber", source: "REAL" },
+      { id: "ev-sub1", minute: 78, type: "SUB_OUT", playerId: "p-ars-odegaard", playerName: "Ødegaard", source: "REAL" },
+    ],
+  });
+
+  const odeStatus = resolvePlayerMatchStatus({ player: odegaard, match, teamSide: "AWAY" });
+  assert.equal(odeStatus.isCaptain, true);
+  assert.equal(odeStatus.assists, 1);
+  assert.equal(odeStatus.subOutMinute, 78);
+  assert.equal(odeStatus.yellowCards, 0);
+
+  const timberStatus = resolvePlayerMatchStatus({ player: timber, match, teamSide: "AWAY" });
+  assert.equal(timberStatus.yellowCards, 1);
+  assert.equal(timberStatus.subOutMinute, undefined);
+  assert.equal(timberStatus.assists, 0);
+});
