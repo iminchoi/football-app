@@ -4,6 +4,7 @@ import type {
   Match,
   Player,
 } from "../types/index.ts";
+import { resolveMatchClock } from "./matchSync.ts";
 import type { PlayerEvent } from "./priceEngine.ts";
 
 export interface PlayerMatchLineupStatus {
@@ -92,11 +93,7 @@ export function findLineupEntryForPlayer(
 
 function isMatchUpcoming(match?: Match | null): boolean {
   if (!match) return false;
-  return (
-    match.status === "UPCOMING" ||
-    match.rawStatus === "TIMED" ||
-    match.rawStatus === "SCHEDULED"
-  );
+  return resolveMatchClock(match).isUpcoming;
 }
 
 function resolveTeamScoreForPlayer(

@@ -122,10 +122,17 @@ function getColorForId(id: number | string): string {
 }
 
 function mapApiStatus(rawStatus: string): MatchStatus {
-  if (rawStatus === "IN_PLAY" || rawStatus === "PAUSED" || rawStatus === "LIVE") {
+  const upper = rawStatus.trim().toUpperCase();
+  if (
+    upper === "IN_PLAY" ||
+    upper === "PAUSED" ||
+    upper === "HT" ||
+    upper === "HALF_TIME" ||
+    upper === "LIVE"
+  ) {
     return "LIVE";
   }
-  if (rawStatus === "FINISHED" || rawStatus === "AWARDED") {
+  if (upper === "FINISHED" || upper === "AWARDED") {
     return "FT";
   }
   return "UPCOMING";
@@ -778,7 +785,9 @@ export async function GET(request: NextRequest) {
             status === "FT"
               ? 90
               : status === "LIVE"
-              ? String(m.status || "").toUpperCase() === "PAUSED"
+              ? ["PAUSED", "HT", "HALF_TIME"].includes(
+                  String(m.status || "").trim().toUpperCase()
+                )
                 ? 45
                 : m.minute ?? 45
               : undefined,
@@ -833,7 +842,7 @@ export async function GET(request: NextRequest) {
 
     const dedupedMatches = deduplicateMatches(
       normalizedMatches,
-      targetDate === getKstTodayStr()
+      targetDate === getKstTodayStr() ? targetDate : false
     );
 
     // Fallback to prepared National Team (A-Match) dummy matches during international breaks when API returns 0 matches

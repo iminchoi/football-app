@@ -39,6 +39,7 @@ import {
   resolveMatchForPlayerView,
   resolveSyncedMatch,
   syncActiveMatchContext,
+  toLocalDateStr,
 } from "@/lib/matchSync";
 import {
   roundToTen,
@@ -1069,12 +1070,15 @@ export const useTradeStore = create<TradeStoreState>()(
               requestedDateStr: todayStr,
               todayStr,
             });
+            get().syncPlayersFromMatches(resolved);
+            const syncedToday = resolved.map((m) =>
+              resolveSyncedMatch(m, get().matches, todayStr)
+            );
             set({
-              todayMatches: resolved,
+              todayMatches: syncedToday,
               isLoadingTodayMatches: false,
               hasFetchedTodayMatches: true,
             });
-            get().syncPlayersFromMatches(resolved);
           })
           .catch(() => {
             const fallbackToday = resolveFetchedMatchesForDate({
@@ -1085,12 +1089,15 @@ export const useTradeStore = create<TradeStoreState>()(
               requestedDateStr: todayStr,
               todayStr,
             });
+            get().syncPlayersFromMatches(fallbackToday);
+            const syncedFallback = fallbackToday.map((m) =>
+              resolveSyncedMatch(m, get().matches, todayStr)
+            );
             set({
-              todayMatches: fallbackToday,
+              todayMatches: syncedFallback,
               isLoadingTodayMatches: false,
               hasFetchedTodayMatches: true,
             });
-            get().syncPlayersFromMatches(fallbackToday);
           })
           .finally(() => {
             inFlightTodayMatchesPromise = null;
@@ -1292,22 +1299,12 @@ export const useTradeStore = create<TradeStoreState>()(
                 basePrice
               );
 
-              const isMatchFT =
-                match.status === "FT" || match.rawStatus === "FINISHED";
-              const isMatchUpcoming =
-                match.status === "UPCOMING" ||
-                match.rawStatus === "TIMED" ||
-                match.rawStatus === "SCHEDULED";
-              const resolvedStatus = isMatchFT
-                ? "FT"
-                : isMatchUpcoming
-                ? "UPCOMING"
-                : "LIVE";
+              const matchClock = resolveMatchClock(match);
+              const resolvedStatus = matchClock.status;
 
-              const curMin = Math.min(
-                90,
-                Math.max(0, match.minute ?? (isMatchFT ? 90 : 45))
-              );
+              const curMin = matchClock.isUpcoming
+                ? 0
+                : Math.min(90, Math.max(0, matchClock.minute));
               const initialEvents =
                 savedPrice?.events && savedPrice.events.length > 0
                   ? normalizeMatchEvents(savedPrice.events, newId, position)
@@ -1692,7 +1689,9 @@ export const useTradeStore = create<TradeStoreState>()(
         }
 
         // Merge incomingMatches into state.matches through a single deduplicated path
-        // so live API fixtures supersede local mock duplicates for the same canonical match.
+        // so live API fixtures supersede local mock duplicates for the same canonical match
+        // without letting past/future date views clobber today's live fixtures.
+        const todayStr = toLocalDateStr(new Date());
         const existingMatchMap = new Map(
           state.matches.map((m) => [m.id, m] as const)
         );
@@ -1708,7 +1707,7 @@ export const useTradeStore = create<TradeStoreState>()(
               )) {
                 if (
                   !isApiBackedMatch(existingMatch) &&
-                  isSameMatchFixture(existingMatch, inc, true)
+                  isSameMatchFixture(existingMatch, inc, todayStr)
                 ) {
                   mergedInc = enrichMatchFromFixture(mergedInc, existingMatch);
                   existingMatchMap.delete(existingId);
@@ -1723,7 +1722,7 @@ export const useTradeStore = create<TradeStoreState>()(
               )) {
                 if (
                   isApiBackedMatch(existingMatch) &&
-                  isSameMatchFixture(existingMatch, inc, true)
+                  isSameMatchFixture(existingMatch, inc, todayStr)
                 ) {
                   existingMatchMap.set(
                     existingId,
@@ -1741,6 +1740,16 @@ export const useTradeStore = create<TradeStoreState>()(
             matchesChanged = true;
           } else {
             const incomingIsApi = isApiBackedMatch(inc);
+            // Preserve today's live local mock fixture when a past/future date view
+            // syncs a date-shifted (FT/UPCOMING) fallback copy sharing the same ID.
+            if (
+              !incomingIsApi &&
+              prev.dateKey === "TODAY" &&
+              resolveMatchClock(prev).isLive &&
+              !resolveMatchClock(inc).isLive
+            ) {
+              continue;
+            }
             const nextMinute = incomingIsApi
               ? inc.minute ?? prev.minute
               : inc.status === "FT"
@@ -1866,23 +1875,27 @@ export const useTradeStore = create<TradeStoreState>()(
           );
 
           const directMatch = liveMatchMap.get(player.matchId);
-          const isDirectLive =
-            directMatch?.status === "LIVE" ||
-            directMatch?.rawStatus === "IN_PLAY";
+          const isDirectLive = Boolean(
+            directMatch && resolveMatchClock(directMatch).isLive
+          );
           const match = isDirectLive
             ? directMatch
             : updatedMatches.find(
                 (m) =>
-                  (m.status === "LIVE" || m.rawStatus === "IN_PLAY") &&
+                  resolveMatchClock(m).isLive &&
                   doesPlayerBelongToMatch(player, m)
               ) ?? directMatch;
-          const isLive =
-            match?.status === "LIVE" || match?.rawStatus === "IN_PLAY";
-          const isFT =
-            match?.status === "FT" || match?.rawStatus === "FINISHED";
+          const matchClock = match ? resolveMatchClock(match) : null;
+          const isLive = Boolean(matchClock?.isLive);
+          const isHalfTime = Boolean(matchClock?.isHalfTime);
+          const isFT = Boolean(matchClock?.isFinished);
 
-          // Guard: Only fluctuate prices for LIVE matches (FT and UPCOMING stay fixed)
-          if (!isLive) {
+          // Guard: Only fluctuate prices for actively playing LIVE matches
+          // (HT/PAUSED, FT, and UPCOMING stay fixed)
+          if (!isLive || isHalfTime) {
+            if (isHalfTime) {
+              return player;
+            }
             if (!isFT) {
               return {
                 ...player,
@@ -2081,15 +2094,10 @@ export const useTradeStore = create<TradeStoreState>()(
         const nextTodayMatches = todayMatches.map((tm) =>
           resolveSyncedMatch(tm, updatedMatches)
         );
-        const nextActiveMatchContext =
-          activeMatchContext && activeMatchContext.status !== "FT"
-            ? (() => {
-                const synced = liveMatchMap.get(activeMatchContext.matchId);
-                return synced
-                  ? buildActiveMatchContext(synced)
-                  : activeMatchContext;
-              })()
-            : activeMatchContext;
+        const nextActiveMatchContext = syncActiveMatchContext(
+          activeMatchContext,
+          updatedMatches
+        );
 
         set({
           matches: updatedMatches,
@@ -2121,15 +2129,16 @@ export const useTradeStore = create<TradeStoreState>()(
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
         }
 
-        const matchCtx = resolvePlayerMatchContext(player, matches);
-        const effectiveStatus =
-          activeMatchContext && activeMatchContext.matchId === player.matchId
-            ? activeMatchContext.status === "FT"
-              ? "FT"
-              : activeMatchContext.status === "PRE"
-              ? "UPCOMING"
-              : "LIVE"
-            : matchCtx.status;
+        const playerMatch = resolveMatchForPlayerView({
+          player,
+          storeMatches: matches,
+          activeMatchContext,
+          belongsToMatch: doesPlayerBelongToMatch,
+        });
+        const effectiveStatus = resolveMatchClock(
+          playerMatch,
+          playerMatch ? null : activeMatchContext
+        ).status;
         const basePrice = roundToTen(
           player.basePrice ?? player.initialPrice ?? player.currentPrice
         );
@@ -2233,15 +2242,16 @@ export const useTradeStore = create<TradeStoreState>()(
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
         }
 
-        const matchCtx = resolvePlayerMatchContext(player, matches);
-        const effectiveStatus =
-          activeMatchContext && activeMatchContext.matchId === player.matchId
-            ? activeMatchContext.status === "FT"
-              ? "FT"
-              : activeMatchContext.status === "PRE"
-              ? "UPCOMING"
-              : "LIVE"
-            : matchCtx.status;
+        const playerMatch = resolveMatchForPlayerView({
+          player,
+          storeMatches: matches,
+          activeMatchContext,
+          belongsToMatch: doesPlayerBelongToMatch,
+        });
+        const effectiveStatus = resolveMatchClock(
+          playerMatch,
+          playerMatch ? null : activeMatchContext
+        ).status;
         const prev = holdings[playerId];
         const basePrice = roundToTen(
           player.basePrice ?? player.initialPrice ?? player.currentPrice
@@ -2663,9 +2673,11 @@ export const useTradeStore = create<TradeStoreState>()(
         };
 
         const nextMatches = matches.map((m) => {
+          if (!resolveMatchClock(m).isLive) return m;
           if (!doesPlayerBelongToMatch(updatedPlayer, m)) return m;
-          const isHome = doesPlayerBelongToTeam(updatedPlayer, m.homeTeam);
-          const isAway = doesPlayerBelongToTeam(updatedPlayer, m.awayTeam);
+          const isAMatch = isNationalTeamMatch(m);
+          const isHome = doesPlayerBelongToTeam(updatedPlayer, m.homeTeam, isAMatch);
+          const isAway = doesPlayerBelongToTeam(updatedPlayer, m.awayTeam, isAMatch);
           if (!isHome && !isAway) return m;
 
           return {
@@ -2689,17 +2701,10 @@ export const useTradeStore = create<TradeStoreState>()(
         const nextTodayMatches = todayMatches.map((tm) =>
           resolveSyncedMatch(tm, nextMatches)
         );
-        const nextActiveMatchContext =
-          activeMatchContext && activeMatchContext.status !== "FT"
-            ? (() => {
-                const synced = nextMatches.find(
-                  (m) => m.id === activeMatchContext.matchId
-                );
-                return synced
-                  ? buildActiveMatchContext(synced)
-                  : activeMatchContext;
-              })()
-            : activeMatchContext;
+        const nextActiveMatchContext = syncActiveMatchContext(
+          activeMatchContext,
+          nextMatches
+        );
 
         set({
           players: nextPlayers,

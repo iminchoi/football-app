@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   canonicalizeTeamKey,
   deduplicateMatches,
+  isSameMatchFixture,
   mergePinnedFixturesForToday,
   resolveFetchedMatchesForDate,
   resolveMatchClock,
@@ -10,6 +11,7 @@ import {
   resolveMatchScore,
   resolveSyncedMatch,
   resolveSyncedMatchFromContext,
+  syncActiveMatchContext,
 } from "../src/lib/matchSync.ts";
 import { buildActiveMatchContext, type Match, type Player } from "../src/types/index.ts";
 
@@ -88,6 +90,19 @@ test("canonicalizeTeamKey unifies English API names, TLAs, and Korean club names
   assert.notEqual(
     canonicalizeTeamKey({ id: "new", name: "Newcastle", shortName: "NEW" }),
     canonicalizeTeamKey({ id: "ars", name: "Arsenal", shortName: "ARS" })
+  );
+  // Shared TLA "FCB" must disambiguate FC Barcelona from FC Bayern München via club name
+  assert.equal(
+    canonicalizeTeamKey({ id: "fcb", name: "FC Barcelona", shortName: "FCB" }),
+    "BAR"
+  );
+  assert.equal(
+    canonicalizeTeamKey({ id: "fcb", name: "FC Bayern München", shortName: "FCB" }),
+    "BAY"
+  );
+  assert.notEqual(
+    canonicalizeTeamKey({ id: "fcb", name: "FC Barcelona", shortName: "FCB" }),
+    canonicalizeTeamKey({ id: "fcb", name: "FC Bayern München", shortName: "FCB" })
   );
 });
 
@@ -364,4 +379,168 @@ test("mergePinnedFixturesForToday keeps unrelated live SCORE_ONLY API fixtures u
   assert.equal(merged[1].events, undefined);
   assert.equal(merged[1].homeTeam.score, 0);
   assert.equal(merged[1].awayTeam.score, 0);
+});
+
+test("future dates and multi-day past dates normalize status/scores cleanly without leaking LIVE state", () => {
+  const liveAMatch = makeMatch({
+    id: "m-kor-jpn",
+    dateKey: "TODAY",
+    leagueId: "amatch",
+    isInternational: true,
+    status: "LIVE",
+    minute: 62,
+    kickoffTime: "20:00",
+    homeTeam: { id: "kor", name: "대한민국", shortName: "KOR", color: "#E6002D", score: 2 },
+    awayTeam: { id: "jpn", name: "일본", shortName: "JPN", color: "#00005B", score: 1 },
+    events: [{ id: "ev-kj-1", minute: 27, type: "GOAL", playerId: "p-son", playerName: "손흥민", source: "REAL" }],
+  });
+
+  const pinnedPool = [
+    makeMatch({ id: "m-new-ars", dateKey: "TODAY", leagueId: "epl", minute: 72 }),
+    makeMatch({
+      id: "m-psg-bar",
+      dateKey: "YESTERDAY",
+      leagueId: "ucl",
+      status: "FT",
+      minute: 90,
+      homeTeam: { id: "psg", name: "PSG", shortName: "PSG", color: "#004170", score: 2 },
+      awayTeam: { id: "bar", name: "Barcelona", shortName: "BAR", color: "#A50044", score: 2 },
+    }),
+    makeMatch({
+      id: "m-tot-mci",
+      dateKey: "WEEKEND",
+      leagueId: "epl",
+      status: "UPCOMING",
+      minute: undefined,
+      kickoffTime: "21:30",
+      homeTeam: { id: "tot", name: "토트넘", shortName: "TOT", color: "#132257" },
+      awayTeam: { id: "mci", name: "맨시티", shortName: "MCI", color: "#6CABDD" },
+    }),
+  ];
+
+  // Future date AMATCH_FALLBACK must never show LIVE scores/minutes or inject today's pinned match
+  const futureAMatch = resolveFetchedMatchesForDate({
+    source: "AMATCH_FALLBACK",
+    matches: [liveAMatch],
+    fallbackMatches: pinnedPool,
+    fixturePool: pinnedPool,
+    requestedDateStr: "2026-11-25",
+    todayStr: "2026-11-22",
+  });
+  assert.equal(futureAMatch.length, 1);
+  assert.equal(futureAMatch[0].id, "m-kor-jpn");
+  assert.equal(futureAMatch[0].status, "UPCOMING");
+  assert.equal(futureAMatch[0].rawStatus, "SCHEDULED");
+  assert.equal(futureAMatch[0].minute, undefined);
+  assert.equal(futureAMatch[0].homeTeam.score, undefined);
+  assert.equal(futureAMatch[0].awayTeam.score, undefined);
+  assert.equal(futureAMatch[0].events, undefined);
+  assert.equal(resolveMatchClock(futureAMatch[0]).phase, "PRE");
+  assert.equal(resolveMatchScore(futureAMatch[0]).display, "vs");
+
+  // Future date UPCOMING card is NOT overwritten by today's LIVE store copy of m-kor-jpn
+  const syncedFutureCard = resolveSyncedMatch(futureAMatch[0], [liveAMatch], "2026-11-22");
+  assert.equal(resolveMatchClock(syncedFutureCard).phase, "PRE");
+  assert.equal(resolveMatchScore(syncedFutureCard).display, "vs");
+
+  // Clicking a player on a future UPCOMING card preserves PRE context even across live ticks
+  const futureCtx = buildActiveMatchContext(syncedFutureCard);
+  assert.equal(futureCtx.status, "PRE");
+  const syncedFutureCtx = syncActiveMatchContext(futureCtx, [liveAMatch]);
+  assert.equal(syncedFutureCtx?.status, "PRE");
+  const resolvedFutureFromCtx = resolveSyncedMatchFromContext(futureCtx, [liveAMatch]);
+  assert.equal(resolveMatchClock(resolvedFutureFromCtx).phase, "PRE");
+
+  // Past date 2 days ago under MOCK_FALLBACK selects YESTERDAY (past) fixtures, never WEEKEND
+  const twoDaysAgoMock = resolveFetchedMatchesForDate({
+    source: "MOCK_FALLBACK",
+    matches: pinnedPool,
+    fallbackMatches: pinnedPool,
+    fixturePool: pinnedPool,
+    requestedDateStr: "2026-11-20",
+    todayStr: "2026-11-22",
+  });
+  assert.equal(twoDaysAgoMock.length, 1);
+  assert.equal(twoDaysAgoMock[0].id, "m-psg-bar");
+  assert.equal(twoDaysAgoMock[0].status, "FT");
+
+  // Past/future API match for NEW vs ARS on another date must NOT collapse into today's m-new-ars
+  const futureApiNewArs = makeMatch({
+    id: "fd-77777",
+    utcDate: "2026-11-29T15:00:00Z",
+    status: "UPCOMING",
+    rawStatus: "TIMED",
+    minute: undefined,
+    homeTeam: { id: "new", name: "Newcastle United", shortName: "NEW", color: "#241F20" },
+    awayTeam: { id: "ars", name: "Arsenal FC", shortName: "ARS", color: "#EF0107" },
+  });
+  assert.equal(isSameMatchFixture(pinnedPool[0], futureApiNewArs, "2026-11-22"), false);
+  const todayCardWithFutureStore = resolveSyncedMatch(
+    pinnedPool[0],
+    [futureApiNewArs],
+    "2026-11-22"
+  );
+  assert.equal(todayCardWithFutureStore.id, "m-new-ars");
+  assert.equal(resolveMatchClock(todayCardWithFutureStore).phase, "2H");
+});
+
+test("edge-case rawStatuses (POSTPONED, HALF_TIME, AWARDED, 0:0 UPCOMING) and stale/unrelated contexts stay isolated", () => {
+  // POSTPONED upcoming match with 0:0 API score must still display PRE / "vs"
+  const postponed = makeMatch({
+    status: "UPCOMING",
+    rawStatus: "POSTPONED",
+    minute: undefined,
+    kickoffTime: "22:00",
+    homeTeam: { id: "new", name: "Newcastle", shortName: "NEW", color: "#241F20", score: 0 },
+    awayTeam: { id: "ars", name: "Arsenal", shortName: "ARS", color: "#EF0107", score: 0 },
+  });
+  assert.equal(resolveMatchClock(postponed).phase, "PRE");
+  assert.equal(resolveMatchScore(postponed).hasScore, false);
+  assert.equal(resolveMatchScore(postponed).display, "vs");
+  assert.equal(buildActiveMatchContext(postponed).status, "PRE");
+
+  // HALF_TIME rawStatus matches HT phase in both resolveMatchClock and buildActiveMatchContext
+  const htAlt = makeMatch({ status: "LIVE", rawStatus: "HALF_TIME", minute: 46 });
+  assert.equal(resolveMatchClock(htAlt).phase, "HT");
+  assert.equal(resolveMatchClock(htAlt).minute, 45);
+  assert.equal(buildActiveMatchContext(htAlt).minute, 45);
+
+  // AWARDED with stale minute resolves to FT / minute 90
+  const awarded = makeMatch({ status: "LIVE", rawStatus: "AWARDED", minute: 72 });
+  assert.equal(resolveMatchClock(awarded).phase, "FT");
+  assert.equal(resolveMatchClock(awarded).minute, 90);
+  assert.equal(buildActiveMatchContext(awarded).status, "FT");
+  assert.equal(buildActiveMatchContext(awarded).minute, 90);
+
+  // Non-null local match (rawStatus: undefined) must NOT inherit stale PAUSED/FINISHED from fallbackContext
+  const liveLocal = makeMatch({
+    id: "m-new-ars",
+    status: "LIVE",
+    rawStatus: undefined,
+    minute: 72,
+    homeTeam: { id: "new", name: "Newcastle", shortName: "NEW", color: "#241F20", score: 1 },
+    awayTeam: { id: "ars", name: "Arsenal", shortName: "ARS", color: "#EF0107", score: 2 },
+  });
+  const stalePausedCtx = buildActiveMatchContext(
+    makeMatch({ id: "fd-other", status: "LIVE", rawStatus: "PAUSED", minute: 45 })
+  );
+  assert.equal(resolveMatchClock(liveLocal, stalePausedCtx).phase, "2H");
+  assert.equal(resolveMatchClock(liveLocal, stalePausedCtx).minute, 72);
+
+  // Unrelated activeMatchContext (PSG vs BAR) must NOT hijack Arsenal player resolution
+  const psgBarFt = makeMatch({
+    id: "m-psg-bar",
+    status: "FT",
+    rawStatus: "FINISHED",
+    minute: 90,
+    homeTeam: { id: "psg", name: "PSG", shortName: "PSG", color: "#004170", score: 2 },
+    awayTeam: { id: "bar", name: "Barcelona", shortName: "BAR", color: "#A50044", score: 1 },
+  });
+  const resolvedForArsPlayer = resolveMatchForPlayerView({
+    player: makePlayer({ matchId: "m-new-ars", teamId: "ars", teamShort: "ARS", teamName: "Arsenal" }),
+    storeMatches: [liveLocal, psgBarFt],
+    activeMatchContext: buildActiveMatchContext(psgBarFt),
+  });
+  assert.equal(resolvedForArsPlayer?.id, "m-new-ars");
+  assert.equal(resolveMatchClock(resolvedForArsPlayer).phase, "2H");
 });

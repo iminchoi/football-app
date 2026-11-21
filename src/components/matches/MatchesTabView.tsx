@@ -170,10 +170,15 @@ export default function MatchesTabView({
         });
 
         setApiMatches(mergedList);
-        if (isTodaySelected) {
-          setTodayMatches(mergedList);
-        }
         syncPlayersFromMatches(mergedList);
+        if (isTodaySelected) {
+          const latestStoreMatches = useTradeStore.getState().matches;
+          setTodayMatches(
+            mergedList.map((m) =>
+              resolveSyncedMatch(m, latestStoreMatches, todayStr)
+            )
+          );
+        }
         setStatusMessage(
           data.source === "FOOTBALL_DATA_API" ? null : data.message || null
         );
@@ -190,10 +195,15 @@ export default function MatchesTabView({
           todayStr,
         });
         setApiMatches(fallbackList);
-        if (dateStr === todayStr) {
-          setTodayMatches(fallbackList);
-        }
         syncPlayersFromMatches(fallbackList);
+        if (dateStr === todayStr) {
+          const latestStoreMatches = useTradeStore.getState().matches;
+          setTodayMatches(
+            fallbackList.map((m) =>
+              resolveSyncedMatch(m, latestStoreMatches, todayStr)
+            )
+          );
+        }
         setStatusMessage(
           "네트워크 연결 상태를 확인해주세요. 데모 경기를 표시합니다."
         );

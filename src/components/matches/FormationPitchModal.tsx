@@ -1254,10 +1254,7 @@ export function buildTeamLineupForMatch(
   }
 
   const applySelectedMatchContext = (p: Player): Player => {
-    const isMatchUpcoming =
-      match.status === "UPCOMING" ||
-      match.rawStatus === "TIMED" ||
-      match.rawStatus === "SCHEDULED";
+    const isMatchUpcoming = resolveMatchClock(match).isUpcoming;
     const base = roundToTen(
       p.basePrice ?? p.openPrice ?? p.initialPrice ?? p.currentPrice ?? 10000
     );

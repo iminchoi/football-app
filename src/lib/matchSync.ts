@@ -23,9 +23,9 @@ export interface ResolvedMatchClock {
   isUpcoming: boolean;
   /** Compact pill label: "PRE" | "1H 38'" | "HT" | "2H 72'" | "FT" */
   shortLabel: string;
-  /** Schedule card & lineup modal label: kickoffTime | "전반 38'" | "HT 45'" | "후반 72'" | "경기 종료 (FT)" */
+  /** Schedule card & lineup modal label: kickoffTime | "전반 38'" | "하프타임 (HT)" | "후반 72'" | "경기 종료 (FT)" */
   cardLabel: string;
-  /** Chart tab label: "경기 예정 (PRE)" | "LIVE 1H 38'" | "HT 45'" | "LIVE 2H 72'" | "당일 경기 (FT)" */
+  /** Chart tab label: "경기 예정 (PRE)" | "LIVE 1H 38'" | "LIVE HT" | "LIVE 2H 72'" | "당일 경기 (FT)" */
   chartLabel: string;
 }
 
@@ -52,6 +52,7 @@ const CANONICAL_TEAM_ALIAS_MAP: Record<string, string> = {
   아스널: "ARS",
 
   tot: "TOT",
+  spurs: "TOT",
   tottenham: "TOT",
   "tottenham hotspur": "TOT",
   토트넘: "TOT",
@@ -84,13 +85,13 @@ const CANONICAL_TEAM_ALIAS_MAP: Record<string, string> = {
   "레알 마드리드": "RMA",
 
   bay: "BAY",
-  fcb: "BAY",
   bayern: "BAY",
   "bayern munich": "BAY",
   "bayern munchen": "BAY",
   "바이에른 뮌헨": "BAY",
 
   psg: "PSG",
+  "paris sg": "PSG",
   "paris saint-germain": "PSG",
   "paris saint germain": "PSG",
   "파리 생제르맹": "PSG",
@@ -193,11 +194,13 @@ export function canonicalizeTeamKey(
   team?: Pick<TeamInfo, "id" | "name" | "shortName"> | null
 ): string {
   if (!team) return "";
+  // Check full/stripped club name before shortName/id so shared TLAs (e.g. "FCB" for
+  // FC Barcelona vs FC Bayern Munich) always disambiguate cleanly.
   const candidates = [
-    cleanTeamToken(team.shortName),
-    cleanTeamToken(team.id),
     cleanTeamToken(team.name),
     stripClubSuffixes(cleanTeamToken(team.name)),
+    cleanTeamToken(team.shortName),
+    cleanTeamToken(team.id),
   ].filter(Boolean);
 
   for (const token of candidates) {
@@ -259,8 +262,11 @@ function getMatchDateCandidates(match: Match): string[] {
   const dates: string[] = [];
   const utc = toUtcDateStr(match.utcDate);
   const kst = toKstDateStr(match.utcDate);
+  const dt = match.utcDate ? new Date(match.utcDate) : null;
+  const local = dt && !Number.isNaN(dt.getTime()) ? toLocalDateStr(dt) : null;
   if (utc) dates.push(utc);
-  if (kst && kst !== utc) dates.push(kst);
+  if (kst && !dates.includes(kst)) dates.push(kst);
+  if (local && !dates.includes(local)) dates.push(local);
   return dates;
 }
 
@@ -492,7 +498,7 @@ export function mergePinnedFixturesForToday(
 ): Match[] {
   const deduped = deduplicateMatches(
     fetchedMatches,
-    todayDateStr ?? isToday
+    isToday ? todayDateStr ?? true : false
   );
   if (!isToday) return deduped;
 
@@ -565,6 +571,55 @@ export function finalizePastMatches(
 }
 
 /**
+ * Force every match dated after today to UPCOMING (PRE) with scores/minutes cleared
+ * so fallback fixtures or future dates never appear as LIVE or FT.
+ */
+export function normalizeFutureMatches(
+  list: Match[],
+  requestedDateStr: string,
+  todayStr: string,
+  useKickoffDate: boolean
+): Match[] {
+  return list.map((m) => {
+    const kickoff = useKickoffDate && m.utcDate ? new Date(m.utcDate) : null;
+    const matchDateStr =
+      kickoff && !Number.isNaN(kickoff.getTime())
+        ? toLocalDateStr(kickoff)
+        : requestedDateStr;
+    if (matchDateStr <= todayStr) return m;
+    const clock = resolveMatchClock(m);
+    if (
+      clock.isUpcoming &&
+      m.minute === undefined &&
+      m.homeTeam.score === undefined &&
+      m.awayTeam.score === undefined &&
+      m.events === undefined
+    ) {
+      return m;
+    }
+    const nextKickoff =
+      m.kickoffTime && m.kickoffTime !== "종료" ? m.kickoffTime : "예정";
+    return {
+      ...m,
+      status: "UPCOMING",
+      rawStatus: "SCHEDULED",
+      minute: undefined,
+      kickoffTime: nextKickoff,
+      homeTeam: {
+        ...m.homeTeam,
+        score: undefined,
+      },
+      awayTeam: {
+        ...m.awayTeam,
+        score: undefined,
+      },
+      events: undefined,
+      highlightText: `킥오프 ${nextKickoff} (예정)`,
+    };
+  });
+}
+
+/**
  * Single match-merge path shared by MatchesTabView and useTradeStore.fetchTodayMatches.
  */
 export function resolveFetchedMatchesForDate(params: {
@@ -586,8 +641,13 @@ export function resolveFetchedMatchesForDate(params: {
   const isToday = requestedDateStr === todayStr;
 
   if (source === "FOOTBALL_DATA_API") {
-    const finalized = finalizePastMatches(
-      Array.isArray(matches) ? matches : [],
+    const finalized = normalizeFutureMatches(
+      finalizePastMatches(
+        Array.isArray(matches) ? matches : [],
+        requestedDateStr,
+        todayStr,
+        true
+      ),
       requestedDateStr,
       todayStr,
       true
@@ -601,8 +661,13 @@ export function resolveFetchedMatchesForDate(params: {
   }
 
   if (source === "AMATCH_FALLBACK") {
-    const finalized = finalizePastMatches(
-      Array.isArray(matches) ? matches : fallbackMatches,
+    const finalized = normalizeFutureMatches(
+      finalizePastMatches(
+        Array.isArray(matches) ? matches : fallbackMatches,
+        requestedDateStr,
+        todayStr,
+        false
+      ),
       requestedDateStr,
       todayStr,
       false
@@ -621,7 +686,7 @@ export function resolveFetchedMatchesForDate(params: {
       (1000 * 60 * 60 * 24)
   );
   const targetKey =
-    diffDays === -1
+    diffDays <= -1
       ? "YESTERDAY"
       : diffDays === 0
       ? "TODAY"
@@ -632,8 +697,13 @@ export function resolveFetchedMatchesForDate(params: {
   const baseFallback =
     Array.isArray(matches) && matches.length > 0 ? matches : fallbackMatches;
   const filteredMock = baseFallback.filter((m) => m.dateKey === targetKey);
-  const resolvedFallback = finalizePastMatches(
-    filteredMock.length > 0 ? filteredMock : baseFallback,
+  const resolvedFallback = normalizeFutureMatches(
+    finalizePastMatches(
+      filteredMock.length > 0 ? filteredMock : baseFallback,
+      requestedDateStr,
+      todayStr,
+      false
+    ),
     requestedDateStr,
     todayStr,
     false
@@ -649,16 +719,16 @@ export function resolveFetchedMatchesForDate(params: {
 
 /**
  * Overlay live store match clock/score onto a display match card while keeping
- * finished (FT) cards locked and never letting a dummy store match overwrite a
- * live API `SCORE_ONLY` match's score or clock.
+ * finished (FT) and date-scoped non-API UPCOMING cards locked, and never letting
+ * a dummy store match overwrite a live API `SCORE_ONLY` match's score or clock.
  */
-export function resolveSyncedMatch(match: Match, storeMatches: Match[]): Match {
-  const rawUpper = (match.rawStatus ?? "").trim().toUpperCase();
-  if (
-    match.status === "FT" ||
-    rawUpper === "FINISHED" ||
-    rawUpper === "AWARDED"
-  ) {
+export function resolveSyncedMatch(
+  match: Match,
+  storeMatches: Match[],
+  todayDateStr: string = toLocalDateStr(new Date())
+): Match {
+  const matchClock = resolveMatchClock(match);
+  if (matchClock.isFinished) {
     return match;
   }
 
@@ -667,11 +737,19 @@ export function resolveSyncedMatch(match: Match, storeMatches: Match[]): Match {
     exact ??
     storeMatches.find(
       (s) =>
-        isSameMatchFixture(match, s, true) &&
+        isSameMatchFixture(match, s, todayDateStr) &&
         (!isApiBackedMatch(match) || isApiBackedMatch(s))
     );
 
   if (!canonical) return match;
+
+  if (
+    !isApiBackedMatch(match) &&
+    matchClock.isUpcoming &&
+    !resolveMatchClock(canonical).isUpcoming
+  ) {
+    return match;
+  }
 
   return {
     ...canonical,
@@ -756,7 +834,8 @@ function buildMatchSnapshotFromContext(
 
 /**
  * Resolve the live store Match corresponding to an ActiveMatchContext.
- * Preserves finalized past-date FT contexts even if the store holds a live copy.
+ * Preserves finalized past-date FT contexts and date-scoped PRE contexts
+ * even if the store holds a live copy for the same fallback fixture ID.
  */
 export function resolveSyncedMatchFromContext(
   activeMatchContext: ActiveMatchContext | null | undefined,
@@ -766,18 +845,24 @@ export function resolveSyncedMatchFromContext(
 
   const byId = storeMatches.find((m) => m.id === activeMatchContext.matchId);
   if (byId) {
+    const byIdClock = resolveMatchClock(byId);
+    if (activeMatchContext.status === "FT" && !byIdClock.isFinished) {
+      return buildMatchSnapshotFromContext(activeMatchContext, byId);
+    }
     if (
-      activeMatchContext.status === "FT" &&
-      byId.status !== "FT" &&
-      byId.rawStatus !== "FINISHED" &&
-      byId.rawStatus !== "AWARDED"
+      activeMatchContext.status === "PRE" &&
+      !isApiBackedMatch(byId) &&
+      !byIdClock.isUpcoming
     ) {
       return buildMatchSnapshotFromContext(activeMatchContext, byId);
     }
     return byId;
   }
 
-  if (activeMatchContext.status === "FT") {
+  if (
+    activeMatchContext.status === "FT" ||
+    activeMatchContext.status === "PRE"
+  ) {
     return buildMatchSnapshotFromContext(activeMatchContext);
   }
 
@@ -811,17 +896,6 @@ export function resolveMatchForPlayerView(params: {
 }): Match | undefined {
   const { player, storeMatches, activeMatchContext, belongsToMatch } = params;
 
-  if (activeMatchContext) {
-    const byCtx = resolveSyncedMatchFromContext(
-      activeMatchContext,
-      storeMatches
-    );
-    if (byCtx) return byCtx;
-  }
-
-  const direct = storeMatches.find((m) => m.id === player.matchId);
-  if (direct) return direct;
-
   const matcher =
     belongsToMatch ??
     ((p: Player, m: Match) => {
@@ -836,6 +910,19 @@ export function resolveMatchForPlayerView(params: {
         canonicalizeTeamKey(m.awayTeam) === pKey
       );
     });
+
+  if (activeMatchContext) {
+    const byCtx = resolveSyncedMatchFromContext(
+      activeMatchContext,
+      storeMatches
+    );
+    if (byCtx && (player.matchId === byCtx.id || matcher(player, byCtx))) {
+      return byCtx;
+    }
+  }
+
+  const direct = storeMatches.find((m) => m.id === player.matchId);
+  if (direct) return direct;
 
   const liveMatch = storeMatches.find(
     (m) => resolveMatchClock(m).isLive && matcher(player, m)
@@ -854,15 +941,15 @@ function formatClockMinute(minute: number): string {
 /**
  * Single source of truth for match clock (PRE / 1H / HT / 2H / FT) across
  * schedule cards, lineup/pitch view, market overview, charts, and header.
+ * When `match` is provided, its own fields are strictly authoritative;
+ * `fallbackContext` is only consulted when `match` is absent.
  */
 export function resolveMatchClock(
   match?: Match | null,
   fallbackContext?: ActiveMatchContext | null
 ): ResolvedMatchClock {
   const rawStatus = (
-    match?.rawStatus ??
-    fallbackContext?.rawStatus ??
-    ""
+    match ? match.rawStatus ?? "" : fallbackContext?.rawStatus ?? ""
   )
     .trim()
     .toUpperCase();
@@ -871,7 +958,9 @@ export function resolveMatchClock(
     ? match.status === "FT" ||
       rawStatus === "FINISHED" ||
       rawStatus === "AWARDED"
-    : fallbackContext?.status === "FT";
+    : fallbackContext?.status === "FT" ||
+      rawStatus === "FINISHED" ||
+      rawStatus === "AWARDED";
 
   const isUpcoming =
     !isFinished &&
@@ -880,10 +969,14 @@ export function resolveMatchClock(
         rawStatus === "TIMED" ||
         rawStatus === "SCHEDULED" ||
         rawStatus === "POSTPONED"
-      : fallbackContext?.status === "PRE");
+      : fallbackContext?.status === "PRE" ||
+        rawStatus === "TIMED" ||
+        rawStatus === "SCHEDULED" ||
+        rawStatus === "POSTPONED");
 
-  const kickoffTime =
-    match?.kickoffTime || fallbackContext?.kickoffTime || "예정";
+  const kickoffTime = match
+    ? match.kickoffTime || "예정"
+    : fallbackContext?.kickoffTime || "예정";
 
   if (isFinished) {
     return {
@@ -938,7 +1031,7 @@ export function resolveMatchClock(
     };
   }
 
-  const rawMin = match?.minute ?? fallbackContext?.minute ?? 45;
+  const rawMin = match ? match.minute ?? 45 : fallbackContext?.minute ?? 45;
   const minute = Math.max(1, Math.min(95, Math.round(rawMin)));
   const phase: MatchClockPhase = minute <= 45 ? "1H" : "2H";
   const minText = formatClockMinute(minute);
@@ -966,8 +1059,12 @@ export function resolveMatchScore(
   fallbackContext?: ActiveMatchContext | null
 ): ResolvedMatchScore {
   const clock = resolveMatchClock(match, fallbackContext);
-  const homeScore = match?.homeTeam?.score ?? fallbackContext?.homeScore ?? 0;
-  const awayScore = match?.awayTeam?.score ?? fallbackContext?.awayScore ?? 0;
+  const homeScore = match
+    ? match.homeTeam?.score ?? 0
+    : fallbackContext?.homeScore ?? 0;
+  const awayScore = match
+    ? match.awayTeam?.score ?? 0
+    : fallbackContext?.awayScore ?? 0;
 
   return {
     homeScore,

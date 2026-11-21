@@ -23,7 +23,8 @@ import {
   getPositionLine,
   normalizeDetailedPosition,
 } from "@/types";
-import { useTradeStore } from "@/store/useTradeStore";
+import { useTradeStore, doesPlayerBelongToMatch } from "@/store/useTradeStore";
+import { resolveMatchForPlayerView } from "@/lib/matchSync";
 import {
   PLAYER_DETAILED_PROFILES,
   PlayerDetailedProfile,
@@ -373,6 +374,7 @@ export default function PlayerDetailModal({
   onClose,
 }: PlayerDetailModalProps) {
   const matches = useTradeStore((s) => s.matches);
+  const activeMatchContext = useTradeStore((s) => s.activeMatchContext);
   const profile = useMemo(
     () => (player ? buildDetailedProfileForPlayer(player) : null),
     [player]
@@ -380,7 +382,12 @@ export default function PlayerDetailModal({
 
   if (!isOpen || !player || !profile) return null;
 
-  const activeMatch = matches.find((m) => m.id === player.matchId);
+  const activeMatch = resolveMatchForPlayerView({
+    player,
+    storeMatches: matches,
+    activeMatchContext,
+    belongsToMatch: doesPlayerBelongToMatch,
+  });
   const isScoreOnlyRealMode =
     activeMatch?.providerMode === "SCORE_ONLY" &&
     !(player.events ?? []).some((e) => e.source === "SIMULATED");

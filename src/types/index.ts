@@ -381,15 +381,23 @@ export interface ActiveMatchContext {
 
 export function buildActiveMatchContext(match: Match): ActiveMatchContext {
   const rawUpper = (match.rawStatus || "").trim().toUpperCase();
-  const status: "PRE" | "LIVE" | "FT" =
-    match.status === "FT" || rawUpper === "FINISHED" || rawUpper === "AWARDED"
-      ? "FT"
-      : match.status === "LIVE" ||
-        rawUpper === "IN_PLAY" ||
-        rawUpper === "PAUSED" ||
-        rawUpper === "LIVE"
-      ? "LIVE"
-      : "PRE";
+  const isFinished =
+    match.status === "FT" || rawUpper === "FINISHED" || rawUpper === "AWARDED";
+  const isUpcoming =
+    !isFinished &&
+    (match.status === "UPCOMING" ||
+      rawUpper === "TIMED" ||
+      rawUpper === "SCHEDULED" ||
+      rawUpper === "POSTPONED");
+  const isHalfTime =
+    !isFinished &&
+    !isUpcoming &&
+    (rawUpper === "PAUSED" || rawUpper === "HT" || rawUpper === "HALF_TIME");
+  const status: "PRE" | "LIVE" | "FT" = isFinished
+    ? "FT"
+    : isUpcoming
+    ? "PRE"
+    : "LIVE";
 
   return {
     matchId: match.id,
@@ -400,13 +408,13 @@ export function buildActiveMatchContext(match: Match): ActiveMatchContext {
     awayScore: match.awayTeam.score ?? 0,
     status,
     ...(match.rawStatus ? { rawStatus: match.rawStatus } : {}),
-    kickoffTime: match.kickoffTime,
+    kickoffTime: isFinished ? "종료" : match.kickoffTime,
     minute:
       status === "FT"
-        ? match.minute ?? 90
+        ? 90
         : status === "PRE"
         ? 0
-        : rawUpper === "PAUSED"
+        : isHalfTime
         ? 45
         : match.minute,
   };
