@@ -838,11 +838,16 @@ export function buildTeamLineupForMatch(
   const usedNames = new Set<string>();
   const entryByPlayerId = new Map<string, ApiLineupPlayer>();
 
-  const markUsed = (p: Player) => {
+  const markUsed = (p: Pick<Player, "id" | "name" | "englishName">) => {
     usedIds.add(p.id);
     usedNames.add(formatPlayerDisplayName(p, "full"));
     usedNames.add(p.name.trim());
   };
+
+  const isPlayerUsed = (p: Pick<Player, "id" | "name" | "englishName">) =>
+    usedIds.has(p.id) ||
+    usedNames.has(p.name.trim()) ||
+    usedNames.has(formatPlayerDisplayName(p, "full"));
 
   const teamSeed = hashSeed(`${match.id}-${activeTeam.id}-${side}`);
   const sidePoolOffset = side === "HOME" ? 0 : 5;
@@ -1008,7 +1013,7 @@ export function buildTeamLineupForMatch(
   // PASS 1 (1순위 — 정확 매칭): player.position === slot.slotPosition
   formationSlots.forEach((slot, slotIdx) => {
     const exactCandidate = starterCandidates.find((p) => {
-      if (usedIds.has(p.id) || usedNames.has(p.name.trim())) return false;
+      if (isPlayerUsed(p)) return false;
       const pPos = normalizeDetailedPosition(p.position);
       return (
         pPos === slot.slotPosition &&
@@ -1030,7 +1035,7 @@ export function buildTeamLineupForMatch(
       if (!isPositionAllowedInSlot(compatPos, slot.slotPosition)) continue;
 
       const compatibleCandidate = starterCandidates.find((p) => {
-        if (usedIds.has(p.id) || usedNames.has(p.name.trim())) return false;
+        if (isPlayerUsed(p)) return false;
         const pPos = normalizeDetailedPosition(p.position);
         return (
           pPos === compatPos && isPositionAllowedInSlot(pPos, slot.slotPosition)
@@ -1079,13 +1084,16 @@ export function buildTeamLineupForMatch(
 
     let koName = slot.fallbackKoLastNames[candidateIdx];
     let enName = slot.fallbackEnLastNames[candidateIdx];
+    const resolveFullName = (kName: string, eName?: string) =>
+      formatPlayerDisplayName({ name: kName, englishName: eName }, "full");
 
-    if (usedNames.has(koName)) {
+    if (usedNames.has(koName) || usedNames.has(resolveFullName(koName, enName))) {
       for (let k = 0; k < slot.fallbackKoLastNames.length; k++) {
         const altKo = slot.fallbackKoLastNames[k];
-        if (!usedNames.has(altKo)) {
+        const altEn = slot.fallbackEnLastNames[k] || altKo;
+        if (!usedNames.has(altKo) && !usedNames.has(resolveFullName(altKo, altEn))) {
           koName = altKo;
-          enName = slot.fallbackEnLastNames[k] || altKo;
+          enName = altEn;
           break;
         }
       }
@@ -1093,6 +1101,7 @@ export function buildTeamLineupForMatch(
 
     usedIds.add(synId);
     usedNames.add(koName);
+    usedNames.add(resolveFullName(koName, enName));
 
     const virtualRating = Number(
       (6.4 + ((teamSeed + slotIdx * 11) % 15) * 0.1).toFixed(1)
@@ -1172,19 +1181,21 @@ export function buildTeamLineupForMatch(
   const bench: Player[] = [];
   apiBench.forEach((entry, idx) => {
     const matched = findStorePlayerForEntry(entry);
-    if (matched && !usedIds.has(matched.id) && !usedNames.has(matched.name.trim())) {
-      markUsed(matched);
-      entryByPlayerId.set(matched.id, entry);
-      bench.push(
-        applyLineupEntryMeta(
-          {
-            ...matched,
-            position: normalizeDetailedPosition(entry.position || matched.position),
-          },
-          entry,
-          stripMatchEvents
-        )
-      );
+    if (matched) {
+      if (!isPlayerUsed(matched)) {
+        markUsed(matched);
+        entryByPlayerId.set(matched.id, entry);
+        bench.push(
+          applyLineupEntryMeta(
+            {
+              ...matched,
+              position: normalizeDetailedPosition(entry.position || matched.position),
+            },
+            entry,
+            stripMatchEvents
+          )
+        );
+      }
       return;
     }
 
@@ -1295,7 +1306,12 @@ export function buildTeamLineupForMatch(
       englishName: p.englishName,
     });
 
-    if (isMatchUpcoming || isCrossMatchPlayer || isScoreOnlyMatch) {
+    if (
+      isMatchUpcoming ||
+      isCrossMatchPlayer ||
+      isScoreOnlyMatch ||
+      Boolean(match.usesDummyLineup)
+    ) {
       // Never carry over another match's substitution/card/event fields when projecting onto this match.
       const resetPlayer: Player = {
         ...p,
@@ -1313,7 +1329,9 @@ export function buildTeamLineupForMatch(
         currentPrice: base,
         highPrice: base,
         lowPrice: base,
-        isCaptain: matchedEntry?.isCaptain ?? false,
+        isCaptain:
+          matchedEntry?.isCaptain ??
+          (isCrossMatchPlayer ? false : p.isCaptain ?? false),
         subInMinute: undefined,
         subOutMinute: undefined,
         yellowCards: 0,

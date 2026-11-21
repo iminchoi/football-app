@@ -8,7 +8,11 @@ import {
   normalizePlayerNameKey,
   resolvePlayerDisplayName,
 } from "../src/lib/playerDisplayName.ts";
-import { doesIdentityMatchPlayer } from "../src/lib/lineupStatus.ts";
+import {
+  doesIdentityMatchPlayer,
+  findLineupEntryForPlayer,
+} from "../src/lib/lineupStatus.ts";
+import type { Match } from "../src/types/index.ts";
 
 test("normalizePlayerNameKey folds diacritics and non-decomposing Latin characters cleanly", () => {
   assert.equal(normalizePlayerNameKey("Ødegaard"), "odegaard");
@@ -161,4 +165,55 @@ test("canonicalization, identity matching, and search work across scripts withou
     englishName: "Harvey Barnes",
   };
   assert.equal(doesPlayerNameMatch(harveyBarnes, "Ashley Barnes"), false);
+});
+
+test("findLineupEntryForPlayer resolves accented and cross-script lineup entries cleanly", () => {
+  const match: Match = {
+    id: "m-new-ars",
+    leagueId: "epl",
+    leagueName: "프리미어리그",
+    leagueCountry: "잉글랜드",
+    status: "LIVE",
+    minute: 72,
+    kickoffTime: "02:30",
+    homeTeam: {
+      id: "new",
+      name: "Newcastle",
+      shortName: "NEW",
+      color: "#241F20",
+      score: 1,
+      formation: "4-2-3-1",
+      lineup: [{ id: "p-new-dedic", name: "Dedić", position: "RB", shirtNumber: 37 }],
+      bench: [{ id: "p-new-schar", name: "Fabian Schär", position: "CB", shirtNumber: 5 }],
+    },
+    awayTeam: {
+      id: "ars",
+      name: "Arsenal",
+      shortName: "ARS",
+      color: "#EF0107",
+      score: 2,
+      formation: "4-2-3-1",
+      lineup: [{ id: "p-ars-odegaard", name: "Ødegaard", position: "CAM", shirtNumber: 8, isCaptain: true }],
+      bench: [{ id: "p-ars-hincapie", name: "Piero Hincapié", position: "CB", shirtNumber: 5 }],
+    },
+  };
+
+  const odeEntry = findLineupEntryForPlayer(
+    { id: "p-odegaard", name: "마르틴 외데고르", englishName: "Martin Odegaard" },
+    match
+  );
+  assert.equal(odeEntry?.id, "p-ars-odegaard");
+  assert.equal(odeEntry?.isCaptain, true);
+
+  const scharEntry = findLineupEntryForPlayer(
+    { id: "api-p-991", name: "파비안 셰어", englishName: "Fabian Schar" },
+    match
+  );
+  assert.equal(scharEntry?.id, "p-new-schar");
+
+  const hincapieEntry = findLineupEntryForPlayer(
+    { id: "api-p-992", name: "피에로 인카피에", englishName: "Piero Hincapie" },
+    match
+  );
+  assert.equal(hincapieEntry?.id, "p-ars-hincapie");
 });

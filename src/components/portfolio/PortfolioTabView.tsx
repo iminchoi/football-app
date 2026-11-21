@@ -19,7 +19,10 @@ import { useTradeStore, roundToTen } from "@/store/useTradeStore";
 import { INITIAL_CASH } from "@/data/dummyData";
 import { Player, TradeType } from "@/types";
 import { getTierConfig } from "@/utils/tier";
-import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
+import {
+  doesPlayerNameMatch,
+  formatPlayerDisplayName,
+} from "@/lib/playerDisplayName";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface PortfolioTabViewProps {
@@ -64,7 +67,9 @@ export default function PortfolioTabView({
       const matchedByName =
         !matchedById && fallbackName
           ? players.find(
-              (p) => p.name.trim() === fallbackName.trim()
+              (p) =>
+                p.name.trim() === fallbackName.trim() ||
+                doesPlayerNameMatch(p, fallbackName)
             )
           : undefined;
       const savedPrice = playerPrices[h.playerId];

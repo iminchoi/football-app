@@ -642,7 +642,7 @@ test("strict event-only gating blocks stale, simulated, estimated, ScoreOnly, an
   assert.equal(simStatus.yellowCards, 0);
   assert.equal(simStatus.redCards, 0);
 
-  // 4) SCORE_ONLY & usesDummyLineup ignore lineup entry card/sub metadata
+  // 4) SCORE_ONLY & usesDummyLineup block sub/card badges across lineup meta, match.events, providerPlayerEvents, and player.events
   const scoreOnlyDummyMatch = makeBaseMatch({
     id: "m-score-only-badges",
     providerMode: "SCORE_ONLY",
@@ -665,14 +665,51 @@ test("strict event-only gating blocks stale, simulated, estimated, ScoreOnly, an
         },
       ],
     },
+    events: [
+      { id: "so-yc", minute: 22, type: "YELLOW_CARD", playerId: "p-test-1", playerName: "테스트 선수", source: "REAL" },
+      { id: "so-rc", minute: 65, type: "RED_CARD", playerId: "p-test-1", playerName: "테스트 선수", source: "REAL" },
+      { id: "so-sub", minute: 70, type: "SUB", playerName: "테스트 선수", playerOutId: "p-test-1", playerOutName: "테스트 선수", playerInId: "p-test-2", playerInName: "벤치 선수", source: "REAL" },
+    ],
   });
   const scoreOnlyBadgeStatus = resolvePlayerMatchStatus({
-    player: makeBasePlayer({ id: "p-test-1", matchId: "m-score-only-badges" }),
+    player: makeBasePlayer({
+      id: "p-test-1",
+      matchId: "m-score-only-badges",
+      events: [
+        { id: "p-so-yc", playerId: "p-test-1", minute: 22, type: "YELLOW_CARD", description: "경고", priceImpactPercent: -2.0, source: "REAL" },
+      ],
+    }),
     match: scoreOnlyDummyMatch,
+    providerPlayerEvents: [
+      { id: "pev-so-sub", playerId: "p-test-1", minute: 70, type: "SUB_OUT", source: "REAL" },
+      { id: "pev-so-yc", playerId: "p-test-1", minute: 22, type: "YELLOW_CARD", source: "REAL" },
+    ],
   });
+  assert.equal(scoreOnlyBadgeStatus.subInMinute, undefined);
   assert.equal(scoreOnlyBadgeStatus.subOutMinute, undefined);
   assert.equal(scoreOnlyBadgeStatus.yellowCards, 0);
   assert.equal(scoreOnlyBadgeStatus.redCards, 0);
+
+  // 5) Dummy lineup match (even without SCORE_ONLY) suppresses player.events / match.events card & sub badges
+  const dummyLineupOnlyMatch = makeBaseMatch({
+    id: "m-dummy-lineup-only",
+    usesDummyLineup: true,
+    events: undefined,
+  });
+  const dummyLineupStatus = resolvePlayerMatchStatus({
+    player: makeBasePlayer({
+      id: "p-test-1",
+      matchId: "m-dummy-lineup-only",
+      events: [
+        { id: "dl-yc", playerId: "p-test-1", minute: 30, type: "YELLOW_CARD", description: "경고", priceImpactPercent: -2.0, source: "REAL" },
+      ],
+    }),
+    match: dummyLineupOnlyMatch,
+  });
+  assert.equal(dummyLineupStatus.yellowCards, 0);
+  assert.equal(dummyLineupStatus.redCards, 0);
+  assert.equal(dummyLineupStatus.subInMinute, undefined);
+  assert.equal(dummyLineupStatus.subOutMinute, undefined);
 });
 
 test("cross-script and accented names preserve exact player event matching for badges without leaking to teammates", () => {

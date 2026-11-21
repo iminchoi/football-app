@@ -31,6 +31,7 @@ import {
 } from "@/data/dummyData";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
 import {
+  canonicalizeTeamKey,
   deduplicateMatches,
   enrichMatchFromFixture,
   isApiBackedMatch,
@@ -126,11 +127,11 @@ interface TradeStoreState {
   setActiveTab: (tab: BottomTab) => void;
   toggleExpandMatch: (matchId: string) => void;
   toggleWatchlist: (playerId: string) => void;
-  ensurePlayerInStore: (player: Player) => void;
+  ensurePlayerInStore: (player: Player) => string;
   selectPlayer: (
     player: Player,
     matchContext?: ActiveMatchContext | null
-  ) => void;
+  ) => string;
   syncPlayersFromMatches: (matches: Match[]) => void;
   setTodayMatches: (matches: Match[]) => void;
   fetchTodayMatches: () => Promise<void>;
@@ -361,11 +362,20 @@ export function doesPlayerBelongToTeam(
   }
 
   // 클럽 팀 매칭 (A매치가 아닐 때만 사용)
+  const playerTeamKey = canonicalizeTeamKey({
+    id: player.teamId,
+    name: player.teamName,
+    shortName: player.teamShort,
+  });
+  const targetTeamKey = canonicalizeTeamKey(team);
   return (
     (Boolean(teamIdLower) && player.teamId.toLowerCase() === teamIdLower) ||
     (Boolean(teamShortUpper) &&
       player.teamShort.toUpperCase() === teamShortUpper) ||
-    (Boolean(teamNameTrimmed) && player.teamName === teamNameTrimmed)
+    (Boolean(teamNameTrimmed) && player.teamName === teamNameTrimmed) ||
+    (Boolean(playerTeamKey) &&
+      playerTeamKey !== "UNKNOWN" &&
+      playerTeamKey === targetTeamKey)
   );
 }
 
@@ -888,7 +898,7 @@ export const useTradeStore = create<TradeStoreState>()(
             ? buildActiveMatchContext(resolvedMatch)
             : matchContext,
         });
-        get().ensurePlayerInStore(player);
+        return get().ensurePlayerInStore(player);
       },
 
       ensurePlayerInStore: (newPlayer) => {
@@ -904,7 +914,8 @@ export const useTradeStore = create<TradeStoreState>()(
             (!newPlayer.id.startsWith("pitch-") &&
               !p.id.startsWith("pitch-") &&
               (p.name.trim() === newPlayer.name.trim() ||
-                p.name.trim() === canonicalNames.name))
+                p.name.trim() === canonicalNames.name ||
+                doesIdentityMatchPlayer(p, newPlayer.id, newPlayer.name)))
         );
 
         if (existingIdx !== -1) {
@@ -915,7 +926,7 @@ export const useTradeStore = create<TradeStoreState>()(
             newPlayer.matchId &&
             existing.matchId !== newPlayer.matchId
           ) {
-            return;
+            return existing.id;
           }
           const incomingNat = resolveNationalTeamName(newPlayer.nationalTeam) || newPlayer.nationalTeam || existing.nationalTeam;
           const isIncomingNatTeam = isNationalTeamInfo({
@@ -958,7 +969,7 @@ export const useTradeStore = create<TradeStoreState>()(
             };
             set({ players: nextPlayers });
           }
-          return;
+          return existing.id;
         }
 
         const base = roundToTen(
@@ -1035,6 +1046,7 @@ export const useTradeStore = create<TradeStoreState>()(
             },
           },
         });
+        return normalized.id;
       },
 
       setTodayMatches: (matches) => {
@@ -1503,12 +1515,19 @@ export const useTradeStore = create<TradeStoreState>()(
             });
 
             for (const ev of expandedEvents) {
+              if (
+                typeof ev.minute !== "number" ||
+                !Number.isFinite(ev.minute) ||
+                ev.minute < 1
+              ) {
+                continue;
+              }
               const isSimulatedOrEstimated =
                 ev.source === "SIMULATED" ||
                 ev.estimated === true ||
                 ev.metadata?.estimated === true;
               if (
-                isSimulatedOrEstimated &&
+                (isSimulatedOrEstimated || !allowLineupEvents) &&
                 (ev.type === "SUB_IN" ||
                   ev.type === "SUB_OUT" ||
                   ev.type === "YELLOW_CARD" ||
@@ -1532,7 +1551,7 @@ export const useTradeStore = create<TradeStoreState>()(
               if (targetIdx === -1) continue;
 
               const target = nextPlayers[targetIdx];
-              const minute = Math.min(95, Math.max(1, ev.minute));
+              const minute = Math.min(95, Math.max(1, Math.round(ev.minute)));
 
               if (ev.type === "SUB_IN" || ev.type === "SUB_OUT") {
                 const alreadySubbed =

@@ -38,11 +38,14 @@ export default function HomePage() {
     type: TradeType = "BUY",
     matchContext?: ActiveMatchContext | null
   ) => {
-    selectPlayer(player, matchContext ?? null);
-    setSelectedPlayerId(player.id);
+    const resolvedPlayerId = selectPlayer(player, matchContext ?? null);
+    setSelectedPlayerId(resolvedPlayerId);
     setModalTradeType(type);
     setRecentPlayerIds((prev) =>
-      [player.id, ...prev.filter((id) => id !== player.id)].slice(0, 10)
+      [resolvedPlayerId, ...prev.filter((id) => id !== resolvedPlayerId)].slice(
+        0,
+        10
+      )
     );
   };
 

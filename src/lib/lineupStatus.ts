@@ -219,8 +219,9 @@ export function resolvePlayerMatchStatus(params: {
     ? (match?.events as ApiMatchEvent[])
     : [];
   const isScoreOnlyMode = match?.providerMode === "SCORE_ONLY";
-  const allowVerifiedEntryMeta =
-    Boolean(entry) && !isScoreOnlyMode && !match?.usesDummyLineup;
+  const isDummyLineup = Boolean(match?.usesDummyLineup);
+  const allowCardAndSubEvents = !isScoreOnlyMode && !isDummyLineup;
+  const allowVerifiedEntryMeta = Boolean(entry) && allowCardAndSubEvents;
 
   let subInMinute: number | undefined =
     allowVerifiedEntryMeta && isValidEventMinute(entry?.subInMinute)
@@ -255,10 +256,10 @@ export function resolvePlayerMatchStatus(params: {
   for (const ev of matchEvents) {
     if (!isValidEventMinute(ev.minute)) continue;
     const minute = Math.max(1, Math.min(95, Math.round(ev.minute)));
-    const isReal = isVerifiedRealEvent(ev);
+    const isRealCardOrSub = allowCardAndSubEvents && isVerifiedRealEvent(ev);
 
     if (ev.type === "SUB") {
-      if (!isReal) continue;
+      if (!isRealCardOrSub) continue;
       if (doesIdentityMatchPlayer(player, ev.playerInId, ev.playerInName)) {
         recordSubIn(minute);
       }
@@ -273,13 +274,13 @@ export function resolvePlayerMatchStatus(params: {
     }
 
     if (ev.type === "SUB_IN") {
-      if (isReal) recordSubIn(minute);
+      if (isRealCardOrSub) recordSubIn(minute);
     } else if (ev.type === "SUB_OUT") {
-      if (isReal) recordSubOut(minute);
+      if (isRealCardOrSub) recordSubOut(minute);
     } else if (ev.type === "YELLOW_CARD") {
-      if (isReal) yellowMinutes.add(minute);
+      if (isRealCardOrSub) yellowMinutes.add(minute);
     } else if (ev.type === "RED_CARD") {
-      if (isReal) redMinutes.add(minute);
+      if (isRealCardOrSub) redMinutes.add(minute);
     } else if (ev.type === "GOAL") {
       explicitGoalMinutes.add(minute);
     } else if (ev.type === "ASSIST") {
@@ -293,16 +294,17 @@ export function resolvePlayerMatchStatus(params: {
       if (!isValidEventMinute(pev.minute)) continue;
       if (!doesIdentityMatchPlayer(player, pev.playerId)) continue;
       const minute = Math.max(1, Math.min(95, Math.round(pev.minute)));
-      const isReal = pev.source !== "SIMULATED";
+      const isRealCardOrSub =
+        allowCardAndSubEvents && isVerifiedRealEvent(pev);
 
       if (pev.type === "SUB_IN") {
-        if (isReal) recordSubIn(minute);
+        if (isRealCardOrSub) recordSubIn(minute);
       } else if (pev.type === "SUB_OUT") {
-        if (isReal) recordSubOut(minute);
+        if (isRealCardOrSub) recordSubOut(minute);
       } else if (pev.type === "YELLOW_CARD") {
-        if (isReal) yellowMinutes.add(minute);
+        if (isRealCardOrSub) yellowMinutes.add(minute);
       } else if (pev.type === "RED_CARD") {
-        if (isReal) redMinutes.add(minute);
+        if (isRealCardOrSub) redMinutes.add(minute);
       } else if (pev.type === "GOAL") {
         explicitGoalMinutes.add(minute);
       } else if (pev.type === "ASSIST") {
@@ -314,12 +316,12 @@ export function resolvePlayerMatchStatus(params: {
   // 3) Player SSOT events & priceHistory markers
   // Only read player-level fallback when:
   // - player belongs to this exact match (never cross-match, never synthetic pitch-*)
-  // - not a ScoreOnly match (ScoreOnly has no individual event data)
+  // - not a ScoreOnly or dummy-lineup match (no verified individual event data)
   // - match.events was not explicitly provided (when match.events exists, it is the SSOT)
   const sameMatchAsPlayer =
     !match || (!player.id.startsWith("pitch-") && player.matchId === match.id);
 
-  if (sameMatchAsPlayer && !isScoreOnlyMode && !hasMatchEventsProp) {
+  if (sameMatchAsPlayer && allowCardAndSubEvents && !hasMatchEventsProp) {
     if (Array.isArray(player.events)) {
       for (const ev of player.events) {
         if (!isValidEventMinute(ev.minute)) continue;
