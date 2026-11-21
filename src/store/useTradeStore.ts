@@ -497,6 +497,11 @@ export function normalizePriceHistory(
 
 // Normalize initial players using getTierConfig(basePrice) and SSOT derivePlayerMarketData
 const NORMALIZED_INITIAL_PLAYERS: Player[] = INITIAL_PLAYERS.map((p) => {
+  const canonicalNames = canonicalizeIncomingPlayerNames({
+    id: p.id,
+    name: p.name,
+    englishName: p.englishName,
+  });
   const basePrice = roundToTen(p.basePrice ?? p.initialPrice);
   const openPrice = clampToPriceLimit(
     p.openPrice ?? p.basePrice ?? p.initialPrice,
@@ -520,6 +525,8 @@ const NORMALIZED_INITIAL_PLAYERS: Player[] = INITIAL_PLAYERS.map((p) => {
 
   return {
     ...p,
+    name: canonicalNames.name,
+    englishName: canonicalNames.englishName,
     tier: p.tier ?? tierCfg.tier,
     totalShares: p.totalShares ?? tierCfg.totalShares,
     marketSupply: p.marketSupply ?? tierCfg.marketSupply,
@@ -538,6 +545,29 @@ const NORMALIZED_INITIAL_PLAYERS: Player[] = INITIAL_PLAYERS.map((p) => {
     priceHistory: derived.priceHistory,
   };
 });
+
+function isCardOrSubEventType(type: ChartEventType): boolean {
+  return (
+    type === "YELLOW_CARD" ||
+    type === "RED_CARD" ||
+    type === "SUB_IN" ||
+    type === "SUB_OUT" ||
+    type === "SUB"
+  );
+}
+
+function sanitizePersistedEvents(
+  events: MatchEvent[],
+  allowCardAndSub: boolean
+): MatchEvent[] {
+  return events.filter((ev) => {
+    if (!isCardOrSubEventType(ev.type)) return true;
+    if (!allowCardAndSub) return false;
+    if (ev.source === "SIMULATED") return false;
+    if (ev.estimated === true || ev.metadata?.estimated === true) return false;
+    return true;
+  });
+}
 
 // Overlay persisted playerPrices onto base players list using SSOT derivePlayerMarketData
 function applyPersistedPrices(
@@ -561,7 +591,7 @@ function applyPersistedPrices(
       basePrice
     );
 
-    const savedEvents =
+    const savedEvents = sanitizePersistedEvents(
       Array.isArray(saved.events) && saved.events.length > 0
         ? normalizeMatchEvents(saved.events, player.id, player.position)
         : extractInitialMatchEvents({
@@ -572,7 +602,9 @@ function applyPersistedPrices(
               Array.isArray(saved.priceHistory) && saved.priceHistory.length > 0
                 ? saved.priceHistory
                 : player.priceHistory,
-          });
+          }),
+      true
+    );
 
     // Ensure base events (like 27' Goal) are preserved alongside any newly saved events
     const mergedEventMap = new Map<number, MatchEvent>();
@@ -953,7 +985,14 @@ export const useTradeStore = create<TradeStoreState>()(
               ? newPlayer.teamColor
               : existing.teamColor;
 
+          const existingCanonicalNames = canonicalizeIncomingPlayerNames({
+            id: existing.id,
+            name: existing.name,
+            englishName: existing.englishName || canonicalNames.englishName,
+          });
           if (
+            existing.name !== existingCanonicalNames.name ||
+            existing.englishName !== existingCanonicalNames.englishName ||
             existing.teamName !== nextTeamName ||
             existing.teamId !== nextTeamId ||
             existing.nationalTeam !== incomingNat
@@ -961,6 +1000,8 @@ export const useTradeStore = create<TradeStoreState>()(
             const nextPlayers = [...players];
             nextPlayers[existingIdx] = {
               ...existing,
+              name: existingCanonicalNames.name,
+              englishName: existingCanonicalNames.englishName,
               teamName: nextTeamName,
               teamId: nextTeamId,
               teamShort: nextTeamShort,
@@ -982,13 +1023,27 @@ export const useTradeStore = create<TradeStoreState>()(
           base
         );
 
-        // Clicking or listing a player must never synthesize cards/subs from price diffs.
-        const initialEvents =
-          savedPrice?.events && savedPrice.events.length > 0
+        const directMatch = get().matches.find((m) => m.id === newPlayer.matchId);
+        const allowNewPlayerCardAndSub =
+          !newPlayer.id.startsWith("pitch-") &&
+          (!directMatch ||
+            (!resolveMatchClock(directMatch).isUpcoming &&
+              directMatch.providerMode !== "SCORE_ONLY" &&
+              !directMatch.usesDummyLineup));
+
+        // Clicking or listing a player must never synthesize or leak stale card/sub events.
+        const rawInitialEvents =
+          !newPlayer.id.startsWith("pitch-") &&
+          savedPrice?.events &&
+          savedPrice.events.length > 0
             ? normalizeMatchEvents(savedPrice.events, newPlayer.id, newPlayer.position)
             : Array.isArray(newPlayer.events) && newPlayer.events.length > 0
             ? normalizeMatchEvents(newPlayer.events, newPlayer.id, newPlayer.position)
             : [];
+        const initialEvents = sanitizePersistedEvents(
+          rawInitialEvents,
+          allowNewPlayerCardAndSub
+        );
 
         const ctx = resolvePlayerMatchContext(
           { ...newPlayer, events: initialEvents },
@@ -1011,6 +1066,19 @@ export const useTradeStore = create<TradeStoreState>()(
             resolveNationalTeamName(newPlayer.nationalTeam) ||
             newPlayer.nationalTeam ||
             "",
+          ...(!allowNewPlayerCardAndSub
+            ? {
+                subInMinute: undefined,
+                subOutMinute: undefined,
+                yellowCards: 0,
+                redCards: 0,
+                stats: {
+                  ...newPlayer.stats,
+                  yellowCards: 0,
+                  redCards: 0,
+                },
+              }
+            : {}),
           tier: tierCfg.tier,
           totalShares: tierCfg.totalShares,
           marketSupply: tierCfg.marketSupply,
@@ -1236,9 +1304,25 @@ export const useTradeStore = create<TradeStoreState>()(
                   "";
 
               if (existingIdx !== -1) {
-                // Existing store player: preserve currentPrice, priceHistory, marketSupply; update team/nationalTeam if changed
+                // Existing store player: preserve currentPrice, priceHistory, marketSupply; update names & team/nationalTeam if changed
                 const existing = nextPlayers[existingIdx];
                 let updated = existing;
+
+                const existingCanonicalNames = canonicalizeIncomingPlayerNames({
+                  id: existing.id,
+                  name: existing.name,
+                  englishName: existing.englishName || canonicalNames.englishName,
+                });
+                if (
+                  existing.name !== existingCanonicalNames.name ||
+                  existing.englishName !== existingCanonicalNames.englishName
+                ) {
+                  updated = {
+                    ...updated,
+                    name: existingCanonicalNames.name,
+                    englishName: existingCanonicalNames.englishName,
+                  };
+                }
 
                 if (resolvedNat && existing.nationalTeam !== resolvedNat) {
                   updated = { ...updated, nationalTeam: resolvedNat };
@@ -1373,7 +1457,10 @@ export const useTradeStore = create<TradeStoreState>()(
                 : Math.min(90, Math.max(0, matchClock.minute));
               const initialEvents =
                 savedPrice?.events && savedPrice.events.length > 0
-                  ? normalizeMatchEvents(savedPrice.events, newId, position)
+                  ? sanitizePersistedEvents(
+                      normalizeMatchEvents(savedPrice.events, newId, position),
+                      allowLineupEvents
+                    )
                   : [];
 
               const derived = derivePlayerMarketData({

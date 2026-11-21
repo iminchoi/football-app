@@ -772,3 +772,123 @@ test("cross-script and accented names preserve exact player event matching for b
   assert.equal(timberStatus.subOutMinute, undefined);
   assert.equal(timberStatus.assists, 0);
 });
+
+test("extractInitialMatchEvents never fabricates YELLOW_CARD from negative price diffs even on non-pitch players", () => {
+  const apiPlayerDown = makeBasePlayer({
+    id: "api-p-5501",
+    matchId: "m-live-1",
+    position: "CM",
+    openPrice: 10000,
+    basePrice: 10000,
+    currentPrice: 9700,
+    events: undefined,
+    priceHistory: [{ minute: 0, timeLabel: "0'", price: 10000 }],
+    lastEvent: { text: "패스 미스", sentiment: "negative", minute: 41 },
+  });
+  const extracted = extractInitialMatchEvents(apiPlayerDown, "LIVE");
+  assert.equal(
+    extracted.some((e) => e.type === "YELLOW_CARD" || e.type === "RED_CARD"),
+    false
+  );
+  assert.deepEqual(extracted, []);
+});
+
+test("teamSide scoping blocks opposing-team lineup metadata and cross-team match events, and pitch-* players ignore player-level fallback without match", () => {
+  const homePlayer = makeBasePlayer({
+    id: "api-p-home-barnes",
+    name: "하비 반스",
+    englishName: "Harvey Barnes",
+    matchId: "m-side-guard",
+    teamId: "new",
+    teamName: "Newcastle",
+    teamShort: "NEW",
+  });
+
+  const matchWithOppositeTeamEvents = makeBaseMatch({
+    id: "m-side-guard",
+    homeTeam: {
+      id: "new",
+      name: "Newcastle",
+      shortName: "NEW",
+      color: "#241F20",
+      score: 0,
+      formation: "4-2-3-1",
+      lineup: [{ id: "api-p-home-barnes", name: "Harvey Barnes", position: "LW" }],
+      bench: [],
+    },
+    awayTeam: {
+      id: "ars",
+      name: "Arsenal",
+      shortName: "ARS",
+      color: "#EF0107",
+      score: 1,
+      formation: "4-2-3-1",
+      lineup: [
+        {
+          id: "api-p-away-barnes",
+          name: "Barnes",
+          position: "ST",
+          yellowCards: 1,
+          subOutMinute: 74,
+        },
+      ],
+      bench: [],
+    },
+    events: [
+      {
+        id: "ev-opp-yc",
+        minute: 52,
+        type: "YELLOW_CARD",
+        playerId: "api-p-away-barnes",
+        playerName: "Barnes",
+        teamName: "Arsenal FC",
+        source: "REAL",
+      },
+      {
+        id: "ev-opp-sub",
+        minute: 74,
+        type: "SUB",
+        playerName: "Barnes",
+        playerOutId: "api-p-away-barnes",
+        playerOutName: "Barnes",
+        teamName: "Arsenal FC",
+        source: "REAL",
+      },
+    ],
+  });
+
+  const homeStatus = resolvePlayerMatchStatus({
+    player: homePlayer,
+    match: matchWithOppositeTeamEvents,
+    teamSide: "HOME",
+  });
+  assert.equal(homeStatus.yellowCards, 0);
+  assert.equal(homeStatus.redCards, 0);
+  assert.equal(homeStatus.subOutMinute, undefined);
+  assert.equal(homeStatus.subInMinute, undefined);
+
+  // Synthetic pitch-* player with match omitted must never surface fallback card/sub badges
+  const orphanPitchPlayer = makeBasePlayer({
+    id: "pitch-m-x-new-start-0",
+    matchId: "m-x",
+    events: [
+      {
+        id: "stale-pitch-yc",
+        playerId: "pitch-m-x-new-start-0",
+        minute: 33,
+        type: "YELLOW_CARD",
+        description: "경고",
+        priceImpactPercent: -2.0,
+        source: "REAL",
+      },
+    ],
+  });
+  const orphanStatus = resolvePlayerMatchStatus({
+    player: orphanPitchPlayer,
+    match: undefined,
+  });
+  assert.equal(orphanStatus.yellowCards, 0);
+  assert.equal(orphanStatus.redCards, 0);
+  assert.equal(orphanStatus.subInMinute, undefined);
+  assert.equal(orphanStatus.subOutMinute, undefined);
+});

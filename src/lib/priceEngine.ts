@@ -1085,7 +1085,7 @@ export function extractInitialMatchEvents(
     !player.id.startsWith("pitch-") &&
     player.lastEvent &&
     player.lastEvent.minute > 0 &&
-    player.currentPrice !== openPrice
+    player.currentPrice > openPrice
   ) {
     const min = Math.max(1, Math.min(95, Math.round(player.lastEvent.minute)));
     const rawImpact = calculateChangePercentFromOpen(
@@ -1096,7 +1096,7 @@ export function extractInitialMatchEvents(
     const fallbackPositive: MatchEventType =
       line === "GK" ? "SAVE" : line === "DF" ? "DEFENSIVE_ACTION" : "ASSIST";
     const type = sanitizeEventTypeForPosition(
-      rawImpact < 0 ? "YELLOW_CARD" : fallbackPositive,
+      fallbackPositive,
       player.position,
       rawImpact
     );

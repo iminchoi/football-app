@@ -4,7 +4,7 @@ import type {
   Match,
   Player,
 } from "../types/index.ts";
-import { resolveMatchClock } from "./matchSync.ts";
+import { canonicalizeTeamKey, resolveMatchClock } from "./matchSync.ts";
 import { doesPlayerNameMatch } from "./playerDisplayName.ts";
 import type { PlayerEvent } from "./priceEngine.ts";
 
@@ -88,15 +88,21 @@ export function doesIdentityMatchPlayer(
 
 export function findLineupEntryForPlayer(
   player: Pick<Player, "id" | "name" | "englishName">,
-  match?: Match | null
+  match?: Match | null,
+  teamSide?: "HOME" | "AWAY"
 ): ApiLineupPlayer | undefined {
   if (!match) return undefined;
-  const pools: Array<ApiLineupPlayer[] | undefined> = [
-    match.homeTeam?.lineup,
-    match.homeTeam?.bench,
-    match.awayTeam?.lineup,
-    match.awayTeam?.bench,
-  ];
+  const pools: Array<ApiLineupPlayer[] | undefined> =
+    teamSide === "HOME"
+      ? [match.homeTeam?.lineup, match.homeTeam?.bench]
+      : teamSide === "AWAY"
+      ? [match.awayTeam?.lineup, match.awayTeam?.bench]
+      : [
+          match.homeTeam?.lineup,
+          match.homeTeam?.bench,
+          match.awayTeam?.lineup,
+          match.awayTeam?.bench,
+        ];
   for (const list of pools) {
     if (!Array.isArray(list)) continue;
     for (const entry of list) {
@@ -112,6 +118,21 @@ export function findLineupEntryForPlayer(
     }
   }
   return undefined;
+}
+
+function isEventForOppositeTeam(
+  eventTeamName: string | undefined,
+  match: Match | null | undefined,
+  teamSide: "HOME" | "AWAY" | undefined
+): boolean {
+  if (!eventTeamName || !match || !teamSide) return false;
+  const evKey = canonicalizeTeamKey({ id: "", name: eventTeamName, shortName: "" });
+  if (!evKey || evKey === "UNKNOWN") return false;
+  const ownTeam = teamSide === "HOME" ? match.homeTeam : match.awayTeam;
+  const oppTeam = teamSide === "HOME" ? match.awayTeam : match.homeTeam;
+  const ownKey = canonicalizeTeamKey(ownTeam);
+  const oppKey = canonicalizeTeamKey(oppTeam);
+  return Boolean(oppKey && evKey === oppKey && evKey !== ownKey);
 }
 
 function isMatchUpcoming(match?: Match | null): boolean {
@@ -199,7 +220,8 @@ export function resolvePlayerMatchStatus(params: {
   teamSide?: "HOME" | "AWAY";
 }): PlayerMatchLineupStatus {
   const { player, match, providerPlayerEvents, teamSide } = params;
-  const entry = params.lineupEntry ?? findLineupEntryForPlayer(player, match);
+  const entry =
+    params.lineupEntry ?? findLineupEntryForPlayer(player, match, teamSide);
   const isCaptain = Boolean(entry?.isCaptain ?? player.isCaptain);
 
   if (isMatchUpcoming(match)) {
@@ -255,6 +277,7 @@ export function resolvePlayerMatchStatus(params: {
   // 1) Match-level events (live API, fixture replay, curated match events)
   for (const ev of matchEvents) {
     if (!isValidEventMinute(ev.minute)) continue;
+    if (isEventForOppositeTeam(ev.teamName, match, teamSide)) continue;
     const minute = Math.max(1, Math.min(95, Math.round(ev.minute)));
     const isRealCardOrSub = allowCardAndSubEvents && isVerifiedRealEvent(ev);
 
@@ -319,7 +342,7 @@ export function resolvePlayerMatchStatus(params: {
   // - not a ScoreOnly or dummy-lineup match (no verified individual event data)
   // - match.events was not explicitly provided (when match.events exists, it is the SSOT)
   const sameMatchAsPlayer =
-    !match || (!player.id.startsWith("pitch-") && player.matchId === match.id);
+    !player.id.startsWith("pitch-") && (!match || player.matchId === match.id);
 
   if (sameMatchAsPlayer && allowCardAndSubEvents && !hasMatchEventsProp) {
     if (Array.isArray(player.events)) {
@@ -344,7 +367,7 @@ export function resolvePlayerMatchStatus(params: {
         const ev = pt.event;
         if (!ev || !isValidEventMinute(pt.minute)) continue;
         const minute = Math.max(1, Math.min(95, Math.round(pt.minute)));
-        const isReal = ev.source !== "SIMULATED";
+        const isReal = isVerifiedRealEvent(ev);
         if (ev.type === "SUB_IN") {
           if (isReal) recordSubIn(minute);
         } else if (ev.type === "SUB_OUT") {

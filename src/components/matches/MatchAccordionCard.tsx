@@ -114,14 +114,29 @@ export default function MatchAccordionCard({
           p.matchId === syncedMatch.id &&
           doesPlayerBelongToTeam(p, team, isAMatch)
       );
-      const baseTeamPlayers =
+      const dedupePlayers = (list: Player[]): Player[] => {
+        const seenIds = new Set<string>();
+        const seenNames = new Set<string>();
+        const out: Player[] = [];
+        for (const p of list) {
+          const display = formatPlayerDisplayName(p, "full");
+          if (seenIds.has(p.id) || seenNames.has(display)) continue;
+          seenIds.add(p.id);
+          seenNames.add(display);
+          out.push(p);
+        }
+        return out;
+      };
+
+      const baseTeamPlayers = dedupePlayers(
         sameMatchPlayers.length > 0
           ? sameMatchPlayers
           : players.filter(
               (p) =>
                 !p.id.startsWith("pitch-") &&
                 doesPlayerBelongToTeam(p, team, isAMatch)
-            );
+            )
+      );
 
       if (baseTeamPlayers.length >= 3) {
         return baseTeamPlayers.slice(0, 3);

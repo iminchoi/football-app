@@ -389,7 +389,12 @@ function normalizeMatchEvents(
     });
   }
 
-  return events.length > 0 ? events : undefined;
+  const hasExplicitEventArrays =
+    Array.isArray(rawMatch.goals) ||
+    Array.isArray(rawMatch.bookings) ||
+    Array.isArray(rawMatch.substitutions);
+
+  return events.length > 0 || hasExplicitEventArrays ? events : undefined;
 }
 
 function normalizeLineupPlayers(
@@ -835,7 +840,7 @@ export async function GET(request: NextRequest) {
               : status === "FT"
               ? `경기 종료 (${homeScore ?? 0} : ${awayScore ?? 0})`
               : `킥오프 ${formatKstTime(m.utcDate || "")} (KST)`,
-          ...(matchEvents ? { events: matchEvents } : {}),
+          ...(matchEvents !== undefined ? { events: matchEvents } : {}),
         };
       })
     );

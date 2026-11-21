@@ -22,6 +22,8 @@ test("normalizePlayerNameKey folds diacritics and non-decomposing Latin characte
   assert.equal(normalizePlayerNameKey("Fabian Schär"), "fabian schar");
   assert.equal(normalizePlayerNameKey("Bruno Guimarães"), "bruno guimaraes");
   assert.equal(normalizePlayerNameKey("Piero Hincapié"), "piero hincapie");
+  assert.equal(normalizePlayerNameKey("Kenan Yıldız"), "kenan yildiz");
+  assert.equal(normalizePlayerNameKey("İlkay Gündoğan"), "ilkay gundogan");
 });
 
 test("resolvePlayerDisplayName unifies mixed Korean/English players consistently across pitch, bench, and chart", () => {
@@ -117,6 +119,15 @@ test("unknown external API players stay cleanly formatted without duplicate Engl
   });
   assert.equal(particlePlayer.full, "Sepp van den Berg");
   assert.equal(particlePlayer.pitch, "den Berg");
+
+  const juniorSuffixPlayer = resolvePlayerDisplayName({
+    id: "api-p-99997",
+    name: "Neymar Jr.",
+    englishName: "Neymar Jr.",
+  });
+  assert.equal(juniorSuffixPlayer.full, "Neymar Jr.");
+  assert.equal(juniorSuffixPlayer.pitch, "Neymar");
+  assert.equal(juniorSuffixPlayer.hasDistinctEnglish, false);
 });
 
 test("canonicalization, identity matching, and search work across scripts without surname collisions", () => {

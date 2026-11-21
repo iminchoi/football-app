@@ -39,6 +39,7 @@ import { formatMinuteLabel, type PlayerEvent } from "@/lib/priceEngine";
 import {
   applyLineupEntryMeta,
   doesIdentityMatchPlayer,
+  findLineupEntryForPlayer,
   reconcileTeamGoalMarkers,
   resolveMatchManagers,
   resolvePlayerMatchStatus,
@@ -1064,7 +1065,7 @@ export function buildTeamLineupForMatch(
     const existingSynInStore = storePlayers.find((p) => p.id === synId);
     if (
       existingSynInStore &&
-      !usedIds.has(existingSynInStore.id) &&
+      !isPlayerUsed(existingSynInStore) &&
       (isBench ||
         isPositionAllowedInSlot(existingSynInStore.position, slot.role))
     ) {
@@ -1832,10 +1833,22 @@ export function FormationPitchContent({
     const orderedIds: string[] = [];
     for (const p of [...startingPlayers, ...benchPlayers]) {
       orderedIds.push(p.id);
+      const lineupEntry = findLineupEntryForPlayer(p, syncedMatch, selectedSide);
+      const entryId =
+        lineupEntry?.id !== undefined ? String(lineupEntry.id) : undefined;
+      const entryExtId =
+        lineupEntry?.externalId !== undefined
+          ? String(lineupEntry.externalId)
+          : undefined;
+      const matchedProviderEvents =
+        providerEventsByPlayer?.[p.id] ??
+        (entryId ? providerEventsByPlayer?.[entryId] : undefined) ??
+        (entryExtId ? providerEventsByPlayer?.[entryExtId] : undefined);
       rawMap[p.id] = resolvePlayerMatchStatus({
         player: p,
         match: syncedMatch,
-        providerPlayerEvents: providerEventsByPlayer?.[p.id],
+        lineupEntry,
+        providerPlayerEvents: matchedProviderEvents,
         teamSide: selectedSide,
       });
     }

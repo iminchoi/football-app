@@ -31,6 +31,8 @@ const NON_DECOMPOSING_LATIN_MAP: Record<string, string> = {
   Æ: "ae",
   œ: "oe",
   Œ: "oe",
+  ı: "i",
+  İ: "i",
 };
 
 const HANGUL_REGEX = /[\uAC00-\uD7A3]/;
@@ -1384,6 +1386,16 @@ const SURNAME_PARTICLES = new Set([
   "st",
 ]);
 
+const GENERATIONAL_SUFFIXES = new Set([
+  "jr",
+  "jr.",
+  "sr",
+  "sr.",
+  "ii",
+  "iii",
+  "iv",
+]);
+
 function deriveFallbackPitchLabel(fullName: string): string {
   const trimmed = fullName.trim().replace(/\s+/g, " ");
   if (!trimmed) return "";
@@ -1394,8 +1406,13 @@ function deriveFallbackPitchLabel(fullName: string): string {
     return parts[parts.length - 1];
   }
 
-  const parts = trimmed.split(" ");
-  if (parts.length <= 1) return trimmed;
+  const rawParts = trimmed.split(" ");
+  const parts =
+    rawParts.length > 1 &&
+    GENERATIONAL_SUFFIXES.has(rawParts[rawParts.length - 1].toLowerCase())
+      ? rawParts.slice(0, -1)
+      : rawParts;
+  if (parts.length <= 1) return parts[0] ?? trimmed;
   const last = parts[parts.length - 1];
   const prev = parts[parts.length - 2];
   if (prev && SURNAME_PARTICLES.has(prev.toLowerCase())) {
