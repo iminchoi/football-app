@@ -36,6 +36,7 @@ import {
 import {
   resolveMatchClock,
   resolveMatchForPlayerView,
+  resolveMatchScore,
 } from "@/lib/matchSync";
 import {
   CandleData,
@@ -183,6 +184,11 @@ export default function FullScreenCandleChartModal({
 
   const matchClock = useMemo(
     () => resolveMatchClock(playerMatch, activeMatchContext),
+    [playerMatch, activeMatchContext]
+  );
+
+  const matchScore = useMemo(
+    () => resolveMatchScore(playerMatch, activeMatchContext),
     [playerMatch, activeMatchContext]
   );
 
@@ -997,6 +1003,15 @@ export default function FullScreenCandleChartModal({
                 ) : (
                   <span className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-2.5 py-0.5 font-sans text-[10px] font-bold text-white">
                     FULL TIME
+                  </span>
+                )}
+                {!isViewingLastMatch && (playerMatch || activeMatchContext) && (
+                  <span className="font-mono text-[10px] font-extrabold text-[#0F172A] tabular-nums">
+                    {playerMatch?.homeTeam.shortName ??
+                      activeMatchContext?.homeTeam}{" "}
+                    {matchScore.display}{" "}
+                    {playerMatch?.awayTeam.shortName ??
+                      activeMatchContext?.awayTeam}
                   </span>
                 )}
               </div>

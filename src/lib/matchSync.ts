@@ -353,6 +353,10 @@ function stripLineupMatchEvents(
  */
 export function enrichMatchFromFixture(primary: Match, fixture: Match): Match {
   const isPrimaryScoreOnly = primary.providerMode === "SCORE_ONLY";
+  const isolateFixtureEvents =
+    isPrimaryScoreOnly ||
+    resolveMatchClock(primary).isUpcoming ||
+    (isApiBackedMatch(primary) && !isApiBackedMatch(fixture));
 
   const homeManager =
     primary.homeManager?.trim() ||
@@ -377,7 +381,7 @@ export function enrichMatchFromFixture(primary: Match, fixture: Match): Match {
     if (!Array.isArray(fixtureList) || fixtureList.length === 0) {
       return primaryList;
     }
-    return isPrimaryScoreOnly
+    return isolateFixtureEvents
       ? stripLineupMatchEvents(fixtureList)
       : fixtureList;
   };
@@ -399,8 +403,8 @@ export function enrichMatchFromFixture(primary: Match, fixture: Match): Match {
     fixture.awayTeam.bench
   );
 
-  // Keep live SCORE_ONLY API data cleanly separated from fixture/replay match events
-  const mergedEvents = isPrimaryScoreOnly
+  // Keep live SCORE_ONLY, UPCOMING, and API-backed matches isolated from static fixture events
+  const mergedEvents = isolateFixtureEvents
     ? primary.events
     : Array.isArray(primary.events) && primary.events.length > 0
     ? primary.events
@@ -551,12 +555,12 @@ export function finalizePastMatches(
   useKickoffDate: boolean
 ): Match[] {
   return list.map((m) => {
-    const kickoff = useKickoffDate && m.utcDate ? new Date(m.utcDate) : null;
-    const matchDateStr =
-      kickoff && !Number.isNaN(kickoff.getTime())
-        ? toLocalDateStr(kickoff)
-        : requestedDateStr;
-    if (matchDateStr >= todayStr || m.status === "FT") return m;
+    const candidates = useKickoffDate ? getMatchDateCandidates(m) : [];
+    const isStrictlyPast =
+      candidates.length > 0
+        ? candidates.every((d) => d < todayStr)
+        : requestedDateStr < todayStr;
+    if (!isStrictlyPast || m.status === "FT") return m;
     return {
       ...m,
       status: "FT",
@@ -581,19 +585,25 @@ export function normalizeFutureMatches(
   useKickoffDate: boolean
 ): Match[] {
   return list.map((m) => {
-    const kickoff = useKickoffDate && m.utcDate ? new Date(m.utcDate) : null;
-    const matchDateStr =
-      kickoff && !Number.isNaN(kickoff.getTime())
-        ? toLocalDateStr(kickoff)
-        : requestedDateStr;
-    if (matchDateStr <= todayStr) return m;
+    const candidates = useKickoffDate ? getMatchDateCandidates(m) : [];
+    const isStrictlyFuture =
+      candidates.length > 0
+        ? candidates.every((d) => d > todayStr)
+        : requestedDateStr > todayStr;
+    if (!isStrictlyFuture) return m;
     const clock = resolveMatchClock(m);
+    const homeLineup = stripLineupMatchEvents(m.homeTeam.lineup);
+    const homeBench = stripLineupMatchEvents(m.homeTeam.bench);
+    const awayLineup = stripLineupMatchEvents(m.awayTeam.lineup);
+    const awayBench = stripLineupMatchEvents(m.awayTeam.bench);
     if (
       clock.isUpcoming &&
       m.minute === undefined &&
       m.homeTeam.score === undefined &&
       m.awayTeam.score === undefined &&
-      m.events === undefined
+      m.events === undefined &&
+      !m.homeTeam.lineup &&
+      !m.awayTeam.lineup
     ) {
       return m;
     }
@@ -608,10 +618,14 @@ export function normalizeFutureMatches(
       homeTeam: {
         ...m.homeTeam,
         score: undefined,
+        ...(homeLineup ? { lineup: homeLineup } : {}),
+        ...(homeBench ? { bench: homeBench } : {}),
       },
       awayTeam: {
         ...m.awayTeam,
         score: undefined,
+        ...(awayLineup ? { lineup: awayLineup } : {}),
+        ...(awayBench ? { bench: awayBench } : {}),
       },
       events: undefined,
       highlightText: `킥오프 ${nextKickoff} (예정)`,
@@ -877,10 +891,13 @@ export function resolveSyncedMatchFromContext(
     shortName: activeMatchContext.awayTeam,
   });
 
-  return storeMatches.find(
-    (m) =>
-      canonicalizeTeamKey(m.homeTeam) === targetHome &&
-      canonicalizeTeamKey(m.awayTeam) === targetAway
+  const pairMatches = (m: Match) =>
+    canonicalizeTeamKey(m.homeTeam) === targetHome &&
+    canonicalizeTeamKey(m.awayTeam) === targetAway;
+
+  return (
+    storeMatches.find((m) => resolveMatchClock(m).isLive && pairMatches(m)) ??
+    storeMatches.find(pairMatches)
   );
 }
 

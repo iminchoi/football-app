@@ -31,6 +31,7 @@ import {
 } from "@/data/dummyData";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
 import {
+  deduplicateMatches,
   enrichMatchFromFixture,
   isApiBackedMatch,
   isSameMatchFixture,
@@ -1035,7 +1036,7 @@ export const useTradeStore = create<TradeStoreState>()(
 
       setTodayMatches: (matches) => {
         set({
-          todayMatches: matches,
+          todayMatches: deduplicateMatches(matches, toLocalDateStr(new Date())),
           isLoadingTodayMatches: false,
           hasFetchedTodayMatches: true,
         });
@@ -1248,20 +1249,22 @@ export const useTradeStore = create<TradeStoreState>()(
                   }
                 }
 
-                if (item.isCaptain !== undefined && existing.isCaptain !== item.isCaptain) {
-                  updated = { ...updated, isCaptain: item.isCaptain };
-                }
-                if (item.subInMinute !== undefined && existing.subInMinute !== item.subInMinute) {
-                  updated = { ...updated, subInMinute: item.subInMinute };
-                }
-                if (item.subOutMinute !== undefined && existing.subOutMinute !== item.subOutMinute) {
-                  updated = { ...updated, subOutMinute: item.subOutMinute };
-                }
-                if (item.yellowCards !== undefined && existing.yellowCards !== item.yellowCards) {
-                  updated = { ...updated, yellowCards: item.yellowCards };
-                }
-                if (item.redCards !== undefined && existing.redCards !== item.redCards) {
-                  updated = { ...updated, redCards: item.redCards };
+                if (existing.matchId === match.id) {
+                  if (item.isCaptain !== undefined && existing.isCaptain !== item.isCaptain) {
+                    updated = { ...updated, isCaptain: item.isCaptain };
+                  }
+                  if (item.subInMinute !== undefined && existing.subInMinute !== item.subInMinute) {
+                    updated = { ...updated, subInMinute: item.subInMinute };
+                  }
+                  if (item.subOutMinute !== undefined && existing.subOutMinute !== item.subOutMinute) {
+                    updated = { ...updated, subOutMinute: item.subOutMinute };
+                  }
+                  if (item.yellowCards !== undefined && existing.yellowCards !== item.yellowCards) {
+                    updated = { ...updated, yellowCards: item.yellowCards };
+                  }
+                  if (item.redCards !== undefined && existing.redCards !== item.redCards) {
+                    updated = { ...updated, redCards: item.redCards };
+                  }
                 }
 
                 if (updated !== existing) {
@@ -1817,7 +1820,12 @@ export const useTradeStore = create<TradeStoreState>()(
             ? Array.from(existingMatchMap.values())
             : state.matches;
           const nextTodayMatches = matchesChanged
-            ? state.todayMatches.map((tm) => resolveSyncedMatch(tm, nextMatches))
+            ? deduplicateMatches(
+                state.todayMatches.map((tm) =>
+                  resolveSyncedMatch(tm, nextMatches, todayStr)
+                ),
+                todayStr
+              )
             : state.todayMatches;
           const nextActiveMatchContext = matchesChanged
             ? syncActiveMatchContext(

@@ -581,10 +581,16 @@ export default function MatchTimelineChart({
                 : "text-gray-600 hover:text-gray-900"
             }`}
           >
-            {matchStatus === "LIVE" && (
+            {matchClock.isLive && (
               <span className="relative flex h-1.5 w-1.5 shrink-0">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#F07868] opacity-75" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[#F07868]" />
+                {!matchClock.isHalfTime && (
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#F07868] opacity-75" />
+                )}
+                <span
+                  className={`relative inline-flex h-1.5 w-1.5 rounded-full ${
+                    matchClock.isHalfTime ? "bg-amber-400" : "bg-[#F07868]"
+                  }`}
+                />
               </span>
             )}
             <span className="truncate">{matchTabLabel}</span>

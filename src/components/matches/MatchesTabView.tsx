@@ -225,7 +225,7 @@ export default function MatchesTabView({
   // Overlay live store match state (clock/scores) through the single synced resolver;
   // finished matches keep their FT state so a past date never shows LIVE.
   const resolvedMatches = apiMatches.map((m) =>
-    resolveSyncedMatch(m, storeMockMatches)
+    resolveSyncedMatch(m, storeMockMatches, todayStr)
   );
 
   // Group fetched matches by leagueId

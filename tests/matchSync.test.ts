@@ -381,6 +381,126 @@ test("mergePinnedFixturesForToday keeps unrelated live SCORE_ONLY API fixtures u
   assert.equal(merged[1].awayTeam.score, 0);
 });
 
+test("isolates static fixture events on UPCOMING/non-SCORE_ONLY API matches, strips future lineup badges, and prefers LIVE over FT in context fallback", () => {
+  // 1) UPCOMING API match enriched with static fixture never inherits dummy events/cards while preserving captaincy
+  const upcomingApiNewArs = makeMatch({
+    id: "fd-upcoming-na",
+    utcDate: "2026-11-22T20:00:00Z",
+    status: "UPCOMING",
+    rawStatus: "TIMED",
+    minute: undefined,
+    providerMode: "DEEP_DATA",
+    homeTeam: { id: "new", name: "Newcastle United", shortName: "NEW", color: "#241F20" },
+    awayTeam: { id: "ars", name: "Arsenal FC", shortName: "ARS", color: "#EF0107" },
+  });
+  const fixtureWithEvents = makeMatch({
+    id: "m-new-ars",
+    dateKey: "TODAY",
+    homeTeam: {
+      id: "new",
+      name: "Newcastle",
+      shortName: "NEW",
+      color: "#241F20",
+      score: 1,
+      lineup: [{ id: "p-burn", name: "Burn", position: "CB", yellowCards: 1, subOutMinute: 65, isCaptain: true }],
+    },
+    awayTeam: { id: "ars", name: "Arsenal", shortName: "ARS", color: "#EF0107", score: 2 },
+    events: [{ id: "ev-1", minute: 19, type: "GOAL", playerId: "p-havertz", playerName: "Havertz", source: "REAL" }],
+  });
+  const mergedUpcoming = mergePinnedFixturesForToday(
+    [upcomingApiNewArs],
+    [fixtureWithEvents],
+    true,
+    "2026-11-22"
+  );
+  assert.equal(mergedUpcoming.length, 1);
+  assert.equal(mergedUpcoming[0].id, "fd-upcoming-na");
+  assert.equal(mergedUpcoming[0].events, undefined);
+  assert.equal(mergedUpcoming[0].homeTeam.lineup?.[0]?.yellowCards, undefined);
+  assert.equal(mergedUpcoming[0].homeTeam.lineup?.[0]?.subOutMinute, undefined);
+  assert.equal(mergedUpcoming[0].homeTeam.lineup?.[0]?.isCaptain, true);
+
+  // 2) Future-date AMATCH_FALLBACK strips lineup yellowCards/subOutMinute alongside scores/events
+  const liveAMatchWithLineup = makeMatch({
+    id: "m-kor-jpn",
+    dateKey: "TODAY",
+    leagueId: "amatch",
+    status: "LIVE",
+    minute: 62,
+    kickoffTime: "20:00",
+    homeTeam: {
+      id: "kor",
+      name: "대한민국",
+      shortName: "KOR",
+      color: "#E6002D",
+      score: 2,
+      lineup: [{ id: "p-park", name: "박용우", position: "DM", yellowCards: 1, subOutMinute: 46, isCaptain: false }],
+    },
+    awayTeam: { id: "jpn", name: "일본", shortName: "JPN", color: "#00005B", score: 1 },
+    events: [{ id: "ev-kj-1", minute: 27, type: "GOAL", playerId: "p-son", playerName: "손흥민", source: "REAL" }],
+  });
+  const futureAMatch = resolveFetchedMatchesForDate({
+    source: "AMATCH_FALLBACK",
+    matches: [liveAMatchWithLineup],
+    fallbackMatches: [liveAMatchWithLineup],
+    fixturePool: [fixtureWithEvents],
+    requestedDateStr: "2026-11-25",
+    todayStr: "2026-11-22",
+  });
+  assert.equal(futureAMatch[0].homeTeam.lineup?.[0]?.yellowCards, undefined);
+  assert.equal(futureAMatch[0].homeTeam.lineup?.[0]?.subOutMinute, undefined);
+
+  // 3) KST-today late-night kickoff (2026-11-21T17:30:00Z === 2026-11-22 02:30 KST) stays LIVE on 2026-11-22
+  const kstMidnightMatch = resolveFetchedMatchesForDate({
+    source: "FOOTBALL_DATA_API",
+    matches: [
+      makeMatch({
+        id: "fd-kst-midnight",
+        utcDate: "2026-11-21T17:30:00Z",
+        status: "LIVE",
+        rawStatus: "IN_PLAY",
+        minute: 35,
+      }),
+    ],
+    fallbackMatches: [],
+    fixturePool: [],
+    requestedDateStr: "2026-11-22",
+    todayStr: "2026-11-22",
+  });
+  assert.equal(kstMidnightMatch[0].status, "LIVE");
+  assert.equal(resolveMatchClock(kstMidnightMatch[0]).phase, "1H");
+
+  // 4) resolveSyncedMatchFromContext team-pair fallback prefers LIVE match over an earlier past FT match
+  const pastFtNewArs = makeMatch({
+    id: "fd-old-na",
+    utcDate: "2026-05-01T15:00:00Z",
+    status: "FT",
+    rawStatus: "FINISHED",
+    minute: 90,
+    homeTeam: { id: "new", name: "Newcastle", shortName: "NEW", color: "#241F20", score: 0 },
+    awayTeam: { id: "ars", name: "Arsenal", shortName: "ARS", color: "#EF0107", score: 3 },
+  });
+  const liveApiNewArs = makeMatch({
+    id: "fd-live-na",
+    utcDate: "2026-11-22T01:30:00Z",
+    status: "LIVE",
+    rawStatus: "IN_PLAY",
+    minute: 41,
+    homeTeam: { id: "new", name: "Newcastle", shortName: "NEW", color: "#241F20", score: 1 },
+    awayTeam: { id: "ars", name: "Arsenal", shortName: "ARS", color: "#EF0107", score: 1 },
+  });
+  const replacedLiveCtx = buildActiveMatchContext(
+    makeMatch({ id: "m-new-ars", status: "LIVE", minute: 40 })
+  );
+  const resolvedLive = resolveSyncedMatchFromContext(replacedLiveCtx, [
+    pastFtNewArs,
+    liveApiNewArs,
+  ]);
+  assert.equal(resolvedLive?.id, "fd-live-na");
+  assert.equal(resolveMatchClock(resolvedLive).minute, 41);
+  assert.equal(resolveMatchScore(resolvedLive).display, "1 : 1");
+});
+
 test("future dates and multi-day past dates normalize status/scores cleanly without leaking LIVE state", () => {
   const liveAMatch = makeMatch({
     id: "m-kor-jpn",
