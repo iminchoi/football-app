@@ -39,3 +39,7 @@ next-env.d.ts
 # Simulation Ledger Cache
 /.cache/
 .cache/
+
+# Pipeline Logs
+/.pipeline_logs/
+.pipeline_logs/
