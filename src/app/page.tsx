@@ -111,7 +111,9 @@ export default function HomePage() {
         {/* PC (lg+) Rightmost Slim Vertical Quick Rail (w-16) */}
         <RightQuickRail
           recentPlayerIds={recentPlayerIds}
-          onSelectPlayer={(player) => handleOpenTradeSheet(player, "BUY")}
+          onSelectPlayer={(player, matchContext) =>
+            handleOpenTradeSheet(player, "BUY", matchContext)
+          }
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
         />
       </div>

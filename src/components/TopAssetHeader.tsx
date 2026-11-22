@@ -11,7 +11,6 @@ import {
 import {
   useTradeStore,
   roundToTen,
-  calculateChangePercentFromOpen,
   doesPlayerBelongToMatch,
 } from "@/store/useTradeStore";
 import {
@@ -20,6 +19,7 @@ import {
   resolveMatchScore,
   resolveSyncedMatchFromContext,
 } from "@/lib/matchSync";
+import { resolvePlayerQuote } from "@/lib/playerQuote";
 import {
   formatPlayerDisplayName,
   matchesPlayerSearchQuery,
@@ -160,7 +160,20 @@ export default function TopAssetHeader({
       if (h.quantity <= 0) continue;
       const p = players.find((pl) => pl.id === h.playerId);
       if (!p) continue;
-      holdingsValue += roundToTen(p.currentPrice) * h.quantity;
+      const holdingMatch = resolveMatchForPlayerView({
+        player: p,
+        storeMatches: matches,
+        activeMatchContext: h.matchContext ?? null,
+        belongsToMatch: doesPlayerBelongToMatch,
+      });
+      const holdingClock =
+        holdingMatch || h.matchContext
+          ? resolveMatchClock(holdingMatch, h.matchContext)
+          : null;
+      const curPrice = holdingClock
+        ? resolvePlayerQuote(p, holdingClock.status).currentPrice
+        : roundToTen(p.currentPrice);
+      holdingsValue += curPrice * h.quantity;
     }
   }
   const totalAssets = roundToTen(cash + holdingsValue);
@@ -289,13 +302,6 @@ export default function TopAssetHeader({
                 ) : (
                   <div className="divide-y divide-gray-100">
                     {searchResults.map((p) => {
-                      const open = roundToTen(p.openPrice ?? p.initialPrice);
-                      const pct = calculateChangePercentFromOpen(
-                        p.currentPrice,
-                        open
-                      );
-                      const isUp = pct > 0;
-                      const isDown = pct < 0;
                       const matchedGame = resolveMatchForPlayerView({
                         player: p,
                         storeMatches: matches,
@@ -307,6 +313,13 @@ export default function TopAssetHeader({
                       const gameScore = matchedGame
                         ? resolveMatchScore(matchedGame)
                         : null;
+                      const quote = resolvePlayerQuote(
+                        p,
+                        gameClock?.status ?? "LIVE"
+                      );
+                      const pct = quote.changePct;
+                      const isUp = pct > 0;
+                      const isDown = pct < 0;
                       return (
                         <button
                           key={p.id}
@@ -338,7 +351,7 @@ export default function TopAssetHeader({
                           </div>
                           <div className="text-right font-mono shrink-0">
                             <p className="text-xs font-black text-gray-900">
-                              {p.currentPrice.toLocaleString()}P
+                              {quote.currentPrice.toLocaleString()}P
                             </p>
                             <p
                               className={`text-[10px] font-bold ${

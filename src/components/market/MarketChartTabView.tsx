@@ -11,11 +11,8 @@ import {
 } from "lucide-react";
 import {
   useTradeStore,
-  roundToTen,
   doesPlayerBelongToMatch,
   isNationalTeamMatch,
-  calculateChangePercentFromOpen,
-  calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import {
   Match,
@@ -28,9 +25,11 @@ import {
 import { WEIGHTS } from "@/lib/weights";
 import {
   resolveMatchClock,
+  resolveMatchForPlayerView,
   resolveMatchScore,
   resolveSyncedMatch,
 } from "@/lib/matchSync";
+import { resolvePlayerQuote } from "@/lib/playerQuote";
 import {
   formatPlayerDisplayName,
   matchesPlayerSearchQuery,
@@ -236,6 +235,16 @@ export default function MarketChartTabView({
     setOnlyWatchlist(false);
   };
 
+  const resolveMarketQuote = (p: Player) => {
+    const matchedGame = resolveMatchForPlayerView({
+      player: p,
+      storeMatches: matches,
+      belongsToMatch: doesPlayerBelongToMatch,
+    });
+    const status = matchedGame ? resolveMatchClock(matchedGame).status : "LIVE";
+    return resolvePlayerQuote(p, status);
+  };
+
   const rankedPlayers = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
 
@@ -252,8 +261,7 @@ export default function MarketChartTabView({
         return false;
       }
 
-      const openP = roundToTen(p.openPrice ?? p.initialPrice);
-      const pct = calculateChangePercentFromOpen(p.currentPrice, openP);
+      const pct = resolveMarketQuote(p).changePct;
       if (onlySurge5 && pct < 5) {
         return false;
       }
@@ -270,14 +278,12 @@ export default function MarketChartTabView({
     });
 
     return [...filtered].sort((a, b) => {
-      const openA = roundToTen(a.openPrice ?? a.initialPrice);
-      const openB = roundToTen(b.openPrice ?? b.initialPrice);
-      const rateA = calculateChangePercentFromOpen(a.currentPrice, openA);
-      const rateB = calculateChangePercentFromOpen(b.currentPrice, openB);
+      const quoteA = resolveMarketQuote(a);
+      const quoteB = resolveMarketQuote(b);
 
-      if (sortMode === "GAINERS") return rateB - rateA;
-      if (sortMode === "LOSERS") return rateA - rateB;
-      if (sortMode === "PRICE") return b.currentPrice - a.currentPrice;
+      if (sortMode === "GAINERS") return quoteB.changePct - quoteA.changePct;
+      if (sortMode === "LOSERS") return quoteA.changePct - quoteB.changePct;
+      if (sortMode === "PRICE") return quoteB.currentPrice - quoteA.currentPrice;
       return b.stats.rating - a.stats.rating;
     });
   }, [
@@ -313,8 +319,8 @@ export default function MarketChartTabView({
 
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-2.5">
             {spotlightPlayers.map((p) => {
-              const open = roundToTen(p.openPrice ?? p.initialPrice);
-              const rawPct = calculateChangePercentFromOpen(p.currentPrice, open);
+              const quote = resolveMarketQuote(p);
+              const rawPct = quote.changePct;
               const maxPct = WEIGHTS.CAP_LIMIT * 100;
               const pct = Math.max(-maxPct, Math.min(maxPct, rawPct));
               const isUp = pct > 0;
@@ -352,7 +358,14 @@ export default function MarketChartTabView({
                         strokeWidth="2"
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        points={buildSparklinePoints(p.priceHistory)}
+                        points={buildSparklinePoints(
+                          quote.isPreMatch
+                            ? [
+                                { minute: 0, price: quote.basePrice },
+                                { minute: 0, price: quote.basePrice },
+                              ]
+                            : p.priceHistory
+                        )}
                       />
                     </svg>
                   </div>
@@ -370,7 +383,7 @@ export default function MarketChartTabView({
                   {/* 3단: 현재가 + 등락률 뱃지 (좁아지면 자연스럽게 wrap) */}
                   <div className="mt-2 flex w-full flex-wrap items-baseline justify-between gap-1">
                     <span className="whitespace-nowrap font-mono text-[13px] sm:text-sm font-black text-gray-900 tabular-nums">
-                      {p.currentPrice.toLocaleString()}P
+                      {quote.currentPrice.toLocaleString()}P
                     </span>
                     <span
                       className={`shrink-0 whitespace-nowrap rounded-md px-1.5 py-0.5 font-mono text-[10px] font-extrabold tabular-nums ${
@@ -599,9 +612,9 @@ export default function MarketChartTabView({
         ) : (
           <div className="divide-y divide-gray-100">
             {rankedPlayers.map((p, idx) => {
-              const open = roundToTen(p.openPrice ?? p.initialPrice);
-              const diff = calculateDiffFromOpen(p.currentPrice, open);
-              const pct = calculateChangePercentFromOpen(p.currentPrice, open);
+              const quote = resolveMarketQuote(p);
+              const diff = quote.diff;
+              const pct = quote.changePct;
               const isUp = diff > 0;
               const isDown = diff < 0;
               const isWatched = watchlist.includes(p.id);
@@ -676,13 +689,20 @@ export default function MarketChartTabView({
                         strokeWidth="1.8"
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        points={buildSparklinePoints(p.priceHistory)}
+                        points={buildSparklinePoints(
+                          quote.isPreMatch
+                            ? [
+                                { minute: 0, price: quote.basePrice },
+                                { minute: 0, price: quote.basePrice },
+                              ]
+                            : p.priceHistory
+                        )}
                       />
                     </svg>
 
                     <div className="w-24 text-right font-mono tabular-nums">
                       <p className="text-sm font-black text-gray-900">
-                        {p.currentPrice.toLocaleString()}P
+                        {quote.currentPrice.toLocaleString()}P
                       </p>
                       <p
                         className={`text-[11px] font-bold ${

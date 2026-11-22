@@ -21,8 +21,6 @@ import {
   doesPlayerBelongToTeam,
   isNationalTeamMatch,
   normalizeAccountKey,
-  calculateChangePercentFromOpen,
-  calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import { getAvailableShares } from "@/utils/tier";
 import { resolvePlayerMatchStatus } from "@/lib/lineupStatus";
@@ -33,6 +31,7 @@ import {
   resolveMatchScore,
   resolveSyncedMatch,
 } from "@/lib/matchSync";
+import { resolvePlayerQuote } from "@/lib/playerQuote";
 import {
   buildTeamLineupForMatch,
   FormationPitchContent,
@@ -350,12 +349,9 @@ export default function MatchAccordionCard({
               {/* Compact Key Player Rows: [등번호] [선수명] [포지션] [잔여/보유] [현재 시세] [등락률(%)] [매수 버튼] */}
               <div className="space-y-1.5">
                 {activeKeyPlayers.slice(0, 3).map((player) => {
-                  const base = player.openPrice ?? player.basePrice ?? player.initialPrice;
-                  const diff = calculateDiffFromOpen(player.currentPrice, base);
-                  const changePct = calculateChangePercentFromOpen(
-                    player.currentPrice,
-                    base
-                  ).toFixed(2);
+                  const quote = resolvePlayerQuote(player, clock.status);
+                  const diff = quote.diff;
+                  const changePct = quote.changePct.toFixed(2);
                   const isUp = diff > 0;
                   const isDown = diff < 0;
                   const holding = holdings[player.id];
@@ -476,7 +472,7 @@ export default function MatchAccordionCard({
                       <div className="flex items-center gap-2.5 shrink-0">
                         <div className="flex items-baseline gap-1.5 font-mono">
                           <span className="text-xs font-black text-gray-900">
-                            {player.currentPrice.toLocaleString()}P
+                            {quote.currentPrice.toLocaleString()}P
                           </span>
                           <span
                             className={`text-[11px] font-bold ${

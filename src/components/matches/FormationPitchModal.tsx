@@ -1503,14 +1503,17 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
   isUpcoming = false,
   onSelect,
 }: PitchPlayerNodeProps) {
-  const base = player.openPrice ?? player.basePrice ?? player.initialPrice;
-  const displayPrice = isUpcoming
-    ? Math.round((base * (1 + WEIGHTS.LINEUP_CONFIRMED)) / 10) * 10
-    : player.currentPrice;
-  const diff = displayPrice - base;
+  const base = roundToTen(
+    player.basePrice ?? player.openPrice ?? player.initialPrice ?? player.currentPrice
+  );
+  const open = isUpcoming
+    ? base
+    : roundToTen(player.openPrice ?? player.basePrice ?? player.initialPrice);
+  const displayPrice = isUpcoming ? base : roundToTen(player.currentPrice);
+  const diff = isUpcoming ? 0 : displayPrice - open;
   const pct = isUpcoming
-    ? (WEIGHTS.LINEUP_CONFIRMED * 100).toFixed(2)
-    : calculateChangePercentFromOpen(displayPrice, base).toFixed(2);
+    ? "0.00"
+    : calculateChangePercentFromOpen(displayPrice, open).toFixed(2);
   const isUp = diff > 0;
   const isDown = diff < 0;
   const displayName = resolvePlayerDisplayName(player);
@@ -1641,7 +1644,12 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
   isUpcoming = false,
   onSelect,
 }: BenchPlayerRowProps) {
-  const base = sub.openPrice ?? sub.basePrice ?? sub.initialPrice;
+  const base = roundToTen(
+    sub.basePrice ?? sub.openPrice ?? sub.initialPrice ?? sub.currentPrice
+  );
+  const open = isUpcoming
+    ? base
+    : roundToTen(sub.openPrice ?? sub.basePrice ?? sub.initialPrice);
   const hasPlayed =
     status.subInMinute !== undefined ||
     status.subOutMinute !== undefined ||
@@ -1650,17 +1658,16 @@ const BenchPlayerRow = React.memo(function BenchPlayerRow({
     status.yellowCards > 0 ||
     status.redCards > 0;
   const displayName = formatPlayerDisplayName(sub, "full");
-  // Pre-match bench exclusion: -2.00%; unused bench during LIVE/FT: fixed 0.00%
   const displayPrice = isUpcoming
-    ? Math.round((base * (1 + WEIGHTS.LINEUP_EXCLUDED)) / 10) * 10
+    ? base
     : hasPlayed
-    ? sub.currentPrice
-    : base;
-  const diff = displayPrice - base;
+    ? roundToTen(sub.currentPrice)
+    : open;
+  const diff = isUpcoming ? 0 : displayPrice - open;
   const pct = isUpcoming
-    ? (WEIGHTS.LINEUP_EXCLUDED * 100).toFixed(2)
+    ? "0.00"
     : hasPlayed
-    ? calculateChangePercentFromOpen(displayPrice, base).toFixed(2)
+    ? calculateChangePercentFromOpen(displayPrice, open).toFixed(2)
     : "0.00";
   const isUp = diff > 0;
   const isDown = diff < 0;

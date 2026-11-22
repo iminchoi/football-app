@@ -22,11 +22,10 @@ import {
   normalizeAccountKey,
 } from "@/store/useTradeStore";
 import {
-  calculateChangePercentFromOpen,
-  calculateDiffFromOpen,
   derivePlayerMarketData,
   extractInitialMatchEvents,
 } from "@/lib/priceEngine";
+import { resolvePlayerQuote } from "@/lib/playerQuote";
 import {
   resolveMatchClock,
   resolveMatchForPlayerView,
@@ -95,14 +94,24 @@ function seededNoise(seedStr: string, index: number): number {
 
 function buildPeriodSeries(
   player: Player,
-  period: ChartPeriod
+  period: ChartPeriod,
+  effectiveCurrentPrice?: number,
+  isPreMatch?: boolean
 ): PeriodPoint[] {
   const basePrice = roundToTen(
     player.basePrice ?? player.initialPrice ?? player.currentPrice
   );
-  const currentPrice = roundToTen(player.currentPrice);
+  const currentPrice = roundToTen(
+    effectiveCurrentPrice ?? player.currentPrice
+  );
 
   if (period === "TICK") {
+    if (isPreMatch) {
+      return [
+        { timeLabel: "기준가", price: basePrice },
+        { timeLabel: "현재", price: currentPrice },
+      ];
+    }
     const raw = (player.priceHistory ?? []).slice(-18);
     if (raw.length >= 2) {
       return raw.map((p) => ({
@@ -563,33 +572,24 @@ export default function TradeBottomSheet({
     matchStatus: effectiveStatus,
   });
 
-  const openPrice =
-    effectiveStatus === "UPCOMING"
-      ? basePrice
-      : player.openPrice ?? fallbackSsot.openPrice;
-  const currentPrice =
-    effectiveStatus === "UPCOMING"
-      ? basePrice
-      : roundToTen(player.currentPrice ?? fallbackSsot.currentPrice);
-  const highPrice =
-    effectiveStatus === "UPCOMING"
-      ? basePrice
-      : player.highPrice ?? fallbackSsot.highPrice;
-  const lowPrice =
-    effectiveStatus === "UPCOMING"
-      ? basePrice
-      : player.lowPrice ?? fallbackSsot.lowPrice;
-  const volume =
-    effectiveStatus === "UPCOMING" ? 0 : player.volume ?? fallbackSsot.volume;
-
-  const diffFromBase =
-    effectiveStatus === "UPCOMING"
-      ? 0
-      : calculateDiffFromOpen(currentPrice, openPrice);
-  const pctFromBase =
-    effectiveStatus === "UPCOMING"
-      ? 0
-      : calculateChangePercentFromOpen(currentPrice, openPrice);
+  const quote = resolvePlayerQuote(
+    {
+      ...player,
+      highPrice: player.highPrice ?? fallbackSsot.highPrice,
+      lowPrice: player.lowPrice ?? fallbackSsot.lowPrice,
+      volume: player.volume ?? fallbackSsot.volume,
+    },
+    effectiveStatus
+  );
+  const {
+    openPrice,
+    currentPrice,
+    highPrice,
+    lowPrice,
+    volume,
+    diff: diffFromBase,
+    changePct: pctFromBase,
+  } = quote;
 
   // Market supply & liquidity metrics (Single Source of Truth + Dynamic availableShares)
   const tierCfg = getTierConfig(basePrice);
@@ -631,7 +631,12 @@ export default function TradeBottomSheet({
   const isMatchFinished = effectiveStatus === "FT";
 
   // Period chart series
-  const series = buildPeriodSeries(player, period);
+  const series = buildPeriodSeries(
+    player,
+    period,
+    currentPrice,
+    quote.isPreMatch
+  );
   const periodStartPrice = series[0]?.price ?? basePrice;
   const periodDiff = currentPrice - periodStartPrice;
   const periodPct =

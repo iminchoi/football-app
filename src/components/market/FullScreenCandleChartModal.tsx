@@ -33,6 +33,7 @@ import {
   formatMinuteLabel,
   resolveLastMatchReview,
 } from "@/lib/priceEngine";
+import { resolvePlayerQuote } from "@/lib/playerQuote";
 import {
   resolveMatchClock,
   resolveMatchForPlayerView,
@@ -201,9 +202,10 @@ export default function FullScreenCandleChartModal({
     const base = roundToTen(
       player.basePrice ?? player.initialPrice ?? player.currentPrice
     );
-    const open = roundToTen(
-      player.openPrice ?? player.priceHistory[0]?.price ?? base
-    );
+    const open =
+      matchStatus === "UPCOMING"
+        ? base
+        : roundToTen(player.openPrice ?? player.priceHistory[0]?.price ?? base);
     const events = extractInitialMatchEvents(
       {
         ...player,
@@ -268,16 +270,9 @@ export default function FullScreenCandleChartModal({
     currentMinute,
   ]);
 
-  const openPrice = player ? player.openPrice ?? ssotMetrics?.openPrice ?? 0 : 0;
-  const currentPrice = player
-    ? roundToTen(player.currentPrice ?? ssotMetrics?.currentPrice ?? 0)
-    : 0;
-  const closePrice =
-    matchStatus === "UPCOMING"
-      ? openPrice
-      : player && matchStatus === "FT"
-      ? roundToTen(player.closePrice ?? currentPrice)
-      : currentPrice;
+  const quote = player ? resolvePlayerQuote(player, matchStatus) : null;
+  const openPrice = quote?.openPrice ?? 0;
+  const closePrice = quote?.currentPrice ?? 0;
   const diffFromOpen = calculateDiffFromOpen(closePrice, openPrice);
   const pctFromOpen = calculateChangePercentFromOpen(closePrice, openPrice);
   const isUpOverall = diffFromOpen > 0;

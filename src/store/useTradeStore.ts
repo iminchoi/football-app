@@ -58,6 +58,7 @@ import {
   sanitizeEventTypeForPosition,
   isNegativeEventType,
 } from "@/lib/priceEngine";
+import { resolvePlayerQuote } from "@/lib/playerQuote";
 import {
   getCircuitBreakerRemainingSec,
   validateTradeOrder,
@@ -644,7 +645,8 @@ function applyPersistedPrices(
     const ctx = resolvePlayerMatchContext({ ...player, events }, matches);
     const derived = derivePlayerMarketData({
       playerId: player.id,
-      openPrice,
+      // PRE fixtures quote the base price until kickoff
+      openPrice: ctx.status === "UPCOMING" ? basePrice : openPrice,
       basePrice,
       events,
       currentMinute: ctx.minute,
@@ -938,20 +940,37 @@ export const useTradeStore = create<TradeStoreState>()(
       },
 
       selectPlayer: (player, matchContext = null) => {
-        const { matches, todayMatches } = get();
+        // Resolve against the canonical stored record (which may be bound to a
+        // different matchId than the clicked copy) so the context always matches
+        // the fixture that drives this player's quote.
+        const resolvedId = get().ensurePlayerInStore(player);
+        const { matches, todayMatches, players, holdings } = get();
+        const storedPlayer = players.find((p) => p.id === resolvedId) ?? player;
         const pool = matches.length > 0 ? matches : todayMatches;
+        const clickedMatchContext =
+          matchContext ??
+          (player.matchId && player.matchId !== storedPlayer.matchId
+            ? (() => {
+                const clickedMatch = pool.find((m) => m.id === player.matchId);
+                return clickedMatch
+                  ? buildActiveMatchContext(clickedMatch)
+                  : null;
+              })()
+            : null);
+        const effectiveContext =
+          clickedMatchContext ?? holdings[resolvedId]?.matchContext ?? null;
         const resolvedMatch = resolveMatchForPlayerView({
-          player,
+          player: storedPlayer,
           storeMatches: pool,
-          activeMatchContext: matchContext,
+          activeMatchContext: effectiveContext,
           belongsToMatch: doesPlayerBelongToMatch,
         });
         set({
           activeMatchContext: resolvedMatch
             ? buildActiveMatchContext(resolvedMatch)
-            : matchContext,
+            : effectiveContext,
         });
-        return get().ensurePlayerInStore(player);
+        return resolvedId;
       },
 
       ensurePlayerInStore: (newPlayer) => {
@@ -1076,7 +1095,8 @@ export const useTradeStore = create<TradeStoreState>()(
         );
         const derived = derivePlayerMarketData({
           playerId: newPlayer.id,
-          openPrice,
+          // PRE fixtures quote the base price until kickoff
+          openPrice: ctx.status === "UPCOMING" ? base : openPrice,
           basePrice: base,
           events: initialEvents,
           currentMinute: ctx.minute,
@@ -2135,10 +2155,6 @@ export const useTradeStore = create<TradeStoreState>()(
           return { ...m, minute: nextMin };
         });
 
-        const liveMatchMap = new Map(
-          updatedMatches.map((m) => [m.id, m] as const)
-        );
-
         const nextPlayerPrices: Record<string, PersistedPlayerPrice> = {
           ...playerPrices,
         };
@@ -2156,17 +2172,13 @@ export const useTradeStore = create<TradeStoreState>()(
             basePrice
           );
 
-          const directMatch = liveMatchMap.get(player.matchId);
-          const isDirectLive = Boolean(
-            directMatch && resolveMatchClock(directMatch).isLive
-          );
-          const match = isDirectLive
-            ? directMatch
-            : updatedMatches.find(
-                (m) =>
-                  resolveMatchClock(m).isLive &&
-                  doesPlayerBelongToMatch(player, m)
-              ) ?? directMatch;
+          // The player's own fixture is authoritative: a PRE/HT/FT fixture must
+          // never inherit ticks from another live fixture of the same team.
+          const match = resolveMatchForPlayerView({
+            player,
+            storeMatches: updatedMatches,
+            belongsToMatch: doesPlayerBelongToMatch,
+          });
           const matchClock = match ? resolveMatchClock(match) : null;
           const isLive = Boolean(matchClock?.isLive);
           const isHalfTime = Boolean(matchClock?.isHalfTime);
@@ -2179,24 +2191,31 @@ export const useTradeStore = create<TradeStoreState>()(
               return player;
             }
             if (!isFT) {
-              return {
-                ...player,
-                basePrice,
-                openPrice,
-                initialPrice: basePrice,
-                currentPrice: openPrice,
-                previousPrice: openPrice,
-                highPrice: openPrice,
-                lowPrice: openPrice,
+              // PRE: pin open/current to the base price so list, portfolio,
+              // chart baseline, and order execution quote the same value.
+              const prePrice: PersistedPlayerPrice = {
+                openPrice: basePrice,
+                currentPrice: basePrice,
+                previousPrice: basePrice,
+                highPrice: basePrice,
+                lowPrice: basePrice,
+                volume: 0,
                 events: [],
                 priceHistory: [
                   {
                     minute: 0,
                     timeLabel: "0'",
-                    price: openPrice,
+                    price: basePrice,
                     changePercentFromOpen: 0,
                   },
                 ],
+              };
+              nextPlayerPrices[player.id] = prePrice;
+              return {
+                ...player,
+                basePrice,
+                initialPrice: basePrice,
+                ...prePrice,
               };
             }
             return {
@@ -2432,8 +2451,10 @@ export const useTradeStore = create<TradeStoreState>()(
         const basePrice = roundToTen(
           player.basePrice ?? player.initialPrice ?? player.currentPrice
         );
-        const effectiveCurrent =
-          effectiveStatus === "UPCOMING" ? basePrice : player.currentPrice;
+        const effectiveCurrent = resolvePlayerQuote(
+          player,
+          effectiveStatus
+        ).currentPrice;
         const gate = validateTradeOrder({
           side: "BUY",
           matchStatus: effectiveStatus,
@@ -2479,12 +2500,18 @@ export const useTradeStore = create<TradeStoreState>()(
           }),
         };
 
+        const resolvedHoldingContext = playerMatch
+          ? buildActiveMatchContext(playerMatch)
+          : activeMatchContext ?? prev?.matchContext;
         const nextHoldings = {
           ...holdings,
           [playerId]: {
             playerId,
             quantity: newQty,
             avgBuyPrice: newAvg,
+            ...(resolvedHoldingContext
+              ? { matchContext: resolvedHoldingContext }
+              : {}),
           },
         };
         const nextTransactions = [newTx, ...transactions].slice(0, 40);
@@ -2533,22 +2560,25 @@ export const useTradeStore = create<TradeStoreState>()(
           return { success: false, message: "선수 정보를 찾을 수 없습니다." };
         }
 
+        const prev = holdings[playerId];
+        const effectiveContext = activeMatchContext ?? prev?.matchContext ?? null;
         const playerMatch = resolveMatchForPlayerView({
           player,
           storeMatches: matches,
-          activeMatchContext,
+          activeMatchContext: effectiveContext,
           belongsToMatch: doesPlayerBelongToMatch,
         });
         const effectiveStatus = resolveMatchClock(
           playerMatch,
-          playerMatch ? null : activeMatchContext
+          playerMatch ? null : effectiveContext
         ).status;
-        const prev = holdings[playerId];
         const basePrice = roundToTen(
           player.basePrice ?? player.initialPrice ?? player.currentPrice
         );
-        const effectiveCurrent =
-          effectiveStatus === "UPCOMING" ? basePrice : player.currentPrice;
+        const effectiveCurrent = resolvePlayerQuote(
+          player,
+          effectiveStatus
+        ).currentPrice;
         const gate = validateTradeOrder({
           side: "SELL",
           matchStatus: effectiveStatus,

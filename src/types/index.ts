@@ -350,6 +350,7 @@ export interface Holding {
   playerId: string;
   quantity: number;
   avgBuyPrice: number;
+  matchContext?: ActiveMatchContext;
 }
 
 export interface PointTransaction {

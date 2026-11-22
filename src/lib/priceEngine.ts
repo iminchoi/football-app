@@ -1340,7 +1340,7 @@ export function derivePlayerMarketData(params: {
     ...(status === "FT" ? { closePrice: currentPrice } : {}),
     highPrice,
     lowPrice,
-    volume: totalVolume,
+    volume: status === "UPCOMING" ? 0 : totalVolume,
     events,
     priceHistory,
   };

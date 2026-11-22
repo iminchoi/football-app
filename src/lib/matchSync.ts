@@ -928,17 +928,26 @@ export function resolveMatchForPlayerView(params: {
       );
     });
 
+  const direct = storeMatches.find((m) => m.id === player.matchId);
+
   if (activeMatchContext) {
     const byCtx = resolveSyncedMatchFromContext(
       activeMatchContext,
       storeMatches
     );
-    if (byCtx && (player.matchId === byCtx.id || matcher(player, byCtx))) {
+    // The player's own fixture (`player.matchId`) drives its price ticks, so a
+    // context pointing at a different fixture of the same team must not replace
+    // it; otherwise quote, clock, and chart would describe different matches.
+    if (
+      byCtx &&
+      (player.matchId === byCtx.id ||
+        (matcher(player, byCtx) &&
+          (!direct || isSameMatchFixture(direct, byCtx))))
+    ) {
       return byCtx;
     }
   }
 
-  const direct = storeMatches.find((m) => m.id === player.matchId);
   if (direct) return direct;
 
   const liveMatch = storeMatches.find(

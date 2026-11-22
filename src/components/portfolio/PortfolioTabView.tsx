@@ -15,18 +15,31 @@ import {
   Lock,
   LogIn,
 } from "lucide-react";
-import { useTradeStore, roundToTen } from "@/store/useTradeStore";
+import {
+  useTradeStore,
+  roundToTen,
+  doesPlayerBelongToMatch,
+} from "@/store/useTradeStore";
 import { INITIAL_CASH } from "@/data/dummyData";
-import { Player, TradeType } from "@/types";
+import { ActiveMatchContext, Player, TradeType } from "@/types";
 import { getTierConfig } from "@/utils/tier";
 import {
   doesPlayerNameMatch,
   formatPlayerDisplayName,
 } from "@/lib/playerDisplayName";
+import {
+  resolveMatchClock,
+  resolveMatchForPlayerView,
+} from "@/lib/matchSync";
+import { resolvePlayerQuote } from "@/lib/playerQuote";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface PortfolioTabViewProps {
-  onSelectPlayerTrade: (player: Player, type: TradeType) => void;
+  onSelectPlayerTrade: (
+    player: Player,
+    type: TradeType,
+    matchContext?: ActiveMatchContext | null
+  ) => void;
   onOpenAuthModal?: () => void;
 }
 
@@ -38,6 +51,7 @@ export default function PortfolioTabView({
   const cash = useTradeStore((s) => s.cash);
   const realizedPnL = useTradeStore((s) => s.realizedPnL);
   const players = useTradeStore((s) => s.players);
+  const matches = useTradeStore((s) => s.matches);
   const playerPrices = useTradeStore((s) => s.playerPrices);
   const holdings = useTradeStore((s) => s.holdings);
   const transactions = useTradeStore((s) => s.transactions);
@@ -128,7 +142,20 @@ export default function PortfolioTabView({
         };
 
       const avgPrice = roundToTen(h.avgBuyPrice);
-      const curPrice = roundToTen(player.currentPrice);
+      // Same fixture + quote the trade panel resolves when this holding is reselected
+      const holdingMatch = resolveMatchForPlayerView({
+        player,
+        storeMatches: matches,
+        activeMatchContext: h.matchContext ?? null,
+        belongsToMatch: doesPlayerBelongToMatch,
+      });
+      const holdingClock =
+        holdingMatch || h.matchContext
+          ? resolveMatchClock(holdingMatch, h.matchContext)
+          : null;
+      const curPrice = holdingClock
+        ? resolvePlayerQuote(player, holdingClock.status).currentPrice
+        : roundToTen(player.currentPrice);
       const invested = roundToTen(avgPrice * h.quantity);
       const currentVal = roundToTen(curPrice * h.quantity);
       const profit = roundToTen(currentVal - invested);
@@ -408,11 +435,17 @@ export default function PortfolioTabView({
                     key={player.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => onSelectPlayerTrade(player, "SELL")}
+                    onClick={() =>
+                      onSelectPlayerTrade(player, "SELL", holding.matchContext)
+                    }
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        onSelectPlayerTrade(player, "SELL");
+                        onSelectPlayerTrade(
+                          player,
+                          "SELL",
+                          holding.matchContext
+                        );
                       }
                     }}
                     className="group cursor-pointer rounded-2xl border border-gray-200 bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition hover:border-[#00985f]/50 hover:shadow-md active:scale-[0.995]"
@@ -516,7 +549,11 @@ export default function PortfolioTabView({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onSelectPlayerTrade(player, "BUY");
+                          onSelectPlayerTrade(
+                            player,
+                            "BUY",
+                            holding.matchContext
+                          );
                         }}
                         className="flex items-center justify-center gap-1 rounded-xl bg-[#00A878]/10 border border-[#00A878]/25 py-2 text-xs font-bold text-[#00A878] transition hover:bg-[#00A878] hover:text-white"
                       >
@@ -527,7 +564,11 @@ export default function PortfolioTabView({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onSelectPlayerTrade(player, "SELL");
+                          onSelectPlayerTrade(
+                            player,
+                            "SELL",
+                            holding.matchContext
+                          );
                         }}
                         className="flex items-center justify-center gap-1 rounded-xl bg-[#F07868]/10 border border-[#F07868]/25 py-2 text-xs font-bold text-[#F07868] transition hover:bg-[#F07868] hover:text-white"
                       >

@@ -25,6 +25,7 @@ import {
   extractInitialMatchEvents,
   resolveLastMatchReview,
 } from "@/lib/priceEngine";
+import { resolvePlayerQuote } from "@/lib/playerQuote";
 import {
   resolveMatchClock,
   resolveMatchForPlayerView,
@@ -215,12 +216,15 @@ function seededNoise(seedStr: string, index: number): number {
 
 function buildOverallSeries(
   player: Player,
-  period: OverallPeriod
+  period: OverallPeriod,
+  effectiveCurrentPrice?: number
 ): OverallPoint[] {
   const basePrice = roundToTen(
     player.basePrice ?? player.initialPrice ?? player.currentPrice
   );
-  const currentPrice = roundToTen(player.currentPrice);
+  const currentPrice = roundToTen(
+    effectiveCurrentPrice ?? player.currentPrice
+  );
 
   if (period === "1M") {
     const count = 16;
@@ -388,6 +392,9 @@ export default function MatchTimelineChart({
   );
 
   useEffect(() => {
+    // Every newly selected player opens on the match timeline so the chart
+    // source never carries over from the previously selected player.
+    setViewMode("MATCH_TIMELINE");
     setPreMatchMode("PRE");
     setSelectedEventMinute(null);
   }, [player.id]);
@@ -477,25 +484,22 @@ export default function MatchTimelineChart({
     return ssotData.events.some((e) => e.source === "SIMULATED");
   }, [player.events, playerMatch?.events, playerMatch?.providerMode, ssotData.events]);
 
+  const quote = resolvePlayerQuote(player, matchStatus);
   const openPrice = isViewingLastMatch && lastMatchReview
     ? lastMatchReview.openPrice
-    : player.openPrice ?? ssotData.openPrice;
+    : quote.openPrice;
   const closePrice = isViewingLastMatch && lastMatchReview
     ? lastMatchReview.marketData.currentPrice
-    : matchStatus === "UPCOMING"
-    ? openPrice
-    : matchStatus === "FT"
-    ? roundToTen(player.closePrice ?? player.currentPrice ?? ssotData.currentPrice)
-    : roundToTen(player.currentPrice ?? ssotData.currentPrice);
+    : quote.currentPrice;
   const highPrice = isViewingLastMatch && lastMatchReview
     ? lastMatchReview.marketData.highPrice
     : matchStatus === "UPCOMING"
-    ? openPrice
+    ? quote.highPrice
     : player.highPrice ?? ssotData.highPrice;
   const lowPrice = isViewingLastMatch && lastMatchReview
     ? lastMatchReview.marketData.lowPrice
     : matchStatus === "UPCOMING"
-    ? openPrice
+    ? quote.lowPrice
     : player.lowPrice ?? ssotData.lowPrice;
   const volume = isViewingLastMatch && lastMatchReview
     ? lastMatchReview.marketData.volume
@@ -553,8 +557,8 @@ export default function MatchTimelineChart({
   }, [timelineData]);
 
   const overallSeries = useMemo(
-    () => buildOverallSeries(player, overallPeriod),
-    [player, overallPeriod]
+    () => buildOverallSeries(player, overallPeriod, quote.currentPrice),
+    [player, overallPeriod, quote.currentPrice]
   );
 
   const matchTabLabel = matchClock.chartLabel;

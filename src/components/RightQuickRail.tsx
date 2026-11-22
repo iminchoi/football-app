@@ -5,17 +5,25 @@ import { Briefcase, Star, Clock, X } from "lucide-react";
 import {
   useTradeStore,
   roundToTen,
-  calculateChangePercentFromOpen,
+  doesPlayerBelongToMatch,
 } from "@/store/useTradeStore";
-import { Player } from "@/types";
+import { ActiveMatchContext, Player } from "@/types";
 import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
+import {
+  resolveMatchClock,
+  resolveMatchForPlayerView,
+} from "@/lib/matchSync";
+import { resolvePlayerQuote } from "@/lib/playerQuote";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 type QuickRailTab = "INVEST" | "WATCHLIST" | "RECENT" | null;
 
 interface RightQuickRailProps {
   recentPlayerIds: string[];
-  onSelectPlayer: (player: Player) => void;
+  onSelectPlayer: (
+    player: Player,
+    matchContext?: ActiveMatchContext | null
+  ) => void;
   onOpenAuthModal: () => void;
 }
 
@@ -27,6 +35,7 @@ export default function RightQuickRail({
   const user = useTradeStore((s) => s.user);
   const cash = useTradeStore((s) => s.cash);
   const players = useTradeStore((s) => s.players);
+  const matches = useTradeStore((s) => s.matches);
   const holdings = useTradeStore((s) => s.holdings);
   const watchlist = useTradeStore((s) => s.watchlist);
 
@@ -83,9 +92,25 @@ export default function RightQuickRail({
     },
   ];
 
-  const renderPlayerRow = (player: Player, subtitle?: string) => {
-    const open = roundToTen(player.openPrice ?? player.initialPrice);
-    const pct = calculateChangePercentFromOpen(player.currentPrice, open);
+  const renderPlayerRow = (
+    player: Player,
+    subtitle?: string,
+    matchContext?: ActiveMatchContext | null
+  ) => {
+    const effectiveCtx =
+      matchContext ?? holdings[player.id]?.matchContext ?? null;
+    const playerMatch = resolveMatchForPlayerView({
+      player,
+      storeMatches: matches,
+      activeMatchContext: effectiveCtx,
+      belongsToMatch: doesPlayerBelongToMatch,
+    });
+    const clock =
+      playerMatch || effectiveCtx
+        ? resolveMatchClock(playerMatch, effectiveCtx)
+        : null;
+    const quote = resolvePlayerQuote(player, clock?.status ?? "LIVE");
+    const pct = quote.changePct;
     const isUp = pct > 0;
     const isDown = pct < 0;
 
@@ -93,7 +118,7 @@ export default function RightQuickRail({
       <button
         key={player.id}
         type="button"
-        onClick={() => onSelectPlayer(player)}
+        onClick={() => onSelectPlayer(player, effectiveCtx)}
         className="flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-left transition hover:bg-[#F7F9F8]"
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -110,7 +135,7 @@ export default function RightQuickRail({
 
         <div className="text-right font-mono shrink-0">
           <p className="text-xs font-black text-gray-900">
-            {player.currentPrice.toLocaleString()}P
+            {quote.currentPrice.toLocaleString()}P
           </p>
           <p
             className={`text-[10px] font-bold ${
@@ -187,7 +212,8 @@ export default function RightQuickRail({
                           player,
                           `${holding.quantity}주 · 평균 ${roundToTen(
                             holding.avgBuyPrice
-                          ).toLocaleString()}P`
+                          ).toLocaleString()}P`,
+                          holding.matchContext
                         )
                       )
                     )}

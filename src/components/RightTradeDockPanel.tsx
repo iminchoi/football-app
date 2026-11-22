@@ -15,10 +15,9 @@ import {
   useTradeStore,
   roundToTen,
   doesPlayerBelongToMatch,
-  calculateChangePercentFromOpen,
-  calculateDiffFromOpen,
 } from "@/store/useTradeStore";
 import { getCircuitBreakerRemainingSec } from "@/lib/orderGate";
+import { resolvePlayerQuote } from "@/lib/playerQuote";
 import {
   resolveMatchClock,
   resolveMatchForPlayerView,
@@ -100,9 +99,6 @@ export default function RightTradeDockPanel({
   const basePrice = roundToTen(
     player.basePrice ?? player.initialPrice ?? player.currentPrice
   );
-  const openPrice = roundToTen(
-    player.openPrice ?? player.priceHistory[0]?.price ?? basePrice
-  );
   const capPrice = roundToTen(basePrice * (1 + WEIGHTS.CAP_LIMIT));
   const floorPrice = roundToTen(basePrice * (1 - WEIGHTS.CAP_LIMIT));
   const playerMatch = resolveMatchForPlayerView({
@@ -113,18 +109,13 @@ export default function RightTradeDockPanel({
   });
   const matchClock = resolveMatchClock(playerMatch, activeMatchContext);
   const isMatchFinished = matchClock.isFinished;
-  const isMatchUpcoming = matchClock.isUpcoming;
-  const displayPrice = isMatchUpcoming ? basePrice : player.currentPrice;
-  const effectiveOpenPrice = isMatchUpcoming ? basePrice : openPrice;
+  const quote = resolvePlayerQuote(player, matchClock.status);
+  const displayPrice = quote.currentPrice;
   const isAtUpperLimit = displayPrice >= capPrice;
   const isAtLowerLimit = displayPrice <= floorPrice;
 
-  const diff = isMatchUpcoming
-    ? 0
-    : calculateDiffFromOpen(displayPrice, effectiveOpenPrice);
-  const pct = isMatchUpcoming
-    ? 0
-    : calculateChangePercentFromOpen(displayPrice, effectiveOpenPrice);
+  const diff = quote.diff;
+  const pct = quote.changePct;
   const isUp = diff > 0;
   const isDown = diff < 0;
   const isWatched = watchlist.includes(player.id);

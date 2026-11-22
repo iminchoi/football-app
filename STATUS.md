@@ -1,14 +1,16 @@
 # Project Status
 
 ## Current State
-- Core match trading, lineup formation view (`FormationPitchModal.tsx`), strict event-only substitution/card badges (`lineupStatus.ts`), unified Korean-first player display name resolution (`playerDisplayName.ts`), manager strip (`교체명단`), match sync (`matchSync.ts`), and `v2.5` pricing engine (`weights.ts`, `priceEngine.ts` v2.5 constants, `SimulatedEventsProvider.ts`, `.cache/ledger.json` untouched) are working.
-- Verified with `npx tsc --noEmit` (0 errors) and `node --experimental-strip-types --test tests/*.test.ts` (48/48 passing).
+- Core match trading, lineup formation view (`FormationPitchModal.tsx`), event-only substitution/card badges (`lineupStatus.ts`), Korean-first player names (`playerDisplayName.ts`), match sync (`matchSync.ts`), and `v2.5` pricing engine (`weights.ts`, `priceEngine.ts` constants, `SimulatedEventsProvider.ts`, `.cache/ledger.json` untouched) are working.
+- PRE (`UPCOMING`) fixtures accept BUY/SELL at the base price; quotes, pitch/bench nodes, chart baseline, portfolio valuation, and executed price share one resolver (`playerQuote.ts`) and preserve `Holding.matchContext` across reselection.
+- Verified with `npx tsc --noEmit` (0 errors) and `node --experimental-strip-types --test tests/*.test.ts` (58/58 passing).
 
 ## Recent Changes
-- `src/lib/priceEngine.ts`: Preserved `pt.event.source` when extracting `priceHistory` events in `extractInitialMatchEvents` and skipped `SUB_IN`/`SUB_OUT`/`SUB` markers so substitution points are never converted into `YELLOW_CARD` or `ASSIST`.
-- `src/lib/lineupStatus.ts`: Added `hasConflictingAuthoritativeIds` guard in `doesIdentityMatchPlayer` to block same-team/cross-team alias collisions between distinct authoritative player IDs while preserving curated multi-ID and cross-namespace matches.
-- `src/store/useTradeStore.ts`: Scoped `applyPersistedPrices`, `ensurePlayerInStore`, and `syncPlayersFromMatches` against conflicting authoritative IDs, opposite-team lineup/event binding, explicit `match.events` SSOT leaks, and blocked card/sub events on `UPCOMING`/`SCORE_ONLY`/dummy-lineup matches.
-- `tests/lineupStatus.test.ts`: Added regression tests for `priceHistory` `SIMULATED` source preservation, `SUB_*` non-fabrication, and distinct authoritative ID collision blocking.
+- `src/lib/playerQuote.ts`: Added `resolvePlayerQuote(player, status)` pinning PRE (`UPCOMING`) open/current/high/low to `basePrice` with zero change, LIVE to `currentPrice`, and FT to `closePrice`.
+- `src/lib/matchSync.ts`: Updated `resolveMatchForPlayerView` so `activeMatchContext` only overrides a player's direct `matchId` when it refers to the same fixture (or when no direct fixture exists in `storeMatches`).
+- `src/types/index.ts` & `src/store/useTradeStore.ts`: Added `Holding.matchContext`; persisted context on `buyPlayer` and restored it in `selectPlayer`/`sellPlayer`; resolved `selectPlayer` after `ensurePlayerInStore` and recovered clicked fixture context on cross-match IDs; pinned PRE quotes to `basePrice` in `tickMarket`, `applyPersistedPrices`, and `ensurePlayerInStore`.
+- `TradeBottomSheet.tsx`, `RightTradeDockPanel.tsx`, `MatchTimelineChart.tsx`, `FullScreenCandleChartModal.tsx`, `PortfolioTabView.tsx`, `RightQuickRail.tsx`, `TopAssetHeader.tsx`, `FormationPitchModal.tsx`, `MatchAccordionCard.tsx`, `MarketChartTabView.tsx`: Unified quote/open/close/change rendering with `resolvePlayerQuote`, reset timeline chart view to `MATCH_TIMELINE` on player change, and aligned PRE pitch/bench node quotes with `basePrice` (`0.00%`).
+- `tests/preMatchConsistency.test.ts`: Added unit tests covering PRE quote pinning, PRE BUY/SELL execution, cross-fixture context isolation, PRE candle/timeline baseline, and `Holding.matchContext` portfolio reselection.
 
 ## Known Issues & Next Steps
-- Run an interactive browser UI check on `/` across live/HT/FT/past/future dates and Newcastle vs Arsenal lineup/chart panels if visual verification is requested.
+- Run an interactive browser UI verification of the PRE click → buy → portfolio/quick-rail/pitch reselection flow if visual confirmation is requested.
