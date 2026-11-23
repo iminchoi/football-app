@@ -1,4 +1,16 @@
 import {
+  API_FOOTBALL_AVAILABLE_EVENT_TYPES,
+  ApiFootballProvider,
+  CACHE_TTL_MS,
+  mapApiFootballStatus,
+  normalizeApiFootballEvents,
+  normalizeApiFootballFixture,
+  normalizeApiFootballLineupList,
+  type ApiFootballRawEvent,
+  type ApiFootballRawFixtureItem,
+  type ApiFootballRawLineup,
+} from "./ApiFootballProvider.ts";
+import {
   DeepDataLiveProvider,
   NotImplementedError,
 } from "./DeepDataLiveProvider.ts";
@@ -25,6 +37,13 @@ import {
 } from "./types.ts";
 
 export {
+  ApiFootballProvider,
+  API_FOOTBALL_AVAILABLE_EVENT_TYPES,
+  CACHE_TTL_MS,
+  mapApiFootballStatus,
+  normalizeApiFootballFixture,
+  normalizeApiFootballEvents,
+  normalizeApiFootballLineupList,
   ScoreOnlyLiveProvider,
   FixtureReplayProvider,
   SimulatedEventsProvider,
@@ -36,6 +55,9 @@ export {
   FORBIDDEN_SIMULATED_EVENT_TYPES,
   SCORE_ONLY_EVENT_TYPES,
   SIMULATED_EVENT_TYPES,
+  type ApiFootballRawFixtureItem,
+  type ApiFootballRawEvent,
+  type ApiFootballRawLineup,
   type MatchDataProvider,
   type ProviderEvaluationResult,
   type ScoreDerivedTeamEvent,
@@ -46,11 +68,15 @@ export {
 
 /**
  * Resolve the active server-side MatchDataProvider:
- * - `SimulatedEventsProvider` ONLY when `process.env.ENABLE_SIMULATED_EVENTS === "true"`
+ * - `ApiFootballProvider` when `process.env.API_FOOTBALL_KEY` is configured
+ * - `SimulatedEventsProvider` when `process.env.ENABLE_SIMULATED_EVENTS === "true"`
  * - `FixtureReplayProvider` when `process.env.MATCH_PROVIDER === "FIXTURE_REPLAY"`
  * - `ScoreOnlyLiveProvider` by default
  */
 export function getActiveMatchDataProvider(): MatchDataProvider {
+  if (ApiFootballProvider.isConfigured()) {
+    return new ApiFootballProvider();
+  }
   if (SimulatedEventsProvider.isEnabled()) {
     return new SimulatedEventsProvider();
   }

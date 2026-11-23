@@ -271,7 +271,11 @@ function getMatchDateCandidates(match: Match): string[] {
 }
 
 export function isApiBackedMatch(match: Match): boolean {
-  return match.id.startsWith("fd-") || Boolean(match.utcDate);
+  return (
+    match.id.startsWith("fd-") ||
+    match.id.startsWith("af-") ||
+    Boolean(match.utcDate)
+  );
 }
 
 /**
@@ -654,7 +658,7 @@ export function resolveFetchedMatchesForDate(params: {
   } = params;
   const isToday = requestedDateStr === todayStr;
 
-  if (source === "FOOTBALL_DATA_API") {
+  if (source === "FOOTBALL_DATA_API" || source === "API_FOOTBALL") {
     const finalized = normalizeFutureMatches(
       finalizePastMatches(
         Array.isArray(matches) ? matches : [],

@@ -1,16 +1,14 @@
-# Project Status
-
 ## Current State
-- Core match trading, lineup formation view (`FormationPitchModal.tsx`), event-only substitution/card badges (`lineupStatus.ts`), Korean-first player names (`playerDisplayName.ts`), match sync (`matchSync.ts`), and `v2.5` pricing engine (`weights.ts`, `priceEngine.ts` constants, `SimulatedEventsProvider.ts`, `.cache/ledger.json` untouched) are working.
-- PRE (`UPCOMING`) fixtures accept BUY/SELL at the base price; quotes, pitch/bench nodes, chart baseline, portfolio valuation, and executed price share one resolver (`playerQuote.ts`) and preserve `Holding.matchContext` across reselection.
-- Verified with `npx tsc --noEmit` (0 errors) and `node --experimental-strip-types --test tests/*.test.ts` (58/58 passing).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `ApiFootballProvider` (`v3.football.api-sports.io`) integrated at highest priority when `process.env.API_FOOTBALL_KEY` is configured, with differential TTL memory caching and fallback to `FootballData` / `FixtureReplay` / `SimulatedEvents`.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (31/31 across 6 suites).
 
 ## Recent Changes
-- `src/lib/playerQuote.ts`: Added `resolvePlayerQuote(player, status)` pinning PRE (`UPCOMING`) open/current/high/low to `basePrice` with zero change, LIVE to `currentPrice`, and FT to `closePrice`.
-- `src/lib/matchSync.ts`: Updated `resolveMatchForPlayerView` so `activeMatchContext` only overrides a player's direct `matchId` when it refers to the same fixture (or when no direct fixture exists in `storeMatches`).
-- `src/types/index.ts` & `src/store/useTradeStore.ts`: Added `Holding.matchContext`; persisted context on `buyPlayer` and restored it in `selectPlayer`/`sellPlayer`; resolved `selectPlayer` after `ensurePlayerInStore` and recovered clicked fixture context on cross-match IDs; pinned PRE quotes to `basePrice` in `tickMarket`, `applyPersistedPrices`, and `ensurePlayerInStore`.
-- `TradeBottomSheet.tsx`, `RightTradeDockPanel.tsx`, `MatchTimelineChart.tsx`, `FullScreenCandleChartModal.tsx`, `PortfolioTabView.tsx`, `RightQuickRail.tsx`, `TopAssetHeader.tsx`, `FormationPitchModal.tsx`, `MatchAccordionCard.tsx`, `MarketChartTabView.tsx`: Unified quote/open/close/change rendering with `resolvePlayerQuote`, reset timeline chart view to `MATCH_TIMELINE` on player change, and aligned PRE pitch/bench node quotes with `basePrice` (`0.00%`).
-- `tests/preMatchConsistency.test.ts`: Added unit tests covering PRE quote pinning, PRE BUY/SELL execution, cross-fixture context isolation, PRE candle/timeline baseline, and `Holding.matchContext` portfolio reselection.
+- `src/lib/providers/ApiFootballProvider.ts`, `src/lib/providers/index.ts`: Added `ApiFootballProvider` normalizing `/fixtures`, `/fixtures/lineups`, and `/fixtures/events` into `PRE`/`1H`/`HT`/`2H`/`FT` states, lineups, and `REAL`/`DEEP_DATA` events with differential TTL cache (`35s` live, `7m` static, `30m` locked lineups/FT) and `429`/8s timeout stale-cache fallback.
+- `src/app/api/matches/route.ts`, `src/lib/matchSync.ts`, `src/components/matches/MatchesTabView.tsx`: Connected `ApiFootballProvider` priority and `API_FOOTBALL` source handling.
+- `tests/apiFootballProvider.test.ts`: Added unit tests for status/lineup/event normalization, TTL cache hit, and `429` stale-snapshot fallback.
 
-## Known Issues & Next Steps
-- Run an interactive browser UI verification of the PRE click → buy → portfolio/quick-rail/pitch reselection flow if visual confirmation is requested.
+## 알려진 한계 (Known Limitations)
+- **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.
+- **RATES 오차 허용 구간**: 포지션 최대 격차(`<= 1.0%p`) 기준 `RATES` 허용 오차 범위는 약 `-17% ~ +32%` 수준(`-20%` 시나리오에서 `1.06%p`로 소폭 초과).
+- **조기 상한 도달 비중**: `+15%` 상한 도달자의 약 `50%`(`48.5%~50.0%`)가 개별 이벤트 `2개 이하`로 상한에 도달함.
+- **실데이터 연동 시 개선 사항**: 라이브/실데이터 연동 시 `E`를 포지션 평균이 아닌 선수별 실측 발생률(수축 추정, shrinkage estimation)로 교체할 것.

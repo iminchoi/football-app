@@ -180,7 +180,9 @@ export default function MatchesTabView({
           );
         }
         setStatusMessage(
-          data.source === "FOOTBALL_DATA_API" ? null : data.message || null
+          data.source === "FOOTBALL_DATA_API" || data.source === "API_FOOTBALL"
+            ? null
+            : data.message || null
         );
       } catch {
         // An aborted request is superseded by a newer one that owns the state.
@@ -469,7 +471,8 @@ export default function MatchesTabView({
                   ? "경기 종료 · 거래 마감"
                   : allUpcoming
                   ? "장전 프리마켓 (PRE)"
-                  : dataSource === "FOOTBALL_DATA_API"
+                  : dataSource === "FOOTBALL_DATA_API" ||
+                    dataSource === "API_FOOTBALL"
                   ? "LIVE API"
                   : dataSource === "AMATCH_FALLBACK"
                   ? "A-MATCH MODE"

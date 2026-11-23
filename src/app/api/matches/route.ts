@@ -12,7 +12,10 @@ import {
   NATIONAL_TEAM_DUMMY_MATCHES,
 } from "@/data/dummyData";
 import { deduplicateMatches } from "@/lib/matchSync";
-import { getActiveMatchDataProvider } from "@/lib/providers";
+import {
+  ApiFootballProvider,
+  getActiveMatchDataProvider,
+} from "@/lib/providers";
 
 const FOOTBALL_DATA_BASE_URL = "https://api.football-data.org/v4/matches";
 
@@ -559,6 +562,28 @@ export async function GET(request: NextRequest) {
   const targetDate = isValidDateStr(rawDateParam)
     ? rawDateParam
     : getKstTodayStr();
+
+  // Priority 1: API-Football v3 (`process.env.API_FOOTBALL_KEY`) with server memory cache & fallback
+  if (ApiFootballProvider.isConfigured()) {
+    try {
+      const afProvider = new ApiFootballProvider();
+      const afResult = await afProvider.fetchMatchesForDate(targetDate);
+      if (afResult.matches.length > 0) {
+        return NextResponse.json({
+          source: "API_FOOTBALL",
+          date: targetDate,
+          count: afResult.matches.length,
+          fromCache: afResult.fromCache,
+          staleFallback: afResult.staleFallback,
+          matches: afResult.matches.map((m) =>
+            enrichMatchMetadata(m, Boolean(m.isInternational))
+          ),
+        });
+      }
+    } catch {
+      // Fall through cleanly to football-data.org / fixture replay / simulated fallback
+    }
+  }
 
   const rawApiKey = process.env.FOOTBALL_DATA_API_KEY;
   const apiKey = rawApiKey?.trim() ?? "";
