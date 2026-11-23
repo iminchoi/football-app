@@ -1,11 +1,12 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); Squad Maker (`SQUAD` tab) now runs an FC Online-style interactive 11-slot pitch + right control panel layout supporting 8 formations (`4-4-2`, `4-2-3-1`, `4-3-3`, `4-1-4-1`, `3-4-2-1`, `3-5-2`, `3-4-3`, `5-3-2`) alongside the Community Feed.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (76/76 across all 10 suites, 100% mocked/offline).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); live `tickMarket` synthetic drift is now balanced and mean-reverting (`src/lib/marketTick.ts`), preventing mass +15% buy-cap crowding on the Market tab while preserving all `REAL` events and v2.5 weights.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (79/79 across all 11 suites, 100% mocked/offline).
 
 ## Recent Changes
-- `src/types/index.ts`, `src/lib/squadFeed.ts`, `src/store/useTradeStore.ts`: Added 8-formation `(x%, y%)` 11-slot layouts (`SQUAD_FORMATION_LAYOUTS`), slot-level owned-only assignment/replacement/clearing/pruning (`assignPlayerToSquadSlot`, `clearSquadSlot`, `pruneUnownedSlotAssignments`), smooth formation remapping (`remapSquadSlotsForFormation`), slotted snapshot metadata (`slotIndex`, `slotLabel`), and `placeSnapshotsOnFormation`.
-- `src/components/squad/SquadPlayerPickerModal.tsx`, `src/components/squad/SquadFeedTabView.tsx`: Redesigned Squad Maker into a 2-column tactical pitch + sticky right panel (title, strategy comment, live checklist, publish & reset), interactive `+` slots that open a searchable/filterable owned-player picker with duplicate prevention, and upgraded feed cards to render exact 8-formation coordinates.
-- `tests/squadFeed.test.ts`: Added unit tests for all 8 formation coordinates/spacing, sequential formation remapping with zero loss/duplicates, owned-only slot assignment/clearing/pruning, and slotted 5-3-2 publish & GK validation.
+- `src/lib/marketTick.ts`: Added pure symmetric/mean-reverting tick evaluator (`evaluateSimulatedTickEvent`), sliding-window + soft net-drift cap (`sanitizeSimulatedTickEvents`, `mergeSimulatedTickEvents`, max 3 `SIMULATED` events within `±8.5%` net drift, zero synthetic cards, 100% `REAL` event preservation, and minute wrap-around cleanup).
+- `src/store/useTradeStore.ts`: Replaced one-sided positive `POSITION_EVENTS` accumulation in `tickMarket` with `evaluateSimulatedTickEvent` + `mergeSimulatedTickEvents`, and applied `sanitizeSimulatedTickEvents` in `applyPersistedPrices` and `syncPlayersFromMatches` to unblock stale persisted +15% cap lock-ins on reload.
+- `src/data/dummyData.ts`: Neutralized default +3% seed inflation in `createSquadPlayer` for non-scoring/non-explicit players so initial quotes start balanced around `basePrice`.
+- `tests/marketTick.test.ts`: Added unit tests verifying 100-player × 200-tick zero synthetic cap crowding, two-sided swings across all 4 position lines, hydration recovery of runaway `SIMULATED` events, and `REAL` +15% cap preservation.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

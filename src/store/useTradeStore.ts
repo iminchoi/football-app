@@ -29,8 +29,12 @@ import {
   INITIAL_CASH,
   INITIAL_MATCHES,
   INITIAL_PLAYERS,
-  POSITION_EVENTS,
 } from "@/data/dummyData";
+import {
+  evaluateSimulatedTickEvent,
+  mergeSimulatedTickEvents,
+  sanitizeSimulatedTickEvents,
+} from "@/lib/marketTick";
 import { getTierConfig, getAvailableShares } from "@/utils/tier";
 import {
   canonicalizeTeamKey,
@@ -665,13 +669,17 @@ function applyPersistedPrices(
     for (const ev of savedEvents) {
       mergedEventMap.set(ev.minute, ev);
     }
-    const events = sanitizePersistedEvents(
-      normalizeMatchEvents(
-        Array.from(mergedEventMap.values()),
-        player.id,
-        player.position
+    const events = sanitizeSimulatedTickEvents(
+      sanitizePersistedEvents(
+        normalizeMatchEvents(
+          Array.from(mergedEventMap.values()),
+          player.id,
+          player.position
+        ),
+        allowCardAndSub
       ),
-      allowCardAndSub
+      player.id,
+      player.position
     );
 
     const ctx = resolvePlayerMatchContext({ ...player, events }, matches);
@@ -1604,9 +1612,13 @@ export const useTradeStore = create<TradeStoreState>()(
                 : Math.min(90, Math.max(0, matchClock.minute));
               const initialEvents =
                 savedPrice?.events && savedPrice.events.length > 0
-                  ? sanitizePersistedEvents(
-                      normalizeMatchEvents(savedPrice.events, newId, position),
-                      allowLineupEvents && !Array.isArray(match.events)
+                  ? sanitizeSimulatedTickEvents(
+                      sanitizePersistedEvents(
+                        normalizeMatchEvents(savedPrice.events, newId, position),
+                        allowLineupEvents && !Array.isArray(match.events)
+                      ),
+                      newId,
+                      position
                     )
                   : [];
 
@@ -2265,10 +2277,14 @@ export const useTradeStore = create<TradeStoreState>()(
         const { matches, todayMatches, activeMatchContext, players, playerPrices } =
           get();
 
+        const wrappedMatchIds = new Set<string>();
         const updatedMatches = matches.map((m) => {
           const clock = resolveMatchClock(m);
           if (!clock.isLive || clock.isHalfTime) return m;
-          const nextMin = (m.minute ?? 45) >= 90 ? 46 : (m.minute ?? 45) + 1;
+          const prevMin = m.minute ?? 45;
+          const didWrap = prevMin >= 90;
+          if (didWrap) wrappedMatchIds.add(m.id);
+          const nextMin = didWrap ? 46 : prevMin + 1;
           return { ...m, minute: nextMin };
         });
 
@@ -2345,86 +2361,38 @@ export const useTradeStore = create<TradeStoreState>()(
             };
           }
 
-          // Event-driven price calculation with Single Source of Truth tier config (Wonderkid Rule):
+          // Balanced, mean-reverting synthetic tick evaluation (preserves REAL events & v2.5 weights)
           const tierCfg = getTierConfig(basePrice);
-          const pool =
-            POSITION_EVENTS[player.position] ??
-            POSITION_EVENTS[getPositionLine(player.position)] ??
-            POSITION_EVENTS.MF;
-          const chosen = pool[Math.floor(Math.random() * pool.length)];
-
-          const isSpecialGoalOrAssist =
-            (chosen.statEffect === "goal" || chosen.statEffect === "assist") &&
-            Math.random() < 0.25;
-
-          const baseRate = isSpecialGoalOrAssist
-            ? chosen.minRate +
-              Math.random() * (chosen.maxRate - chosen.minRate)
-            : Math.random() * 0.05 - 0.025;
-          const rawRate = baseRate * tierCfg.volatilityMultiplier;
-          const tickImpactPct = Number((rawRate * 100).toFixed(1));
-
           const currentMinute = Math.max(
             1,
             Math.min(95, match?.minute ?? player.lastEvent.minute ?? 46)
           );
+          const didMinuteWrap = Boolean(match && wrappedMatchIds.has(match.id));
 
           const allowRandomEvents =
             !player.id.startsWith("pitch-") &&
             match?.providerMode !== "SCORE_ONLY" &&
             !Array.isArray(match?.events);
 
-          const isMilestoneChartEvent =
-            allowRandomEvents &&
-            (isSpecialGoalOrAssist ||
-              (Boolean(chosen.chartEventType) &&
-                chosen.chartEventType !== "GOAL" &&
-                chosen.chartEventType !== "ASSIST" &&
-                chosen.chartEventType !== "YELLOW_CARD" &&
-                chosen.chartEventType !== "RED_CARD" &&
-                chosen.chartEventType !== "SUB_IN" &&
-                chosen.chartEventType !== "SUB_OUT" &&
-                chosen.chartEventType !== "SUB" &&
-                Math.random() < 0.14 &&
-                (((chosen.chartEventType === "CONCEDED" ||
-                  chosen.chartEventType === "BIG_CHANCE_MISS") &&
-                  tickImpactPct < 0) ||
-                  ((chosen.chartEventType === "SAVE" ||
-                    chosen.chartEventType === "DEFENSIVE_ACTION" ||
-                    chosen.chartEventType === "KEY_PLAY") &&
-                    tickImpactPct > 0))));
+          const tickEval = evaluateSimulatedTickEvent({
+            playerId: player.id,
+            position: player.position,
+            basePrice,
+            currentPrice: safeCurrentPrice,
+            currentMinute,
+            existingEvents: player.events ?? [],
+            tierVolatilityMultiplier: tierCfg.volatilityMultiplier,
+            allowRandomEvents,
+          });
 
-          let nextEvents = player.events ?? [];
-          if (isMilestoneChartEvent && chosen.chartEventType && tickImpactPct !== 0) {
-            const evType = normalizeMatchEventType(
-              chosen.chartEventType,
-              tickImpactPct,
-              player.position
-            );
-            // Random market ticks must never fabricate synthetic card badges
-            if (evType !== "YELLOW_CARD" && evType !== "RED_CARD") {
-              const newEv: MatchEvent = {
-                id: `ev-${player.id}-${currentMinute}-${evType}`,
-                playerId: player.id,
-                minute: currentMinute,
-                type: evType,
-                description: cleanEventDescription(
-                  chosen.chartEventTitle ?? chosen.text,
-                  evType
-                ),
-                priceImpactPercent: tickImpactPct,
-                source: "SIMULATED",
-              };
-              nextEvents = normalizeMatchEvents(
-                [
-                  ...nextEvents.filter((e) => e.minute < currentMinute),
-                  newEv,
-                ],
-                player.id,
-                player.position
-              );
-            }
-          }
+          const nextEvents = mergeSimulatedTickEvents({
+            existingEvents: player.events ?? [],
+            newSimulatedEvent: tickEval.event,
+            playerId: player.id,
+            position: player.position,
+            currentMinute,
+            didMinuteWrap,
+          });
 
           const derived = derivePlayerMarketData({
             playerId: player.id,
@@ -2437,46 +2405,37 @@ export const useTradeStore = create<TradeStoreState>()(
 
           const nextPrice = derived.currentPrice;
           const nextStats = { ...player.stats };
-          if (allowRandomEvents && isSpecialGoalOrAssist && chosen.statEffect === "goal") {
+          if (tickEval.event && tickEval.statEffect === "goal") {
             nextStats.goals += 1;
-          } else if (
-            allowRandomEvents &&
-            isSpecialGoalOrAssist &&
-            chosen.statEffect === "assist"
-          ) {
+          } else if (tickEval.event && tickEval.statEffect === "assist") {
             nextStats.assists += 1;
           } else if (
-            chosen.statEffect === "shot" &&
+            tickEval.event &&
+            tickEval.statEffect === "shot" &&
             nextPrice > safeCurrentPrice
           ) {
             nextStats.shotsOnTarget += 1;
           } else if (
-            chosen.statEffect === "keyPass" &&
+            tickEval.event &&
+            tickEval.statEffect === "keyPass" &&
             nextPrice > safeCurrentPrice
           ) {
             nextStats.keyPasses += 1;
           }
 
-          const ratingDelta =
-            nextPrice > safeCurrentPrice
+          const ratingDelta = tickEval.event
+            ? nextPrice > safeCurrentPrice
               ? 0.1
               : nextPrice < safeCurrentPrice
               ? -0.1
-              : 0;
+              : 0
+            : 0;
           nextStats.rating = Number(
             Math.min(
               9.9,
               Math.max(5.5, nextStats.rating + ratingDelta)
             ).toFixed(1)
           );
-
-          const displayEventText = isSpecialGoalOrAssist
-            ? chosen.text
-            : chosen.statEffect === "goal" || chosen.statEffect === "assist"
-            ? nextPrice >= safeCurrentPrice
-              ? "⚡ 날카로운 전진 움직임 및 연계 플레이"
-              : "🔄 수비 대형 유지 및 볼 순환"
-            : chosen.text;
 
           nextPlayerPrices[player.id] = {
             openPrice: derived.openPrice,
@@ -2502,17 +2461,19 @@ export const useTradeStore = create<TradeStoreState>()(
             volume: derived.volume,
             events: derived.events,
             priceHistory: derived.priceHistory,
-            lastEvent: {
-              text: displayEventText,
-              sentiment: (
-                nextPrice > safeCurrentPrice
-                  ? "positive"
-                  : nextPrice < safeCurrentPrice
-                  ? "negative"
-                  : "neutral"
-              ) as Player["lastEvent"]["sentiment"],
-              minute: currentMinute,
-            },
+            lastEvent: tickEval.displayText
+              ? {
+                  text: tickEval.displayText,
+                  sentiment: (
+                    nextPrice > safeCurrentPrice
+                      ? "positive"
+                      : nextPrice < safeCurrentPrice
+                      ? "negative"
+                      : "neutral"
+                  ) as Player["lastEvent"]["sentiment"],
+                  minute: currentMinute,
+                }
+              : player.lastEvent,
             stats: nextStats,
           };
         });

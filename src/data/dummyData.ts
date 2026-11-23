@@ -545,10 +545,22 @@ interface SquadPlayerSeed {
 function createSquadPlayer(seed: SquadPlayerSeed): Player {
   const cfg = getTierConfig(seed.basePrice);
   const openPrice = seed.basePrice;
+  const hasExplicitOutcome =
+    seed.currentPrice !== undefined ||
+    (seed.goals ?? 0) > 0 ||
+    (seed.assists ?? 0) > 0;
   const currentPrice =
-    seed.currentPrice ?? Math.round((seed.basePrice * 1.03) / 10) * 10;
+    seed.currentPrice ??
+    ((seed.goals ?? 0) > 0
+      ? Math.round((seed.basePrice * 1.055) / 10) * 10
+      : (seed.assists ?? 0) > 0
+      ? Math.round((seed.basePrice * 1.035) / 10) * 10
+      : seed.basePrice);
   const previousPrice =
-    seed.previousPrice ?? Math.round((seed.basePrice * 1.015) / 10) * 10;
+    seed.previousPrice ??
+    (hasExplicitOutcome
+      ? Math.round(((seed.basePrice + currentPrice) / 2) / 10) * 10
+      : seed.basePrice);
   const midPrice15 =
     Math.round(((openPrice * 2 + previousPrice) / 3) / 10) * 10;
   const midPrice30 = Math.round(((openPrice + previousPrice) / 2) / 10) * 10;
@@ -572,7 +584,7 @@ function createSquadPlayer(seed: SquadPlayerSeed): Player {
       label: `🅰️ 도움 (${impactPct >= 0 ? "+" : ""}${Math.max(3.2, impactPct).toFixed(1)}%)`,
       impactPercent: Math.max(3.2, impactPct),
     };
-  } else if (seed.position === "GK") {
+  } else if (seed.position === "GK" && currentPrice > seed.basePrice) {
     autoEvent = {
       type: "SAVE",
       label: `🧤 슈퍼세이브 (+${Math.max(2.4, Math.abs(impactPct)).toFixed(1)}%)`,
