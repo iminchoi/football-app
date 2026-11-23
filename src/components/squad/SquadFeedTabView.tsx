@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import {
   Users,
+  Plus,
   PlusCircle,
   Trash2,
   MessageSquare,
@@ -15,6 +16,8 @@ import {
   LogIn,
   ShieldCheck,
   Sparkles,
+  RotateCcw,
+  X,
 } from "lucide-react";
 import {
   ActiveMatchContext,
@@ -31,7 +34,6 @@ import {
   useTradeStore,
 } from "@/store/useTradeStore";
 import { resolveHoldingPlayer } from "@/lib/playerQuote";
-import { buildFormationRows } from "@/lib/lineupBuilder";
 import {
   formatPlayerDisplayName,
   resolvePlayerDisplayName,
@@ -42,12 +44,23 @@ import {
   MAX_SQUAD_TITLE_LENGTH,
   REQUIRED_SQUAD_SIZE,
   SQUAD_FORMATIONS,
+  assignPlayerToSquadSlot,
+  clearSquadSlot,
+  extractOrderedPlayerIdsFromSlots,
+  getSquadFormationSlots,
+  placeSnapshotsOnFormation,
+  pruneUnownedSlotAssignments,
+  remapSquadSlotsForFormation,
   resolveSquadAuthorHoldings,
   resolveSquadFeedSaleSummary,
   validateSquadDraft,
   type SquadFormationOption,
+  type SquadSlotAssignments,
 } from "@/lib/squadFeed";
 import PlayerAvatar from "@/components/PlayerAvatar";
+import SquadPlayerPickerModal, {
+  type OwnedSquadCandidate,
+} from "@/components/squad/SquadPlayerPickerModal";
 
 interface SquadFeedTabViewProps {
   onSelectPlayerTrade: (
@@ -60,7 +73,6 @@ interface SquadFeedTabViewProps {
 
 type SquadSubView = "FEED" | "MAKER";
 type FeedFilterMode = "ALL" | "MINE";
-type LineFilter = "ALL" | PositionLine;
 
 function formatRelativeTime(isoStr: string): string {
   const dt = new Date(isoStr);
@@ -113,6 +125,30 @@ function snapshotToDisplayPlayer(
   };
 }
 
+function PitchFieldMarkings() {
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-3 rounded-xl border border-white/25"
+    >
+      {/* Top penalty area & 6-yard box */}
+      <div className="mx-auto h-[15%] w-[52%] border-x border-b border-white/25" />
+      <div className="absolute left-1/2 top-0 h-[6.5%] w-[24%] -translate-x-1/2 border-x border-b border-white/25" />
+      <div className="absolute left-1/2 top-[11%] h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-white/35" />
+
+      {/* Halfway line & center circle */}
+      <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 border-t border-white/25" />
+      <div className="absolute left-1/2 top-1/2 h-20 w-20 sm:h-24 sm:w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/25" />
+      <div className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/40" />
+
+      {/* Bottom penalty area & 6-yard box */}
+      <div className="absolute bottom-0 left-1/2 h-[15%] w-[52%] -translate-x-1/2 border-x border-t border-white/25" />
+      <div className="absolute bottom-0 left-1/2 h-[6.5%] w-[24%] -translate-x-1/2 border-x border-t border-white/25" />
+      <div className="absolute bottom-[11%] left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-white/35" />
+    </div>
+  );
+}
+
 export default function SquadFeedTabView({
   onSelectPlayerTrade,
   onOpenAuthModal,
@@ -130,16 +166,20 @@ export default function SquadFeedTabView({
   const addSquadComment = useTradeStore((s) => s.addSquadComment);
   const deleteSquadComment = useTradeStore((s) => s.deleteSquadComment);
 
-  const [subView, setSubView] = useState<SquadSubView>("FEED");
+  const [subView, setSubView] = useState<SquadSubView>(() =>
+    squadFeeds.length > 0 ? "FEED" : "MAKER"
+  );
   const [feedFilter, setFeedFilter] = useState<FeedFilterMode>("ALL");
 
-  // Squad Maker draft state
+  // FC Online style interactive pitch maker state
   const [draftTitle, setDraftTitle] = useState<string>("");
   const [draftDescription, setDraftDescription] = useState<string>("");
   const [draftFormation, setDraftFormation] =
     useState<SquadFormationOption>("4-3-3");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [lineFilter, setLineFilter] = useState<LineFilter>("ALL");
+  const [slotAssignments, setSlotAssignments] = useState<SquadSlotAssignments>(
+    {}
+  );
+  const [activeSlotIndex, setActiveSlotIndex] = useState<number | null>(null);
   const [makerFeedback, setMakerFeedback] = useState<{
     type: "error" | "success";
     text: string;
@@ -157,10 +197,9 @@ export default function SquadFeedTabView({
   >({});
 
   // Resolve all currently owned players (quantity > 0), including dynamic API-Football players
-  const ownedPlayers = useMemo(() => {
+  const ownedPlayers = useMemo<OwnedSquadCandidate[]>(() => {
     if (!user) return [];
-    const list: Array<{ player: Player; quantity: number; avgBuyPrice: number }> =
-      [];
+    const list: OwnedSquadCandidate[] = [];
     for (const h of Object.values(holdings)) {
       if (!h || h.quantity <= 0) continue;
       const resolved = resolveHoldingPlayer(
@@ -185,29 +224,68 @@ export default function SquadFeedTabView({
     });
   }, [user, holdings, players, transactions, playerPrices]);
 
-  // Keep selectedIds synced with still-owned players so selling an item removes it from draft
-  const activeSelectedIds = useMemo(
-    () => selectedIds.filter((id) => (holdings[id]?.quantity ?? 0) > 0),
-    [selectedIds, holdings]
+  const ownedById = useMemo(() => {
+    const map: Record<string, OwnedSquadCandidate> = {};
+    for (const item of ownedPlayers) {
+      map[item.player.id] = item;
+    }
+    return map;
+  }, [ownedPlayers]);
+
+  const playersByIdForRemap = useMemo(() => {
+    const map: Record<string, Pick<Player, "position">> = {};
+    for (const item of ownedPlayers) {
+      map[item.player.id] = { position: item.player.position };
+    }
+    return map;
+  }, [ownedPlayers]);
+
+  const formationSlots = useMemo(
+    () => getSquadFormationSlots(draftFormation),
+    [draftFormation]
   );
 
-  const selectedPlayers = useMemo(() => {
-    const ownedMap = new Map(ownedPlayers.map((item) => [item.player.id, item]));
-    return activeSelectedIds
-      .map((id) => ownedMap.get(id))
-      .filter(
-        (x): x is { player: Player; quantity: number; avgBuyPrice: number } =>
-          Boolean(x)
-      );
-  }, [activeSelectedIds, ownedPlayers]);
+  // Keep pitch assignments synced with still-owned holdings
+  const activeSlotAssignments = useMemo(
+    () => pruneUnownedSlotAssignments(slotAssignments, holdings),
+    [slotAssignments, holdings]
+  );
+
+  const assignedPlayerIds = useMemo(
+    () => extractOrderedPlayerIdsFromSlots(activeSlotAssignments),
+    [activeSlotAssignments]
+  );
+
+  const assignedSlotLabelByPlayerId = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const s of formationSlots) {
+      const pid = activeSlotAssignments[s.slotIndex];
+      if (pid) map[pid] = s.label;
+    }
+    return map;
+  }, [formationSlots, activeSlotAssignments]);
 
   const selectedLineCounts = useMemo(() => {
     const counts: Record<PositionLine, number> = { GK: 0, DF: 0, MF: 0, FW: 0 };
-    for (const item of selectedPlayers) {
-      counts[getPositionLine(item.player.position)] += 1;
+    for (const pid of assignedPlayerIds) {
+      const candidate = ownedById[pid];
+      if (!candidate) continue;
+      counts[getPositionLine(candidate.player.position)] += 1;
     }
     return counts;
-  }, [selectedPlayers]);
+  }, [assignedPlayerIds, ownedById]);
+
+  const squadValuation = useMemo(() => {
+    let totalPoints = 0;
+    let totalShares = 0;
+    for (const pid of assignedPlayerIds) {
+      const item = ownedById[pid];
+      if (!item) continue;
+      totalPoints += item.player.currentPrice * item.quantity;
+      totalShares += item.quantity;
+    }
+    return { totalPoints: roundToTen(totalPoints), totalShares };
+  }, [assignedPlayerIds, ownedById]);
 
   const draftValidation = useMemo(
     () =>
@@ -215,7 +293,7 @@ export default function SquadFeedTabView({
         title: draftTitle,
         description: draftDescription,
         formation: draftFormation,
-        selectedPlayerIds: activeSelectedIds,
+        slotAssignments: activeSlotAssignments,
         holdings,
         players,
         transactions,
@@ -225,7 +303,7 @@ export default function SquadFeedTabView({
       draftTitle,
       draftDescription,
       draftFormation,
-      activeSelectedIds,
+      activeSlotAssignments,
       holdings,
       players,
       transactions,
@@ -233,12 +311,12 @@ export default function SquadFeedTabView({
     ]
   );
 
-  const filteredOwnedPlayers = useMemo(() => {
-    if (lineFilter === "ALL") return ownedPlayers;
-    return ownedPlayers.filter(
-      (item) => getPositionLine(item.player.position) === lineFilter
-    );
-  }, [ownedPlayers, lineFilter]);
+  const activeSlot =
+    activeSlotIndex !== null ? formationSlots[activeSlotIndex] ?? null : null;
+  const currentSlotPlayerId =
+    activeSlotIndex !== null
+      ? activeSlotAssignments[activeSlotIndex] ?? null
+      : null;
 
   const myFeedsCount = useMemo(() => {
     if (!user) return 0;
@@ -255,20 +333,60 @@ export default function SquadFeedTabView({
     return squadFeeds;
   }, [squadFeeds, feedFilter, user]);
 
-  const handleToggleSelectPlayer = (playerId: string) => {
+  const handleChangeFormation = (nextFormation: SquadFormationOption) => {
+    if (nextFormation === draftFormation) return;
     setMakerFeedback(null);
-    if (activeSelectedIds.includes(playerId)) {
-      setSelectedIds(activeSelectedIds.filter((id) => id !== playerId));
+    const remapped = remapSquadSlotsForFormation({
+      currentAssignments: activeSlotAssignments,
+      fromFormation: draftFormation,
+      toFormation: nextFormation,
+      playersById: playersByIdForRemap,
+    });
+    setDraftFormation(nextFormation);
+    setSlotAssignments(remapped);
+    setActiveSlotIndex(null);
+  };
+
+  const handleOpenSlotPicker = (slotIndex: number) => {
+    if (!user) {
+      onOpenAuthModal();
       return;
     }
-    if (activeSelectedIds.length >= REQUIRED_SQUAD_SIZE) {
-      setMakerFeedback({
-        type: "error",
-        text: "스쿼드는 정확히 11명까지만 선택할 수 있습니다. 기존 선수를 해제한 뒤 추가해주세요.",
-      });
+    setMakerFeedback(null);
+    setActiveSlotIndex(slotIndex);
+  };
+
+  const handleAssignPlayerToActiveSlot = (playerId: string) => {
+    if (activeSlotIndex === null) return;
+    const res = assignPlayerToSquadSlot({
+      slotAssignments: activeSlotAssignments,
+      slotIndex: activeSlotIndex,
+      playerId,
+      holdings,
+    });
+    if (!res.success) {
+      setMakerFeedback({ type: "error", text: res.message });
       return;
     }
-    setSelectedIds([...activeSelectedIds, playerId]);
+    setSlotAssignments(res.slotAssignments);
+    setMakerFeedback(null);
+    setActiveSlotIndex(null);
+  };
+
+  const handleClearSingleSlot = (slotIndex: number) => {
+    setSlotAssignments(clearSquadSlot(activeSlotAssignments, slotIndex));
+    setMakerFeedback(null);
+    if (activeSlotIndex === slotIndex) {
+      setActiveSlotIndex(null);
+    }
+  };
+
+  const handleResetMaker = () => {
+    setSlotAssignments({});
+    setDraftTitle("");
+    setDraftDescription("");
+    setActiveSlotIndex(null);
+    setMakerFeedback(null);
   };
 
   const handlePublish = (e: React.FormEvent) => {
@@ -282,7 +400,8 @@ export default function SquadFeedTabView({
       title: draftTitle,
       description: draftDescription,
       formation: draftFormation,
-      playerIds: activeSelectedIds,
+      slotAssignments: activeSlotAssignments,
+      playerIds: assignedPlayerIds,
     });
 
     if (!res.success) {
@@ -292,7 +411,8 @@ export default function SquadFeedTabView({
 
     setDraftTitle("");
     setDraftDescription("");
-    setSelectedIds([]);
+    setSlotAssignments({});
+    setActiveSlotIndex(null);
     setMakerFeedback({ type: "success", text: res.message });
     setSubView("FEED");
     setFeedFilter("ALL");
@@ -340,10 +460,10 @@ export default function SquadFeedTabView({
       (normalizeAccountKey(user!.id) === normalizeAccountKey(feed.authorId) ||
         user!.role === "admin");
 
-    const pitchPlayers = feed.players.map((snap) =>
-      snapshotToDisplayPlayer(snap, players)
+    const placedSnapshots = placeSnapshotsOnFormation(
+      feed.players,
+      feed.formation
     );
-    const pitchRows = buildFormationRows(pitchPlayers, feed.formation);
     const isRosterExpanded = expandedRosterFeedIds.includes(feed.id);
 
     const summaryBadgeClasses =
@@ -381,7 +501,7 @@ export default function SquadFeedTabView({
                 <span className="font-mono text-[10px] font-semibold text-gray-400">
                   · {formatRelativeTime(feed.createdAt)}
                 </span>
-                <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-gray-700">
+                <span className="rounded-md bg-[#0B4631] px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-white">
                   {feed.formation}
                 </span>
 
@@ -444,95 +564,81 @@ export default function SquadFeedTabView({
           </div>
         </div>
 
-        {/* 11-Player Pitch Snapshot */}
+        {/* 11-Player Coordinate Pitch Snapshot (All 8 Formations) */}
         <div className="px-3.5 pt-3.5 pb-2">
-          <div className="relative w-full overflow-hidden rounded-2xl border border-[#00A878]/25 bg-[#E8F5EF]">
-            <div className="pointer-events-none absolute inset-2 rounded-xl border-[1.5px] border-white">
-              <div className="mx-auto h-10 w-32 border-x-[1.5px] border-b-[1.5px] border-white" />
-              <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 border-t-[1.5px] border-white" />
-              <div className="absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border-[1.5px] border-white" />
-              <div className="absolute bottom-0 left-1/2 h-10 w-32 -translate-x-1/2 border-x-[1.5px] border-t-[1.5px] border-white" />
-            </div>
+          <div className="relative h-[430px] sm:h-[490px] w-full overflow-hidden rounded-2xl border border-[#0B4631] bg-gradient-to-b from-[#0E553C] via-[#0B4631] to-[#093827] shadow-inner">
+            <PitchFieldMarkings />
 
-            <div className="relative z-10 flex min-h-[300px] sm:min-h-[340px] flex-col justify-between py-3 px-1.5 gap-2">
-              {pitchRows.map((row, rowIdx) => (
-                <div
-                  key={`${feed.id}-row-${rowIdx}`}
-                  className="flex items-center justify-around gap-1"
+            {placedSnapshots.map(({ slot, snapshot }) => {
+              const displayPlayer = snapshotToDisplayPlayer(snapshot, players);
+              const sale = saleSummary.byPlayerId[snapshot.playerId];
+              const displayName = resolvePlayerDisplayName(displayPlayer);
+              const isFullySold = sale?.status === "FULLY_SOLD";
+              const isPartialSold = sale?.status === "PARTIAL_SOLD";
+
+              return (
+                <button
+                  key={`${feed.id}-${slot.slotIndex}`}
+                  type="button"
+                  onClick={() => onSelectPlayerTrade(displayPlayer, "BUY")}
+                  style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
+                  title={`${displayName.full} (${slot.label}) · 발행 ${sale?.publishedQuantity ?? 1}주 / 현재 ${sale?.currentQuantity ?? 0}주`}
+                  className={`absolute z-10 flex w-[62px] sm:w-[78px] -translate-x-1/2 -translate-y-1/2 flex-col items-center rounded-xl border bg-white/95 px-1 py-1.5 shadow-md transition hover:-translate-y-[54%] hover:border-[#10B981] ${
+                    isFullySold
+                      ? "border-rose-400 opacity-85"
+                      : isPartialSold
+                      ? "border-amber-400"
+                      : "border-white/80"
+                  }`}
                 >
-                  {row.map((player) => {
-                    const sale = saleSummary.byPlayerId[player.id];
-                    const displayName = resolvePlayerDisplayName(player);
-                    const isFullySold = sale?.status === "FULLY_SOLD";
-                    const isPartialSold = sale?.status === "PARTIAL_SOLD";
+                  {(isFullySold || isPartialSold) && (
+                    <span
+                      data-testid={`player-sale-badge-${feed.id}-${snapshot.playerId}`}
+                      className={`mb-0.5 rounded-full px-1.5 py-0.5 text-[7.5px] font-black leading-none whitespace-nowrap ${
+                        isFullySold
+                          ? "bg-rose-100 text-[#E11D48]"
+                          : "bg-amber-100 text-amber-800"
+                      }`}
+                    >
+                      {sale.label}
+                    </span>
+                  )}
 
-                    return (
-                      <button
-                        key={player.id}
-                        type="button"
-                        onClick={() => onSelectPlayerTrade(player, "BUY")}
-                        title={`${displayName.full} · 발행 ${sale?.publishedQuantity ?? 1}주 / 현재 ${sale?.currentQuantity ?? 0}주`}
-                        className={`relative flex min-w-0 flex-1 max-w-[78px] sm:max-w-[92px] flex-col items-center rounded-xl border bg-white px-1 py-1.5 shadow-xs transition hover:-translate-y-0.5 hover:border-[#00A878] active:scale-95 ${
-                          isFullySold
-                            ? "border-rose-300 opacity-85"
-                            : isPartialSold
-                            ? "border-amber-300"
-                            : "border-gray-200/90"
-                        }`}
-                      >
-                        {(isFullySold || isPartialSold) && (
-                          <span
-                            data-testid={`player-sale-badge-${feed.id}-${player.id}`}
-                            className={`mb-0.5 rounded-full px-1.5 py-0.5 text-[8px] font-black leading-tight whitespace-nowrap ${
-                              isFullySold
-                                ? "bg-rose-100 text-[#E11D48]"
-                                : "bg-amber-100 text-amber-800"
-                            }`}
-                          >
-                            {sale.label}
-                          </span>
-                        )}
+                  <PlayerAvatar
+                    player={displayPlayer}
+                    teamColorOverride={snapshot.teamColor}
+                    size={28}
+                  />
 
-                        <PlayerAvatar
-                          player={player}
-                          teamColorOverride={player.teamColor}
-                          size={30}
-                        />
+                  <span className="mt-1 w-full truncate text-center text-[9.5px] sm:text-[10px] font-extrabold text-gray-900">
+                    {displayName.pitch}
+                  </span>
 
-                        <div className="mt-1 flex w-full items-center justify-center gap-0.5 px-0.5">
-                          <span className="truncate text-[10px] font-extrabold text-gray-900">
-                            {displayName.pitch}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-1 font-mono text-[8.5px] font-bold text-gray-500 tabular-nums">
-                          <span>{player.position}</span>
-                          <span>·</span>
-                          <span
-                            className={
-                              isFullySold
-                                ? "text-[#E11D48]"
-                                : isPartialSold
-                                ? "text-amber-700"
-                                : "text-[#00985f]"
-                            }
-                          >
-                            {sale?.currentQuantity ?? 0}/{sale?.publishedQuantity ?? 1}주
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
+                  <div className="flex items-center gap-0.5 font-mono text-[8px] sm:text-[8.5px] font-bold text-gray-500 tabular-nums">
+                    <span>{snapshot.slotLabel ?? slot.label}</span>
+                    <span>·</span>
+                    <span
+                      className={
+                        isFullySold
+                          ? "text-[#E11D48]"
+                          : isPartialSold
+                          ? "text-amber-700"
+                          : "text-[#00985f]"
+                      }
+                    >
+                      {sale?.currentQuantity ?? 0}/{sale?.publishedQuantity ?? 1}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
           {/* Toggle Detailed 11-Player Roster & Sell Status Breakdown */}
           <button
             type="button"
             onClick={() => handleToggleRoster(feed.id)}
-            className="mt-2 flex w-full items-center justify-between rounded-xl border border-gray-200/80 bg-[#F7F9F8] px-3 py-2 text-[11px] font-bold text-gray-700 transition hover:bg-gray-100"
+            className="mt-2.5 flex w-full items-center justify-between rounded-xl border border-gray-200/80 bg-[#F7F9F8] px-3 py-2 text-[11px] font-bold text-gray-700 transition hover:bg-gray-100"
           >
             <span>선수별 보유·매도 현황 (11명)</span>
             {isRosterExpanded ? (
@@ -568,6 +674,11 @@ export default function SquadFeedTabView({
                           <span className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[9px] font-bold text-gray-600">
                             {snap.position}
                           </span>
+                          {snap.slotLabel && snap.slotLabel !== snap.position && (
+                            <span className="rounded bg-emerald-50 px-1 py-0.5 font-mono text-[9px] font-bold text-[#00985f]">
+                              {snap.slotLabel}
+                            </span>
+                          )}
                         </div>
                         <span className="text-[10px] font-medium text-gray-400">
                           {snap.teamName} · 발행 시 {snap.publishedQuantity}주 (
@@ -694,8 +805,12 @@ export default function SquadFeedTabView({
   };
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-4 space-y-4">
-      {/* Header Banner + Sub-view Switcher */}
+    <div
+      className={`mx-auto w-full px-3 sm:px-4 py-4 space-y-4 ${
+        subView === "MAKER" ? "max-w-[1160px]" : "max-w-4xl"
+      }`}
+    >
+      {/* Top Bar + Sub-view Switcher */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-2xl border border-gray-200/90 bg-white px-4 py-3.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
         <div>
           <div className="flex items-center gap-2">
@@ -705,7 +820,7 @@ export default function SquadFeedTabView({
             </h1>
           </div>
           <p className="mt-0.5 text-xs text-gray-500">
-            실제 보유 선수 11명(GK 포함)으로 스쿼드를 발행하고 매도 변동과 코멘트를 공유하세요.
+            피치 슬롯을 클릭해 보유 선수 11명(GK 필수)을 배치하고 커뮤니티에 발행하세요.
           </p>
         </div>
 
@@ -715,7 +830,7 @@ export default function SquadFeedTabView({
             onClick={() => setSubView("FEED")}
             className={`rounded-lg px-3 py-2 transition whitespace-nowrap ${
               subView === "FEED"
-                ? "bg-white text-gray-900 shadow-xs"
+                ? "bg-white text-gray-900 shadow-sm"
                 : "text-gray-500 hover:text-gray-800"
             }`}
           >
@@ -729,12 +844,12 @@ export default function SquadFeedTabView({
             }}
             className={`inline-flex items-center justify-center gap-1 rounded-lg px-3 py-2 transition whitespace-nowrap ${
               subView === "MAKER"
-                ? "bg-[#00A878] text-white shadow-xs"
+                ? "bg-[#00A878] text-white shadow-sm"
                 : "text-gray-600 hover:text-gray-900"
             }`}
           >
             <PlusCircle className="h-3.5 w-3.5" />
-            11명 스쿼드 만들기
+            스쿼드 메이커
           </button>
         </div>
       </div>
@@ -749,7 +864,6 @@ export default function SquadFeedTabView({
       {/* VIEW 1: COMMUNITY FEED */}
       {subView === "FEED" && (
         <div className="space-y-3.5">
-          {/* Feed Filter Pills */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5">
               <button
@@ -780,7 +894,10 @@ export default function SquadFeedTabView({
 
             <button
               type="button"
-              onClick={() => setSubView("MAKER")}
+              onClick={() => {
+                setMakerFeedback(null);
+                setSubView("MAKER");
+              }}
               className="inline-flex items-center gap-1 rounded-xl bg-gray-900 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-gray-800"
             >
               <PlusCircle className="h-3.5 w-3.5" />
@@ -799,15 +916,15 @@ export default function SquadFeedTabView({
                   : "아직 발행된 스쿼드 피드가 없습니다."}
               </p>
               <p className="mt-1 text-xs text-gray-500">
-                실제 보유 중인 선수 11명(골키퍼 1명 이상 필수)을 모아 첫 스쿼드 피드를 발행해보세요.
+                피치 위 11개 포지션에 보유 선수(GK 1명 이상 필수)를 배치해 첫 스쿼드를 발행해보세요.
               </p>
               <button
                 type="button"
                 onClick={() => setSubView("MAKER")}
-                className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-[#00A878] px-4 py-2.5 text-xs font-extrabold text-white shadow-xs transition hover:opacity-95"
+                className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-[#00A878] px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition hover:opacity-95"
               >
                 <PlusCircle className="h-4 w-4" />
-                11명 스쿼드 만들기
+                스쿼드 메이커 열기
               </button>
             </div>
           ) : (
@@ -818,11 +935,11 @@ export default function SquadFeedTabView({
         </div>
       )}
 
-      {/* VIEW 2: 11-PLAYER SQUAD MAKER */}
+      {/* VIEW 2: FC ONLINE STYLE INTERACTIVE PITCH + RIGHT CONTROL PANEL */}
       {subView === "MAKER" && (
-        <div className="space-y-4">
+        <div className="space-y-3.5">
           {!user ? (
-            <div className="rounded-2xl border border-gray-200 bg-white px-5 py-12 text-center">
+            <div className="rounded-2xl border border-gray-200 bg-white px-5 py-14 text-center">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gray-100 text-gray-500">
                 <LogIn className="h-6 w-6" />
               </div>
@@ -830,7 +947,7 @@ export default function SquadFeedTabView({
                 로그인 후 보유 선수로 스쿼드를 구성할 수 있습니다.
               </p>
               <p className="mt-1 text-xs text-gray-500">
-                현재 보유 중인 종목 11명(GK 포함)만 선택해 커뮤니티 피드에 발행할 수 있습니다.
+                실제 보유 중인 선수 11명(GK 포함)을 피치에 배치해 커뮤니티 피드에 발행할 수 있습니다.
               </p>
               <button
                 type="button"
@@ -842,283 +959,422 @@ export default function SquadFeedTabView({
               </button>
             </div>
           ) : (
-            <form onSubmit={handlePublish} className="space-y-4">
-              {/* Live Requirements Checklist */}
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <div
-                  className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-bold ${
-                    activeSelectedIds.length === REQUIRED_SQUAD_SIZE
-                      ? "border-emerald-200 bg-emerald-50 text-[#00985f]"
-                      : "border-gray-200 bg-white text-gray-700"
-                  }`}
-                >
-                  <CheckCircle2
-                    className={`h-4 w-4 shrink-0 ${
-                      activeSelectedIds.length === REQUIRED_SQUAD_SIZE
-                        ? "text-[#00A878]"
-                        : "text-gray-300"
-                    }`}
-                  />
-                  <span className="font-mono tabular-nums">
-                    보유 선수 {activeSelectedIds.length} / {REQUIRED_SQUAD_SIZE}명
+            <>
+              {/* Formation Selector Strip */}
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-gray-200/90 bg-white px-3.5 py-2.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                  <span className="mr-1 shrink-0 text-[11px] font-extrabold text-gray-500">
+                    포메이션
                   </span>
-                </div>
-
-                <div
-                  className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-bold ${
-                    selectedLineCounts.GK >= 1
-                      ? "border-emerald-200 bg-emerald-50 text-[#00985f]"
-                      : "border-rose-200 bg-rose-50/60 text-[#E11D48]"
-                  }`}
-                >
-                  <ShieldCheck className="h-4 w-4 shrink-0" />
-                  <span>
-                    골키퍼(GK) {selectedLineCounts.GK}명 (최소 1명 필수)
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs font-bold text-gray-600">
-                  <Lock className="h-4 w-4 shrink-0 text-gray-400" />
-                  <span>중복 불가 · 발행 후 삭제만 가능</span>
-                </div>
-              </div>
-
-              {/* Metadata Inputs */}
-              <div className="rounded-2xl border border-gray-200/90 bg-white p-4 space-y-3">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
-                  <div>
-                    <label className="mb-1 block text-[11px] font-extrabold text-gray-700">
-                      스쿼드 제목 *
-                    </label>
-                    <input
-                      type="text"
-                      value={draftTitle}
-                      onChange={(e) => {
-                        setDraftTitle(e.target.value);
-                        setMakerFeedback(null);
-                      }}
-                      maxLength={MAX_SQUAD_TITLE_LENGTH}
-                      placeholder="예: 이번 라운드 무실점 노리는 필승 11인"
-                      className="w-full rounded-xl border border-gray-200 bg-[#F7F9F8] px-3 py-2 text-xs font-semibold text-gray-900 placeholder:text-gray-400 focus:border-[#00A878] focus:bg-white focus:outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-extrabold text-gray-700">
-                      포메이션
-                    </label>
-                    <select
-                      value={draftFormation}
-                      onChange={(e) =>
-                        setDraftFormation(e.target.value as SquadFormationOption)
-                      }
-                      className="w-full rounded-xl border border-gray-200 bg-[#F7F9F8] px-3 py-2 font-mono text-xs font-extrabold text-gray-900 focus:border-[#00A878] focus:bg-white focus:outline-none"
-                    >
-                      {SQUAD_FORMATIONS.map((f) => (
-                        <option key={f} value={f}>
-                          {f}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-[11px] font-extrabold text-gray-700">
-                    전략 코멘트 (선택)
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={draftDescription}
-                    onChange={(e) => setDraftDescription(e.target.value)}
-                    maxLength={MAX_SQUAD_DESCRIPTION_LENGTH}
-                    placeholder="선발 구성 포인트나 매수 이유를 간단히 공유해보세요."
-                    className="w-full resize-none rounded-xl border border-gray-200 bg-[#F7F9F8] px-3 py-2 text-xs text-gray-900 placeholder:text-gray-400 focus:border-[#00A878] focus:bg-white focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Selected Squad Chips Preview */}
-              <div className="rounded-2xl border border-gray-200/90 bg-white p-4">
-                <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-extrabold text-gray-900">
-                    선택된 스쿼드 ({selectedPlayers.length}/{REQUIRED_SQUAD_SIZE}명)
-                  </span>
-                  <span className="font-mono text-[11px] font-bold text-gray-500">
-                    GK {selectedLineCounts.GK} · DF {selectedLineCounts.DF} · MF{" "}
-                    {selectedLineCounts.MF} · FW {selectedLineCounts.FW}
-                  </span>
-                </div>
-
-                {selectedPlayers.length === 0 ? (
-                  <p className="rounded-xl bg-[#F7F9F8] px-3 py-4 text-center text-xs text-gray-400">
-                    아래 보유 선수 목록에서 서로 다른 11명(GK 포함)을 선택해주세요.
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedPlayers.map(({ player, quantity }) => (
+                  {SQUAD_FORMATIONS.map((fmt) => {
+                    const isActive = fmt === draftFormation;
+                    return (
                       <button
-                        key={player.id}
+                        key={fmt}
                         type="button"
-                        onClick={() => handleToggleSelectPlayer(player.id)}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/70 pl-1.5 pr-2.5 py-1 text-xs font-bold text-gray-900 transition hover:bg-rose-50 hover:border-rose-200"
+                        data-testid={`formation-btn-${fmt}`}
+                        onClick={() => handleChangeFormation(fmt)}
+                        className={`shrink-0 rounded-lg px-2.5 py-1.5 font-mono text-xs font-extrabold tabular-nums transition ${
+                          isActive
+                            ? "bg-[#0B4631] text-white shadow-sm"
+                            : "bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900"
+                        }`}
                       >
-                        <PlayerAvatar player={player} size={22} />
-                        <span className="rounded bg-white px-1 py-0.5 font-mono text-[9px] font-extrabold text-gray-700">
-                          {player.position}
-                        </span>
-                        <span>{formatPlayerDisplayName(player, "full")}</span>
-                        <span className="font-mono text-[10px] text-[#00985f]">
-                          {quantity}주
-                        </span>
-                        <span className="text-gray-400">×</span>
+                        {fmt}
                       </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Owned Players Picker (ONLY quantity > 0) */}
-              <div className="rounded-2xl border border-gray-200/90 bg-white p-4">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h2 className="text-xs font-extrabold text-gray-900">
-                      내 보유 선수에서 선택 ({ownedPlayers.length}명 보유 중)
-                    </h2>
-                    <p className="text-[11px] text-gray-500">
-                      실제 보유 수량이 1주 이상인 종목만 표시됩니다.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    {(["ALL", "GK", "DF", "MF", "FW"] as LineFilter[]).map(
-                      (lf) => (
-                        <button
-                          key={lf}
-                          type="button"
-                          onClick={() => setLineFilter(lf)}
-                          className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
-                            lineFilter === lf
-                              ? "bg-gray-900 text-white"
-                              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                          }`}
-                        >
-                          {lf === "ALL" ? "전체" : lf}
-                        </button>
-                      )
-                    )}
-                  </div>
+                    );
+                  })}
                 </div>
 
-                {ownedPlayers.length < REQUIRED_SQUAD_SIZE && (
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-900">
-                    <span>
-                      현재 서로 다른 보유 선수가 {ownedPlayers.length}명입니다. 11명 스쿼드 발행을 위해{" "}
-                      {REQUIRED_SQUAD_SIZE - ownedPlayers.length}명을 더 매수해주세요.
-                    </span>
+                <div className="flex items-center gap-2 shrink-0 text-[11px] font-bold text-gray-500">
+                  <span className="font-mono tabular-nums text-gray-800">
+                    보유 선수 {ownedPlayers.length}명
+                  </span>
+                  {ownedPlayers.length < REQUIRED_SQUAD_SIZE && (
                     <button
                       type="button"
                       onClick={() => setActiveTab("MARKET")}
-                      className="shrink-0 rounded-lg bg-amber-900 px-2.5 py-1 text-[10px] font-bold text-white"
+                      className="rounded-lg bg-amber-100 px-2 py-1 text-[10px] font-extrabold text-amber-900 hover:bg-amber-200"
                     >
-                      시세/차트에서 매수
+                      +{REQUIRED_SQUAD_SIZE - ownedPlayers.length}명 추가 매수
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
+              </div>
 
-                {filteredOwnedPlayers.length === 0 ? (
-                  <p className="rounded-xl bg-[#F7F9F8] px-3 py-6 text-center text-xs text-gray-400">
-                    해당 포지션에 보유 중인 선수가 없습니다.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {filteredOwnedPlayers.map(({ player, quantity }) => {
-                      const isSelected = activeSelectedIds.includes(player.id);
-                      const isGk = getPositionLine(player.position) === "GK";
+              {/* 2-Column Main Split: Left/Center Interactive Pitch + Right Control Panel */}
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+                {/* LEFT/CENTER: INTERACTIVE TACTICAL PITCH */}
+                <section className="min-w-0 flex-1 space-y-2.5">
+                  <div
+                    data-testid="squad-maker-pitch"
+                    className="relative h-[530px] sm:h-[610px] lg:h-[650px] w-full overflow-hidden rounded-2xl border border-[#0B4631] bg-gradient-to-b from-[#0E553C] via-[#0B4631] to-[#083525] shadow-md select-none"
+                  >
+                    <PitchFieldMarkings />
 
-                      return (
-                        <button
-                          key={player.id}
-                          type="button"
-                          onClick={() => handleToggleSelectPlayer(player.id)}
-                          className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left transition ${
-                            isSelected
-                              ? "border-[#00A878] bg-emerald-50/70 ring-1 ring-[#00A878]/30"
-                              : "border-gray-200/80 bg-white hover:border-gray-300 hover:bg-gray-50"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <PlayerAvatar player={player} size={34} />
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="truncate text-xs font-extrabold text-gray-900">
-                                  {formatPlayerDisplayName(player, "full")}
-                                </span>
-                                <span
-                                  className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[9px] font-extrabold ${
-                                    isGk
-                                      ? "bg-amber-100 text-amber-800"
-                                      : "bg-gray-100 text-gray-600"
-                                  }`}
-                                >
-                                  {player.position}
+                    {/* Top-Left Subtle Formation Watermark */}
+                    <div className="pointer-events-none absolute left-5 top-4 z-10 flex items-center gap-2">
+                      <span className="rounded-lg bg-black/30 px-2.5 py-1 font-mono text-xs font-black tracking-tight text-white/95 backdrop-blur-sm">
+                        {draftFormation}
+                      </span>
+                      <span className="rounded-lg bg-black/25 px-2 py-1 font-mono text-[11px] font-bold text-emerald-200 tabular-nums">
+                        {assignedPlayerIds.length} / {REQUIRED_SQUAD_SIZE}
+                      </span>
+                    </div>
+
+                    {/* 11 Interactive Position Slots (Smoothly Transitioning Coordinates) */}
+                    {formationSlots.map((slot) => {
+                      const assignedId = activeSlotAssignments[slot.slotIndex];
+                      const assigned = assignedId ? ownedById[assignedId] : null;
+                      const isSelectedSlot = activeSlotIndex === slot.slotIndex;
+                      const isGkSlot = slot.line === "GK";
+
+                      if (assigned) {
+                        const displayName = resolvePlayerDisplayName(
+                          assigned.player
+                        );
+                        const playerIsGk =
+                          getPositionLine(assigned.player.position) === "GK";
+
+                        return (
+                          <div
+                            key={slot.slotIndex}
+                            data-testid={`pitch-slot-${slot.slotIndex}`}
+                            style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
+                            className="absolute z-10 -translate-x-1/2 -translate-y-1/2 transition-[left,top] duration-300 ease-out"
+                          >
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => handleOpenSlotPicker(slot.slotIndex)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  handleOpenSlotPicker(slot.slotIndex);
+                                }
+                              }}
+                              title={`${slot.label} · ${displayName.full} (${assigned.quantity}주) — 클릭하여 교체 또는 비우기`}
+                              className={`group relative flex w-[68px] sm:w-[86px] cursor-pointer flex-col items-center rounded-xl border bg-white/95 px-1.5 py-1.5 shadow-lg transition hover:-translate-y-0.5 hover:border-[#10B981] ${
+                                isSelectedSlot
+                                  ? "border-[#10B981] ring-2 ring-[#10B981]/60"
+                                  : playerIsGk
+                                  ? "border-amber-300"
+                                  : "border-white/90"
+                              }`}
+                            >
+                              {/* Quick Clear Button */}
+                              <button
+                                type="button"
+                                aria-label={`${slot.label} 슬롯 비우기`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleClearSingleSlot(slot.slotIndex);
+                                }}
+                                className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-900 text-white shadow-sm opacity-90 transition hover:bg-[#E11D48] sm:opacity-0 sm:group-hover:opacity-100"
+                              >
+                                <X className="h-2.5 w-2.5" />
+                              </button>
+
+                              {/* Slot Role Pill */}
+                              <span
+                                className={`mb-1 rounded px-1.5 py-0.5 font-mono text-[8.5px] font-black leading-none tracking-tight ${
+                                  playerIsGk
+                                    ? "bg-amber-100 text-amber-800"
+                                    : "bg-[#0B4631] text-white"
+                                }`}
+                              >
+                                {slot.label}
+                              </span>
+
+                              <PlayerAvatar
+                                player={assigned.player}
+                                size={32}
+                              />
+
+                              <span className="mt-1 w-full truncate text-center text-[10px] sm:text-[11px] font-extrabold text-gray-900">
+                                {displayName.pitch}
+                              </span>
+
+                              <div className="flex items-center gap-0.5 font-mono text-[8.5px] font-bold text-gray-500 tabular-nums">
+                                <span>{assigned.player.position}</span>
+                                <span>·</span>
+                                <span className="text-[#00985f]">
+                                  {assigned.quantity}주
                                 </span>
                               </div>
-                              <p className="truncate text-[10px] font-medium text-gray-400">
-                                {player.teamName} · 보유 {quantity}주
-                              </p>
                             </div>
                           </div>
+                        );
+                      }
 
+                      // Empty Interactive '+' Slot
+                      return (
+                        <button
+                          key={slot.slotIndex}
+                          type="button"
+                          data-testid={`pitch-slot-${slot.slotIndex}`}
+                          onClick={() => handleOpenSlotPicker(slot.slotIndex)}
+                          style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
+                          className={`group absolute z-10 flex w-[64px] sm:w-[78px] -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-[1.5px] border-dashed px-1.5 py-2 backdrop-blur-[2px] transition-[left,top,background-color,border-color,transform] duration-300 ease-out hover:scale-105 ${
+                            isSelectedSlot
+                              ? "border-[#10B981] bg-[#10B981]/30 ring-2 ring-[#10B981]/60"
+                              : isGkSlot
+                              ? "border-amber-300/80 bg-amber-400/15 hover:bg-amber-400/25"
+                              : "border-white/50 bg-white/15 hover:border-white hover:bg-white/25"
+                          }`}
+                        >
                           <span
-                            className={`shrink-0 rounded-lg px-2 py-1 text-[10px] font-extrabold ${
-                              isSelected
-                                ? "bg-[#00A878] text-white"
-                                : "bg-gray-100 text-gray-600"
+                            className={`flex h-7 w-7 items-center justify-center rounded-full border transition ${
+                              isGkSlot
+                                ? "border-amber-200/80 bg-amber-400/25 text-amber-100"
+                                : "border-white/40 bg-black/20 text-white group-hover:bg-[#10B981] group-hover:border-[#10B981]"
                             }`}
                           >
-                            {isSelected ? "선택됨" : "선택"}
+                            <Plus className="h-4 w-4" />
                           </span>
+                          <span
+                            className={`mt-1 font-mono text-[10px] font-black tracking-tight ${
+                              isGkSlot ? "text-amber-200" : "text-white"
+                            }`}
+                          >
+                            {slot.label}
+                          </span>
+                          {isGkSlot && (
+                            <span className="text-[8px] font-bold text-amber-200/90">
+                              필수
+                            </span>
+                          )}
                         </button>
                       );
                     })}
                   </div>
-                )}
+
+                  <p className="px-1 text-[11px] font-medium text-gray-500">
+                    피치의 <strong className="text-gray-700">+ 슬롯</strong>을 클릭하면 보유 선수 목록이 열립니다. 포메이션을 바꾸면 배치된 선수가 새 포지션으로 자동 이동합니다.
+                  </p>
+                </section>
+
+                {/* RIGHT PANEL: SQUAD METADATA, CONDITIONS, PUBLISH & RESET */}
+                <aside className="w-full shrink-0 lg:sticky lg:top-20 lg:w-[340px] xl:w-[360px]">
+                  <form
+                    onSubmit={handlePublish}
+                    className="rounded-2xl border border-gray-200/90 bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.03)] space-y-4"
+                  >
+                    {/* Squad Live Telemetry Header */}
+                    <div className="flex items-end justify-between border-b border-gray-100 pb-3">
+                      <div>
+                        <span className="text-[11px] font-bold text-gray-500">
+                          배치 현황 ({draftFormation})
+                        </span>
+                        <div className="mt-0.5 flex items-baseline gap-1 font-mono tabular-nums">
+                          <span className="text-2xl font-black tracking-tight text-gray-900">
+                            {assignedPlayerIds.length}
+                          </span>
+                          <span className="text-sm font-bold text-gray-400">
+                            / {REQUIRED_SQUAD_SIZE}명
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="block text-[10px] font-bold text-gray-400">
+                          배치 종목 보유 평가
+                        </span>
+                        <span className="font-mono text-sm font-extrabold text-gray-900 tabular-nums">
+                          {squadValuation.totalPoints.toLocaleString()}P
+                        </span>
+                        <span className="block font-mono text-[10px] font-semibold text-gray-400 tabular-nums">
+                          총 {squadValuation.totalShares}주
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Line Breakdown Pills */}
+                    <div className="grid grid-cols-4 gap-1.5 text-center font-mono text-[11px] font-extrabold tabular-nums">
+                      <div className="rounded-lg bg-gray-50 py-1.5 border border-gray-100">
+                        <span className="block text-[9px] text-gray-400">FW</span>
+                        <span className="text-gray-900">
+                          {selectedLineCounts.FW}
+                        </span>
+                      </div>
+                      <div className="rounded-lg bg-gray-50 py-1.5 border border-gray-100">
+                        <span className="block text-[9px] text-gray-400">MF</span>
+                        <span className="text-gray-900">
+                          {selectedLineCounts.MF}
+                        </span>
+                      </div>
+                      <div className="rounded-lg bg-gray-50 py-1.5 border border-gray-100">
+                        <span className="block text-[9px] text-gray-400">DF</span>
+                        <span className="text-gray-900">
+                          {selectedLineCounts.DF}
+                        </span>
+                      </div>
+                      <div
+                        className={`rounded-lg py-1.5 border ${
+                          selectedLineCounts.GK >= 1
+                            ? "bg-emerald-50 border-emerald-200 text-[#00985f]"
+                            : "bg-rose-50/70 border-rose-200 text-[#E11D48]"
+                        }`}
+                      >
+                        <span className="block text-[9px]">GK</span>
+                        <span>{selectedLineCounts.GK}</span>
+                      </div>
+                    </div>
+
+                    {/* Squad Title Input (Right Panel) */}
+                    <div>
+                      <label
+                        htmlFor="squad-title-input"
+                        className="mb-1 block text-[11px] font-extrabold text-gray-700"
+                      >
+                        스쿼드 제목 *
+                      </label>
+                      <input
+                        id="squad-title-input"
+                        type="text"
+                        value={draftTitle}
+                        onChange={(e) => {
+                          setDraftTitle(e.target.value);
+                          setMakerFeedback(null);
+                        }}
+                        maxLength={MAX_SQUAD_TITLE_LENGTH}
+                        placeholder="예: 이번 라운드 무실점 노리는 베스트 11"
+                        className="w-full rounded-xl border border-gray-200 bg-[#F7F9F8] px-3 py-2.5 text-xs font-semibold text-gray-900 placeholder:text-gray-400 focus:border-[#00A878] focus:bg-white focus:outline-none"
+                      />
+                    </div>
+
+                    {/* Tactical Strategy Comment (Right Panel) */}
+                    <div>
+                      <label
+                        htmlFor="squad-comment-input"
+                        className="mb-1 flex items-center justify-between text-[11px] font-extrabold text-gray-700"
+                      >
+                        <span>전략 코멘트 (선택)</span>
+                        <span className="font-mono text-[10px] font-semibold text-gray-400 tabular-nums">
+                          {draftDescription.length}/{MAX_SQUAD_DESCRIPTION_LENGTH}
+                        </span>
+                      </label>
+                      <textarea
+                        id="squad-comment-input"
+                        rows={3}
+                        value={draftDescription}
+                        onChange={(e) => setDraftDescription(e.target.value)}
+                        maxLength={MAX_SQUAD_DESCRIPTION_LENGTH}
+                        placeholder="전술 포인트, 핵심 매수 선수, 경기 예상 시나리오를 남겨보세요."
+                        className="w-full resize-none rounded-xl border border-gray-200 bg-[#F7F9F8] px-3 py-2 text-xs text-gray-900 placeholder:text-gray-400 focus:border-[#00A878] focus:bg-white focus:outline-none"
+                      />
+                    </div>
+
+                    {/* Compact Publish Requirements Checklist */}
+                    <div className="space-y-1.5 rounded-xl border border-gray-100 bg-[#F9FAFB] p-3 text-[11px] font-bold">
+                      <div
+                        className={`flex items-center gap-2 ${
+                          assignedPlayerIds.length === REQUIRED_SQUAD_SIZE
+                            ? "text-[#00985f]"
+                            : "text-gray-600"
+                        }`}
+                      >
+                        <CheckCircle2
+                          className={`h-3.5 w-3.5 shrink-0 ${
+                            assignedPlayerIds.length === REQUIRED_SQUAD_SIZE
+                              ? "text-[#00A878]"
+                              : "text-gray-300"
+                          }`}
+                        />
+                        <span>
+                          서로 다른 보유 선수 11명 배치 ({assignedPlayerIds.length}/11)
+                        </span>
+                      </div>
+                      <div
+                        className={`flex items-center gap-2 ${
+                          selectedLineCounts.GK >= 1
+                            ? "text-[#00985f]"
+                            : "text-[#E11D48]"
+                        }`}
+                      >
+                        <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          골키퍼(GK) 최소 1명 포함 ({selectedLineCounts.GK}명)
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-gray-500">
+                        <Lock className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                        <span>발행 후 수정 불가 (삭제만 가능)</span>
+                      </div>
+                    </div>
+
+                    {/* Validation Error / Live Guidance */}
+                    {makerFeedback?.type === "error" ? (
+                      <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-bold text-[#E11D48]">
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>{makerFeedback.text}</span>
+                      </div>
+                    ) : !draftValidation.valid ? (
+                      <div className="flex items-start gap-2 rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-[11px] font-semibold text-amber-900">
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                        <span>{draftValidation.message}</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-[#00985f]">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                        <span>발행 조건 충족! 커뮤니티에 스쿼드를 등록할 수 있습니다.</span>
+                      </div>
+                    )}
+
+                    {/* Primary Publish & Reset Action Buttons */}
+                    <div className="space-y-2 pt-1">
+                      <button
+                        type="submit"
+                        data-testid="publish-squad-btn"
+                        className={`w-full rounded-xl py-3 text-xs font-extrabold transition active:scale-[0.99] ${
+                          draftValidation.valid
+                            ? "bg-[#00A878] text-white shadow-sm hover:opacity-95"
+                            : "bg-gray-200 text-gray-500 hover:bg-gray-300"
+                        }`}
+                      >
+                        스쿼드 피드 발행하기
+                      </button>
+
+                      <button
+                        type="button"
+                        data-testid="reset-squad-btn"
+                        onClick={handleResetMaker}
+                        className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white py-2.5 text-xs font-bold text-gray-600 transition hover:bg-gray-50 hover:text-gray-900 active:scale-[0.99]"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        스쿼드 초기화
+                      </button>
+                    </div>
+
+                    <p className="text-[10.5px] leading-relaxed text-gray-400">
+                      발행 이후 보유 선수를 매도하면 피드에{" "}
+                      <strong className="text-amber-700">일부 매도</strong> /{" "}
+                      <strong className="text-[#E11D48]">전량 매도</strong> 배지가 자동 반영됩니다.
+                    </p>
+                  </form>
+                </aside>
               </div>
 
-              {/* Validation Error / Publish CTA */}
-              {makerFeedback?.type === "error" && (
-                <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-[#E11D48]">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{makerFeedback.text}</span>
-                </div>
-              )}
-
-              {!draftValidation.valid && !makerFeedback && (
-                <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-gray-600">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
-                  <span>{draftValidation.message}</span>
-                </div>
-              )}
-
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-2xl border border-gray-200/90 bg-white px-4 py-3.5">
-                <p className="text-[11px] font-medium text-gray-500">
-                  발행된 스쿼드는 수정할 수 없으며(삭제만 가능), 이후 선수를 매도하면 피드에{" "}
-                  <strong className="text-amber-700">일부 매도</strong> /{" "}
-                  <strong className="text-[#E11D48]">전량 매도</strong> 배지가 자동 표시됩니다.
-                </p>
-                <button
-                  type="submit"
-                  className={`shrink-0 rounded-xl px-5 py-2.5 text-xs font-extrabold transition active:scale-95 ${
-                    draftValidation.valid
-                      ? "bg-[#00A878] text-white shadow-xs hover:opacity-95"
-                      : "bg-gray-200 text-gray-500 hover:bg-gray-300"
-                  }`}
-                >
-                  스쿼드 피드 발행하기
-                </button>
-              </div>
-            </form>
+              {/* Owned Player Picker Modal (Triggered by Pitch Slot Click) */}
+              <SquadPlayerPickerModal
+                isOpen={activeSlot !== null}
+                activeSlot={activeSlot}
+                currentSlotPlayerId={currentSlotPlayerId}
+                assignedSlotLabelByPlayerId={assignedSlotLabelByPlayerId}
+                ownedPlayers={ownedPlayers}
+                onSelectPlayer={handleAssignPlayerToActiveSlot}
+                onClearSlot={() => {
+                  if (activeSlotIndex !== null) {
+                    handleClearSingleSlot(activeSlotIndex);
+                  }
+                }}
+                onClose={() => setActiveSlotIndex(null)}
+                onGoToMarket={() => {
+                  setActiveSlotIndex(null);
+                  setActiveTab("MARKET");
+                }}
+              />
+            </>
           )}
         </div>
       )}

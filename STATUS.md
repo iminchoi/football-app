@@ -1,12 +1,11 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); 11-player Squad Maker & Community Feed (`SQUAD` tab) is live alongside full API-Football lineup/event/stats parsing.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (73/73 across all 10 suites, 100% mocked/offline).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); Squad Maker (`SQUAD` tab) now runs an FC Online-style interactive 11-slot pitch + right control panel layout supporting 8 formations (`4-4-2`, `4-2-3-1`, `4-3-3`, `4-1-4-1`, `3-4-2-1`, `3-5-2`, `3-4-3`, `5-3-2`) alongside the Community Feed.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (76/76 across all 10 suites, 100% mocked/offline).
 
 ## Recent Changes
-- `src/types/index.ts`, `src/lib/squadFeed.ts`: Added `SQUAD` tab type, `SquadFeedPost`/`SquadFeedComment`/`SquadFeedPlayerSnapshot` types, and pure squad domain rules (11 distinct owned players + >=1 GK validation, publish immutability with delete-only permissions, multi-feed support, per-player & squad-level `'보유 중'`/`'일부 매도'`/`'전량 매도'` badge resolution across accounts, comment add/delete, and persistence sanitizer).
-- `src/store/useTradeStore.ts`: Added `squadFeeds` state and `publishSquadFeed`, `deleteSquadFeed`, `addSquadComment`, `deleteSquadComment` actions persisted via Zustand `persist` (`partialize`/`merge`).
-- `src/components/squad/SquadFeedTabView.tsx`, `src/components/TopAssetHeader.tsx`, `src/components/BottomTabBar.tsx`, `src/app/page.tsx`: Built Squad Maker & Community Feed UI (owned-only picker, 11-player pitch snapshot, sell-status badges/captions, delete-only lock, comments) and wired the 4th `스쿼드 피드` navigation tab.
-- `tests/squadFeed.test.ts`: Added 6 unit test suites verifying 11-player/GK/duplicate/ownership validation, dynamic `af-p-...` holdings, publish immutability & multi-feed deletion, `'일부 매도'`/`'전량 매도'` evaluation across accounts, comments, and reload persistence.
+- `src/types/index.ts`, `src/lib/squadFeed.ts`, `src/store/useTradeStore.ts`: Added 8-formation `(x%, y%)` 11-slot layouts (`SQUAD_FORMATION_LAYOUTS`), slot-level owned-only assignment/replacement/clearing/pruning (`assignPlayerToSquadSlot`, `clearSquadSlot`, `pruneUnownedSlotAssignments`), smooth formation remapping (`remapSquadSlotsForFormation`), slotted snapshot metadata (`slotIndex`, `slotLabel`), and `placeSnapshotsOnFormation`.
+- `src/components/squad/SquadPlayerPickerModal.tsx`, `src/components/squad/SquadFeedTabView.tsx`: Redesigned Squad Maker into a 2-column tactical pitch + sticky right panel (title, strategy comment, live checklist, publish & reset), interactive `+` slots that open a searchable/filterable owned-player picker with duplicate prevention, and upgraded feed cards to render exact 8-formation coordinates.
+- `tests/squadFeed.test.ts`: Added unit tests for all 8 formation coordinates/spacing, sequential formation remapping with zero loss/duplicates, owned-only slot assignment/clearing/pruning, and slotted 5-3-2 publish & GK validation.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

@@ -6,6 +6,7 @@ import {
   type Player,
   type PointTransaction,
   type Position,
+  type PositionLine,
   type SquadFeedComment,
   type SquadFeedPlayerSnapshot,
   type SquadFeedPost,
@@ -22,14 +23,438 @@ export const MAX_SQUAD_DESCRIPTION_LENGTH = 200;
 export const MAX_SQUAD_COMMENT_LENGTH = 300;
 
 export const SQUAD_FORMATIONS = [
-  "4-3-3",
-  "4-2-3-1",
   "4-4-2",
+  "4-2-3-1",
+  "4-3-3",
+  "4-1-4-1",
+  "3-4-2-1",
   "3-5-2",
   "3-4-3",
+  "5-3-2",
 ] as const;
 
 export type SquadFormationOption = (typeof SQUAD_FORMATIONS)[number];
+
+export interface SquadFormationSlot {
+  slotIndex: number;
+  slotKey: string;
+  label: string;
+  line: PositionLine;
+  /** Horizontal pitch coordinate in percent (0 = left touchline, 100 = right touchline) */
+  x: number;
+  /** Vertical pitch coordinate in percent (0 = opponent goal, 100 = own goal) */
+  y: number;
+}
+
+export type SquadSlotAssignments = Record<number, string>;
+
+export interface SquadSlotAssignResult {
+  success: boolean;
+  code?: "INVALID_SLOT" | "NOT_OWNED" | "DUPLICATE_PLAYER";
+  message: string;
+  slotAssignments: SquadSlotAssignments;
+}
+
+function slot(
+  slotIndex: number,
+  label: string,
+  line: PositionLine,
+  x: number,
+  y: number
+): SquadFormationSlot {
+  return {
+    slotIndex,
+    slotKey: `${label}-${slotIndex}`,
+    label,
+    line,
+    x,
+    y,
+  };
+}
+
+export const SQUAD_FORMATION_LAYOUTS: Record<
+  SquadFormationOption,
+  readonly SquadFormationSlot[]
+> = {
+  "4-4-2": [
+    slot(0, "LS", "FW", 35, 14),
+    slot(1, "RS", "FW", 65, 14),
+    slot(2, "LM", "MF", 14, 42),
+    slot(3, "LCM", "MF", 38, 45),
+    slot(4, "RCM", "MF", 62, 45),
+    slot(5, "RM", "MF", 86, 42),
+    slot(6, "LB", "DF", 14, 71),
+    slot(7, "LCB", "DF", 38, 74),
+    slot(8, "RCB", "DF", 62, 74),
+    slot(9, "RB", "DF", 86, 71),
+    slot(10, "GK", "GK", 50, 89),
+  ],
+  "4-2-3-1": [
+    slot(0, "ST", "FW", 50, 12),
+    slot(1, "LAM", "MF", 20, 31),
+    slot(2, "CAM", "MF", 50, 31),
+    slot(3, "RAM", "MF", 80, 31),
+    slot(4, "LDM", "MF", 36, 52),
+    slot(5, "RDM", "MF", 64, 52),
+    slot(6, "LB", "DF", 14, 72),
+    slot(7, "LCB", "DF", 38, 74),
+    slot(8, "RCB", "DF", 62, 74),
+    slot(9, "RB", "DF", 86, 72),
+    slot(10, "GK", "GK", 50, 89),
+  ],
+  "4-3-3": [
+    slot(0, "LW", "FW", 18, 17),
+    slot(1, "ST", "FW", 50, 12),
+    slot(2, "RW", "FW", 82, 17),
+    slot(3, "LCM", "MF", 24, 44),
+    slot(4, "CDM", "MF", 50, 49),
+    slot(5, "RCM", "MF", 76, 44),
+    slot(6, "LB", "DF", 14, 71),
+    slot(7, "LCB", "DF", 38, 74),
+    slot(8, "RCB", "DF", 62, 74),
+    slot(9, "RB", "DF", 86, 71),
+    slot(10, "GK", "GK", 50, 89),
+  ],
+  "4-1-4-1": [
+    slot(0, "ST", "FW", 50, 12),
+    slot(1, "LM", "MF", 14, 33),
+    slot(2, "LCM", "MF", 38, 36),
+    slot(3, "RCM", "MF", 62, 36),
+    slot(4, "RM", "MF", 86, 33),
+    slot(5, "CDM", "MF", 50, 54),
+    slot(6, "LB", "DF", 14, 71),
+    slot(7, "LCB", "DF", 38, 73),
+    slot(8, "RCB", "DF", 62, 73),
+    slot(9, "RB", "DF", 86, 71),
+    slot(10, "GK", "GK", 50, 89),
+  ],
+  "3-4-2-1": [
+    slot(0, "ST", "FW", 50, 12),
+    slot(1, "LAM", "MF", 32, 29),
+    slot(2, "RAM", "MF", 68, 29),
+    slot(3, "LM", "MF", 14, 48),
+    slot(4, "LCM", "MF", 38, 51),
+    slot(5, "RCM", "MF", 62, 51),
+    slot(6, "RM", "MF", 86, 48),
+    slot(7, "LCB", "DF", 24, 72),
+    slot(8, "CB", "DF", 50, 73),
+    slot(9, "RCB", "DF", 76, 72),
+    slot(10, "GK", "GK", 50, 89),
+  ],
+  "3-5-2": [
+    slot(0, "LS", "FW", 35, 14),
+    slot(1, "RS", "FW", 65, 14),
+    slot(2, "CAM", "MF", 50, 31),
+    slot(3, "LM", "MF", 14, 48),
+    slot(4, "LCM", "MF", 35, 51),
+    slot(5, "RCM", "MF", 65, 51),
+    slot(6, "RM", "MF", 86, 48),
+    slot(7, "LCB", "DF", 24, 72),
+    slot(8, "CB", "DF", 50, 73),
+    slot(9, "RCB", "DF", 76, 72),
+    slot(10, "GK", "GK", 50, 89),
+  ],
+  "3-4-3": [
+    slot(0, "LW", "FW", 18, 17),
+    slot(1, "ST", "FW", 50, 12),
+    slot(2, "RW", "FW", 82, 17),
+    slot(3, "LM", "MF", 14, 45),
+    slot(4, "LCM", "MF", 38, 48),
+    slot(5, "RCM", "MF", 62, 48),
+    slot(6, "RM", "MF", 86, 45),
+    slot(7, "LCB", "DF", 24, 72),
+    slot(8, "CB", "DF", 50, 73),
+    slot(9, "RCB", "DF", 76, 72),
+    slot(10, "GK", "GK", 50, 89),
+  ],
+  "5-3-2": [
+    slot(0, "LS", "FW", 35, 14),
+    slot(1, "RS", "FW", 65, 14),
+    slot(2, "LCM", "MF", 26, 42),
+    slot(3, "CM", "MF", 50, 46),
+    slot(4, "RCM", "MF", 74, 42),
+    slot(5, "LWB", "DF", 12, 61),
+    slot(6, "LCB", "DF", 30, 72),
+    slot(7, "CB", "DF", 50, 73),
+    slot(8, "RCB", "DF", 70, 72),
+    slot(9, "RWB", "DF", 88, 61),
+    slot(10, "GK", "GK", 50, 89),
+  ],
+};
+
+export function normalizeFormationChoice(raw?: string): SquadFormationOption {
+  const trimmed = (raw ?? "").trim();
+  const match = SQUAD_FORMATIONS.find((f) => f === trimmed);
+  return match ?? "4-3-3";
+}
+
+export function getSquadFormationSlots(
+  formation?: string
+): readonly SquadFormationSlot[] {
+  return SQUAD_FORMATION_LAYOUTS[normalizeFormationChoice(formation)];
+}
+
+/**
+ * Assign an owned player into a specific pitch slot (0..10), blocking unowned players
+ * and preventing duplicates across different slots.
+ */
+export function assignPlayerToSquadSlot(params: {
+  slotAssignments: Readonly<SquadSlotAssignments>;
+  slotIndex: number;
+  playerId: string;
+  holdings: Readonly<Record<string, Holding>>;
+}): SquadSlotAssignResult {
+  const next: SquadSlotAssignments = { ...params.slotAssignments };
+  if (
+    !Number.isInteger(params.slotIndex) ||
+    params.slotIndex < 0 ||
+    params.slotIndex >= REQUIRED_SQUAD_SIZE
+  ) {
+    return {
+      success: false,
+      code: "INVALID_SLOT",
+      message: "유효하지 않은 포지션 슬롯입니다.",
+      slotAssignments: next,
+    };
+  }
+
+  const cleanId = params.playerId.trim();
+  const holding = params.holdings[cleanId];
+  if (!cleanId || !holding || holding.quantity <= 0) {
+    return {
+      success: false,
+      code: "NOT_OWNED",
+      message: "실제 보유 중인 선수(1주 이상)만 스쿼드 슬롯에 배치할 수 있습니다.",
+      slotAssignments: next,
+    };
+  }
+
+  for (const [idxStr, existingId] of Object.entries(next)) {
+    const idx = Number(idxStr);
+    if (existingId === cleanId && idx !== params.slotIndex) {
+      return {
+        success: false,
+        code: "DUPLICATE_PLAYER",
+        message: "이미 다른 슬롯에 배치된 선수입니다. 서로 다른 11명을 선택해주세요.",
+        slotAssignments: next,
+      };
+    }
+  }
+
+  next[params.slotIndex] = cleanId;
+  return {
+    success: true,
+    message: "선수가 슬롯에 배치되었습니다.",
+    slotAssignments: next,
+  };
+}
+
+export function clearSquadSlot(
+  slotAssignments: Readonly<SquadSlotAssignments>,
+  slotIndex: number
+): SquadSlotAssignments {
+  const next: SquadSlotAssignments = { ...slotAssignments };
+  delete next[slotIndex];
+  return next;
+}
+
+export function pruneUnownedSlotAssignments(
+  slotAssignments: Readonly<SquadSlotAssignments>,
+  holdings: Readonly<Record<string, Holding>>
+): SquadSlotAssignments {
+  const next: SquadSlotAssignments = {};
+  const seen = new Set<string>();
+  for (let i = 0; i < REQUIRED_SQUAD_SIZE; i += 1) {
+    const pid = slotAssignments[i];
+    if (!pid || seen.has(pid)) continue;
+    if ((holdings[pid]?.quantity ?? 0) > 0) {
+      next[i] = pid;
+      seen.add(pid);
+    }
+  }
+  return next;
+}
+
+export function extractOrderedPlayerIdsFromSlots(
+  slotAssignments: Readonly<SquadSlotAssignments>
+): string[] {
+  const result: string[] = [];
+  for (let i = 0; i < REQUIRED_SQUAD_SIZE; i += 1) {
+    const pid = slotAssignments[i];
+    if (pid && pid.trim()) {
+      result.push(pid.trim());
+    }
+  }
+  return result;
+}
+
+function slotDistanceSq(a: SquadFormationSlot, b: SquadFormationSlot): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+
+/**
+ * Preserve all placed players when switching formations by remapping each player:
+ * 1. Exact slot label match (e.g., GK -> GK, ST -> ST, LCB -> LCB)
+ * 2. Matching natural position line (closest pitch coordinate)
+ * 3. Closest remaining open slot (zero players dropped, zero duplicates)
+ */
+export function remapSquadSlotsForFormation(params: {
+  currentAssignments: Readonly<SquadSlotAssignments>;
+  fromFormation: string;
+  toFormation: string;
+  playersById?: Readonly<Record<string, Pick<Player, "position">>>;
+}): SquadSlotAssignments {
+  const fromSlots = getSquadFormationSlots(params.fromFormation);
+  const toSlots = getSquadFormationSlots(params.toFormation);
+
+  const placed: Array<{
+    playerId: string;
+    oldSlot: SquadFormationSlot;
+    preferredLine: PositionLine;
+  }> = [];
+
+  const seenPlayerIds = new Set<string>();
+  for (let i = 0; i < REQUIRED_SQUAD_SIZE; i += 1) {
+    const pid = params.currentAssignments[i];
+    if (!pid || seenPlayerIds.has(pid)) continue;
+    seenPlayerIds.add(pid);
+    const oldSlot = fromSlots[i];
+    const playerMeta = params.playersById?.[pid];
+    const preferredLine = playerMeta
+      ? getPositionLine(playerMeta.position)
+      : oldSlot.line;
+    placed.push({ playerId: pid, oldSlot, preferredLine });
+  }
+
+  if (placed.length === 0) return {};
+
+  const next: SquadSlotAssignments = {};
+  const usedTargetIndices = new Set<number>();
+  const remaining: typeof placed = [];
+
+  // Pass 1: Exact label match (keeps GK->GK, ST->ST, LB->LB, LCB->LCB, etc.)
+  for (const item of placed) {
+    const exact = toSlots.find(
+      (s) => s.label === item.oldSlot.label && !usedTargetIndices.has(s.slotIndex)
+    );
+    if (exact) {
+      next[exact.slotIndex] = item.playerId;
+      usedTargetIndices.add(exact.slotIndex);
+    } else {
+      remaining.push(item);
+    }
+  }
+
+  // Pass 2: Same natural line (GK -> DF -> MF -> FW), nearest coordinate
+  const unmatchedAfterLine: typeof placed = [];
+  for (const item of remaining) {
+    const candidates = toSlots
+      .filter(
+        (s) => s.line === item.preferredLine && !usedTargetIndices.has(s.slotIndex)
+      )
+      .sort(
+        (a, b) => slotDistanceSq(item.oldSlot, a) - slotDistanceSq(item.oldSlot, b)
+      );
+    if (candidates.length > 0) {
+      next[candidates[0].slotIndex] = item.playerId;
+      usedTargetIndices.add(candidates[0].slotIndex);
+    } else {
+      unmatchedAfterLine.push(item);
+    }
+  }
+
+  // Pass 3: Closest remaining open slot
+  for (const item of unmatchedAfterLine) {
+    const candidates = toSlots
+      .filter((s) => !usedTargetIndices.has(s.slotIndex))
+      .sort(
+        (a, b) => slotDistanceSq(item.oldSlot, a) - slotDistanceSq(item.oldSlot, b)
+      );
+    if (candidates.length > 0) {
+      next[candidates[0].slotIndex] = item.playerId;
+      usedTargetIndices.add(candidates[0].slotIndex);
+    }
+  }
+
+  return next;
+}
+
+export interface PlacedSquadSnapshot {
+  slot: SquadFormationSlot;
+  snapshot: SquadFeedPlayerSnapshot;
+}
+
+/**
+ * Place a published feed's 11 player snapshots onto exact formation coordinates.
+ * Uses saved `slotIndex` when all 11 indices are valid & distinct, otherwise matches by position line.
+ */
+export function placeSnapshotsOnFormation(
+  snapshots: readonly SquadFeedPlayerSnapshot[],
+  formation?: string
+): PlacedSquadSnapshot[] {
+  const slots = getSquadFormationSlots(formation);
+  const bySlotIndex = new Map<number, SquadFeedPlayerSnapshot>();
+  let hasCompleteSlotIndices = snapshots.length === REQUIRED_SQUAD_SIZE;
+
+  if (hasCompleteSlotIndices) {
+    for (const snap of snapshots) {
+      if (
+        typeof snap.slotIndex === "number" &&
+        Number.isInteger(snap.slotIndex) &&
+        snap.slotIndex >= 0 &&
+        snap.slotIndex < REQUIRED_SQUAD_SIZE &&
+        !bySlotIndex.has(snap.slotIndex)
+      ) {
+        bySlotIndex.set(snap.slotIndex, snap);
+      } else {
+        hasCompleteSlotIndices = false;
+        break;
+      }
+    }
+  }
+
+  if (hasCompleteSlotIndices && bySlotIndex.size === REQUIRED_SQUAD_SIZE) {
+    return slots.map((s) => ({
+      slot: s,
+      snapshot: bySlotIndex.get(s.slotIndex)!,
+    }));
+  }
+
+  // Legacy/unslotted feed placement: match GK first, then DF/MF/FW by natural line
+  const usedSlotIndices = new Set<number>();
+  const placedMap = new Map<number, SquadFeedPlayerSnapshot>();
+  const remainingSnaps: SquadFeedPlayerSnapshot[] = [];
+
+  for (const snap of snapshots) {
+    const line = getPositionLine(snap.position);
+    const open = slots.find(
+      (s) => s.line === line && !usedSlotIndices.has(s.slotIndex)
+    );
+    if (open) {
+      usedSlotIndices.add(open.slotIndex);
+      placedMap.set(open.slotIndex, snap);
+    } else {
+      remainingSnaps.push(snap);
+    }
+  }
+
+  for (const snap of remainingSnaps) {
+    const open = slots.find((s) => !usedSlotIndices.has(s.slotIndex));
+    if (open) {
+      usedSlotIndices.add(open.slotIndex);
+      placedMap.set(open.slotIndex, snap);
+    }
+  }
+
+  return slots
+    .filter((s) => placedMap.has(s.slotIndex))
+    .map((s) => ({
+      slot: s,
+      snapshot: placedMap.get(s.slotIndex)!,
+    }));
+}
 
 export type SquadValidationErrorCode =
   | "AUTH_REQUIRED"
@@ -107,16 +532,6 @@ function getLineSortOrder(pos: Position): number {
   return 4; // GK
 }
 
-function normalizeFormationChoice(raw?: string): string {
-  const trimmed = (raw ?? "").trim();
-  if (
-    SQUAD_FORMATIONS.some((f) => f === trimmed)
-  ) {
-    return trimmed;
-  }
-  return "4-3-3";
-}
-
 /**
  * Validate an 11-player squad draft strictly against the user's real holdings:
  * - Non-empty title
@@ -129,7 +544,8 @@ export function validateSquadDraft(params: {
   title: string;
   description?: string;
   formation?: string;
-  selectedPlayerIds: readonly string[];
+  selectedPlayerIds?: readonly string[];
+  slotAssignments?: Readonly<SquadSlotAssignments>;
   holdings: Readonly<Record<string, Holding>>;
   players: readonly Player[];
   transactions?: readonly PointTransaction[];
@@ -144,9 +560,26 @@ export function validateSquadDraft(params: {
     };
   }
 
-  const rawIds = params.selectedPlayerIds
-    .map((id) => String(id || "").trim())
-    .filter(Boolean);
+  const formation = normalizeFormationChoice(params.formation);
+  const formationSlots = getSquadFormationSlots(formation);
+
+  const hasSlotAssignments = Boolean(params.slotAssignments);
+  const slottedEntries: Array<{ slotIndex: number; playerId: string }> = [];
+
+  if (params.slotAssignments) {
+    for (let i = 0; i < REQUIRED_SQUAD_SIZE; i += 1) {
+      const pid = String(params.slotAssignments[i] ?? "").trim();
+      if (pid) {
+        slottedEntries.push({ slotIndex: i, playerId: pid });
+      }
+    }
+  }
+
+  const rawIds = hasSlotAssignments
+    ? slottedEntries.map((e) => e.playerId)
+    : (params.selectedPlayerIds ?? [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean);
 
   const uniqueIds = new Set(rawIds);
   if (uniqueIds.size !== rawIds.length) {
@@ -179,7 +612,10 @@ export function validateSquadDraft(params: {
   const transactions = params.transactions ?? [];
   const playerPrices = params.playerPrices ?? {};
 
-  const snapshots: SquadFeedPlayerSnapshot[] = rawIds.map((playerId) => {
+  const buildSnapshot = (
+    playerId: string,
+    slotIndex?: number
+  ): SquadFeedPlayerSnapshot => {
     const h = params.holdings[playerId];
     const resolved = resolveHoldingPlayer(
       h,
@@ -188,6 +624,8 @@ export function validateSquadDraft(params: {
       playerPrices
     );
     const pos = normalizeDetailedPosition(resolved.position);
+    const slotMeta =
+      typeof slotIndex === "number" ? formationSlots[slotIndex] : undefined;
     return {
       playerId,
       name: resolved.name,
@@ -202,8 +640,17 @@ export function validateSquadDraft(params: {
         resolved.currentPrice ?? resolved.basePrice ?? h.avgBuyPrice
       ),
       avgBuyPrice: roundToTen(h.avgBuyPrice),
+      ...(slotMeta
+        ? { slotIndex: slotMeta.slotIndex, slotLabel: slotMeta.label }
+        : {}),
     };
-  });
+  };
+
+  const snapshots: SquadFeedPlayerSnapshot[] = hasSlotAssignments
+    ? slottedEntries.map((entry) =>
+        buildSnapshot(entry.playerId, entry.slotIndex)
+      )
+    : rawIds.map((playerId) => buildSnapshot(playerId));
 
   const gkCount = snapshots.filter(
     (p) => getPositionLine(p.position) === "GK"
@@ -216,10 +663,12 @@ export function validateSquadDraft(params: {
     };
   }
 
-  // Order Attack -> Midfield -> Defense -> GK for clean pitch row display
-  const orderedSnapshots = [...snapshots].sort(
-    (a, b) => getLineSortOrder(a.position) - getLineSortOrder(b.position)
-  );
+  // Keep explicit pitch slot order when built from interactive slots; otherwise sort Attack -> GK
+  const orderedSnapshots = hasSlotAssignments
+    ? snapshots
+    : [...snapshots].sort(
+        (a, b) => getLineSortOrder(a.position) - getLineSortOrder(b.position)
+      );
 
   return {
     valid: true,
@@ -227,7 +676,7 @@ export function validateSquadDraft(params: {
     description: (params.description ?? "")
       .trim()
       .slice(0, MAX_SQUAD_DESCRIPTION_LENGTH),
-    formation: normalizeFormationChoice(params.formation),
+    formation,
     snapshots: orderedSnapshots,
     gkCount,
   };
@@ -243,7 +692,8 @@ export function createSquadFeedPost(params: {
   title: string;
   description?: string;
   formation?: string;
-  selectedPlayerIds: readonly string[];
+  selectedPlayerIds?: readonly string[];
+  slotAssignments?: Readonly<SquadSlotAssignments>;
   holdings: Readonly<Record<string, Holding>>;
   players: readonly Player[];
   transactions?: readonly PointTransaction[];
@@ -266,6 +716,7 @@ export function createSquadFeedPost(params: {
     description: params.description,
     formation: params.formation,
     selectedPlayerIds: params.selectedPlayerIds,
+    slotAssignments: params.slotAssignments,
     holdings: params.holdings,
     players: params.players,
     transactions: params.transactions,

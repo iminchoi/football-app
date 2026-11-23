@@ -173,7 +173,8 @@ interface TradeStoreState {
     title: string;
     description?: string;
     formation?: string;
-    playerIds: string[];
+    playerIds?: string[];
+    slotAssignments?: Record<number, string>;
   }) => SquadActionResult;
   deleteSquadFeed: (feedId: string) => SquadActionResult;
   addSquadComment: (feedId: string, content: string) => SquadActionResult;
@@ -3187,6 +3188,7 @@ export const useTradeStore = create<TradeStoreState>()(
           description: input.description,
           formation: input.formation,
           selectedPlayerIds: input.playerIds,
+          slotAssignments: input.slotAssignments,
           holdings: state.holdings,
           players: state.players,
           transactions: state.transactions,

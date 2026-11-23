@@ -3,15 +3,24 @@ import assert from "node:assert/strict";
 import * as squadFeedModule from "../src/lib/squadFeed.ts";
 import {
   REQUIRED_SQUAD_SIZE,
+  SQUAD_FORMATIONS,
   addSquadFeedComment,
+  assignPlayerToSquadSlot,
+  clearSquadSlot,
   createSquadFeedPost,
   deleteSquadFeedComment,
   deleteSquadFeedPost,
+  extractOrderedPlayerIdsFromSlots,
+  getSquadFormationSlots,
+  placeSnapshotsOnFormation,
+  pruneUnownedSlotAssignments,
+  remapSquadSlotsForFormation,
   resolveSquadAuthorHoldings,
   resolveSquadFeedSaleSummary,
   resolveSquadPlayerSaleStatus,
   sanitizePersistedSquadFeeds,
   validateSquadDraft,
+  type SquadSlotAssignments,
 } from "../src/lib/squadFeed.ts";
 import type {
   Holding,
@@ -585,5 +594,233 @@ describe("11-Player Squad Maker & Community Feed (squadFeed)", () => {
     assert.equal(summaryAfterReload.byPlayerId["p-fw-1"].publishedQuantity, 5);
     assert.equal(summaryAfterReload.byPlayerId["p-fw-1"].currentQuantity, 1);
     assert.equal(summaryAfterReload.byPlayerId["p-fw-1"].label, "일부 매도");
+  });
+
+  it("provides valid, non-overlapping 11-slot pitch layouts for all 8 required formations", () => {
+    const requiredFormations = [
+      "4-4-2",
+      "4-2-3-1",
+      "4-3-3",
+      "4-1-4-1",
+      "3-4-2-1",
+      "3-5-2",
+      "3-4-3",
+      "5-3-2",
+    ] as const;
+
+    for (const fmt of requiredFormations) {
+      assert.ok(
+        SQUAD_FORMATIONS.includes(fmt),
+        `Formation ${fmt} should be in SQUAD_FORMATIONS`
+      );
+      const slots = getSquadFormationSlots(fmt);
+      assert.equal(slots.length, REQUIRED_SQUAD_SIZE);
+      assert.equal(slots[10].line, "GK");
+      assert.equal(slots[10].label, "GK");
+
+      // Every slot has bounded pitch coordinates and distinct (x, y) placement
+      for (let i = 0; i < slots.length; i += 1) {
+        assert.equal(slots[i].slotIndex, i);
+        assert.ok(slots[i].x >= 10 && slots[i].x <= 90);
+        assert.ok(slots[i].y >= 10 && slots[i].y <= 92);
+        for (let j = i + 1; j < slots.length; j += 1) {
+          const dx = slots[i].x - slots[j].x;
+          const dy = slots[i].y - slots[j].y;
+          const dist = Math.hypot(dx, dy);
+          assert.ok(
+            dist >= 14,
+            `Slots ${slots[i].label} and ${slots[j].label} in ${fmt} are too close (${dist.toFixed(1)})`
+          );
+        }
+      }
+    }
+  });
+
+  it("remaps placed players smoothly across all 8 formations without loss or duplication", () => {
+    const { players } = buildTestRoster();
+    const playersById = Object.fromEntries(
+      players.map((p) => [p.id, { position: p.position }])
+    );
+
+    // Start with a complete 4-3-3 assignment
+    const initial433: SquadSlotAssignments = {
+      0: "p-fw-2", // LW -> 마르티넬리
+      1: "p-fw-3", // ST -> 하베르츠
+      2: "p-fw-1", // RW -> 사카
+      3: "p-mf-3", // LCM -> 메리노
+      4: "p-mf-1", // CDM -> 라이스
+      5: "p-mf-2", // RCM -> 외데고르
+      6: "p-df-4", // LB -> 팀버
+      7: "p-df-1", // LCB -> 살리바
+      8: "p-df-2", // RCB -> 마갈량이스
+      9: "p-df-3", // RB -> 화이트
+      10: "p-gk-1", // GK -> 라야
+    };
+
+    // Walk through all 8 formations sequentially
+    let currentFormation = "4-3-3";
+    let currentAssignments: SquadSlotAssignments = initial433;
+    const sequence = [
+      "4-4-2",
+      "4-2-3-1",
+      "4-1-4-1",
+      "3-4-2-1",
+      "3-5-2",
+      "3-4-3",
+      "5-3-2",
+      "4-3-3",
+    ];
+
+    for (const nextFmt of sequence) {
+      const remapped = remapSquadSlotsForFormation({
+        currentAssignments,
+        fromFormation: currentFormation,
+        toFormation: nextFmt,
+        playersById,
+      });
+
+      const ordered = extractOrderedPlayerIdsFromSlots(remapped);
+      assert.equal(
+        ordered.length,
+        11,
+        `All 11 players must be preserved when switching ${currentFormation} -> ${nextFmt}`
+      );
+      assert.equal(
+        new Set(ordered).size,
+        11,
+        `Zero duplicates allowed after ${currentFormation} -> ${nextFmt}`
+      );
+      // GK always remains anchored in GK slot (index 10)
+      assert.equal(
+        remapped[10],
+        "p-gk-1",
+        `GK must stay at slot 10 in ${nextFmt}`
+      );
+
+      currentFormation = nextFmt;
+      currentAssignments = remapped;
+    }
+
+    // Partial squad remapping (e.g. LW + GK in 4-3-3 -> 4-4-2 moves LW to nearest FW LS)
+    const partialRemap = remapSquadSlotsForFormation({
+      currentAssignments: { 0: "p-fw-2", 10: "p-gk-1" },
+      fromFormation: "4-3-3",
+      toFormation: "4-4-2",
+      playersById,
+    });
+    assert.equal(partialRemap[0], "p-fw-2"); // LS slot in 4-4-2
+    assert.equal(partialRemap[10], "p-gk-1"); // GK slot in 4-4-2
+    assert.equal(extractOrderedPlayerIdsFromSlots(partialRemap).length, 2);
+  });
+
+  it("enforces owned-only slot assignment, duplicate blocking, replacement, clearing, and slotted publish", () => {
+    const { players, holdings } = buildTestRoster();
+    let slots: SquadSlotAssignments = {};
+
+    // 1. Owned player assignment succeeds
+    const r1 = assignPlayerToSquadSlot({
+      slotAssignments: slots,
+      slotIndex: 0,
+      playerId: "p-fw-1",
+      holdings,
+    });
+    assert.equal(r1.success, true);
+    slots = r1.slotAssignments;
+    assert.equal(slots[0], "p-fw-1");
+
+    // 2. Unowned player blocked
+    const unowned = assignPlayerToSquadSlot({
+      slotAssignments: slots,
+      slotIndex: 1,
+      playerId: "p-unowned",
+      holdings,
+    });
+    assert.equal(unowned.success, false);
+    assert.equal(unowned.code, "NOT_OWNED");
+
+    // 3. Duplicate player into a different slot blocked
+    const dup = assignPlayerToSquadSlot({
+      slotAssignments: slots,
+      slotIndex: 2,
+      playerId: "p-fw-1",
+      holdings,
+    });
+    assert.equal(dup.success, false);
+    assert.equal(dup.code, "DUPLICATE_PLAYER");
+
+    // 4. Replacing existing slot 0 with another owned player succeeds
+    const replace = assignPlayerToSquadSlot({
+      slotAssignments: slots,
+      slotIndex: 0,
+      playerId: "p-fw-2",
+      holdings,
+    });
+    assert.equal(replace.success, true);
+    slots = replace.slotAssignments;
+    assert.equal(slots[0], "p-fw-2");
+
+    // 5. Clearing slot frees player for re-use
+    slots = clearSquadSlot(slots, 0);
+    assert.equal(slots[0], undefined);
+
+    // 6. Pruning drops players sold down to 0 shares mid-draft
+    const pruned = pruneUnownedSlotAssignments(
+      { 0: "p-fw-1", 10: "p-gk-1" },
+      { ...holdings, "p-fw-1": { playerId: "p-fw-1", quantity: 0, avgBuyPrice: 14_000 } }
+    );
+    assert.equal(pruned[0], undefined);
+    assert.equal(pruned[10], "p-gk-1");
+
+    // 7. Full slotted publish in 5-3-2 preserves slotIndex/slotLabel and renders accurately
+    const full532: SquadSlotAssignments = {
+      0: "p-fw-3",
+      1: "p-fw-1",
+      2: "p-mf-3",
+      3: "p-mf-1",
+      4: "p-mf-2",
+      5: "p-df-4",
+      6: "p-df-1",
+      7: "p-df-2",
+      8: "p-fw-2",
+      9: "p-df-3",
+      10: "p-gk-1",
+    };
+
+    const pub532 = createSquadFeedPost({
+      existingFeeds: [],
+      user: { id: "alice", name: "앨리스" },
+      title: "5백 역습 스쿼드",
+      formation: "5-3-2",
+      slotAssignments: full532,
+      holdings,
+      players,
+      idOverride: "sq-532",
+    });
+    assert.equal(pub532.success, true);
+    assert.equal(pub532.feed?.formation, "5-3-2");
+    assert.equal(pub532.feed?.players[5].slotLabel, "LWB");
+    assert.equal(pub532.feed?.players[10].slotLabel, "GK");
+
+    const placed = placeSnapshotsOnFormation(pub532.feed!.players, "5-3-2");
+    assert.equal(placed.length, 11);
+    assert.equal(placed[5].slot.label, "LWB");
+    assert.equal(placed[5].snapshot.playerId, "p-df-4");
+    assert.equal(placed[10].slot.label, "GK");
+    assert.equal(placed[10].snapshot.playerId, "p-gk-1");
+
+    // Slotted validation without any GK still blocks with MISSING_GK
+    const noGkSlots: SquadSlotAssignments = {
+      ...full532,
+      10: "p-fw-4", // outfield placed in GK slot, zero GKs anywhere
+    };
+    const noGkRes = validateSquadDraft({
+      title: "GK 누락 슬롯",
+      formation: "5-3-2",
+      slotAssignments: noGkSlots,
+      holdings,
+      players,
+    });
+    assert.equal(noGkRes.valid, false);
+    if (!noGkRes.valid) assert.equal(noGkRes.code, "MISSING_GK");
   });
 });

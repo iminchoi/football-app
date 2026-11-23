@@ -409,6 +409,8 @@ export interface SquadFeedPlayerSnapshot {
   publishedQuantity: number;
   publishedPrice: number;
   avgBuyPrice: number;
+  slotIndex?: number;
+  slotLabel?: string;
 }
 
 export interface SquadFeedComment {
