@@ -8,6 +8,7 @@ import BottomTabBar from "@/components/BottomTabBar";
 import MatchesTabView from "@/components/matches/MatchesTabView";
 import PortfolioTabView from "@/components/portfolio/PortfolioTabView";
 import MarketChartTabView from "@/components/market/MarketChartTabView";
+import SquadFeedTabView from "@/components/squad/SquadFeedTabView";
 import TradeBottomSheet from "@/components/TradeBottomSheet";
 import RightTradeDockPanel from "@/components/RightTradeDockPanel";
 import RightQuickRail from "@/components/RightQuickRail";
@@ -95,6 +96,12 @@ export default function HomePage() {
               onSearchQueryChange={setSearchQuery}
               selectedPlayerId={selectedPlayerId}
               onSelectPlayerTrade={handleOpenTradeSheet}
+            />
+          )}
+          {activeTab === "SQUAD" && (
+            <SquadFeedTabView
+              onSelectPlayerTrade={handleOpenTradeSheet}
+              onOpenAuthModal={() => setIsAuthModalOpen(true)}
             />
           )}
         </main>

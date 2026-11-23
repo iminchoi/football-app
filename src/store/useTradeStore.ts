@@ -19,6 +19,8 @@ import {
   ChartEventMarker,
   MatchEvent,
   EventSentiment,
+  SquadFeedComment,
+  SquadFeedPost,
   buildActiveMatchContext,
   getPositionLine,
   normalizeDetailedPosition,
@@ -72,6 +74,14 @@ import {
   formatPlayerDisplayName,
 } from "@/lib/playerDisplayName";
 import { WEIGHTS } from "@/lib/weights";
+import {
+  addSquadFeedComment,
+  createSquadFeedPost,
+  deleteSquadFeedComment,
+  deleteSquadFeedPost,
+  sanitizePersistedSquadFeeds,
+  type SquadValidationErrorCode,
+} from "@/lib/squadFeed";
 
 export {
   getAvailableShares,
@@ -102,6 +112,14 @@ interface TradeExecutionResult {
   executedPrice?: number;
 }
 
+export interface SquadActionResult {
+  success: boolean;
+  message: string;
+  code?: SquadValidationErrorCode;
+  feed?: SquadFeedPost;
+  comment?: SquadFeedComment;
+}
+
 interface TradeStoreState {
   user: UserSession | null;
   accounts: Record<string, StoredUserAccount>;
@@ -116,6 +134,7 @@ interface TradeStoreState {
   holdings: Record<string, Holding>;
   transactions: PointTransaction[];
   watchlist: string[];
+  squadFeeds: SquadFeedPost[];
   selectedDate: DateKey;
   activeTab: BottomTab;
   expandedMatchIds: string[];
@@ -148,6 +167,18 @@ interface TradeStoreState {
     targetPlayerId?: string,
     eventType?: ChartEventType
   ) => ForceGoalResult | null;
+
+  // 11-Player Squad Maker & Community Feed Actions (immutable after publish: delete only, no edit)
+  publishSquadFeed: (input: {
+    title: string;
+    description?: string;
+    formation?: string;
+    playerIds: string[];
+  }) => SquadActionResult;
+  deleteSquadFeed: (feedId: string) => SquadActionResult;
+  addSquadComment: (feedId: string, content: string) => SquadActionResult;
+  deleteSquadComment: (feedId: string, commentId: string) => SquadActionResult;
+
   resetAll: () => void;
 }
 
@@ -690,6 +721,7 @@ export const useTradeStore = create<TradeStoreState>()(
       holdings: {},
       transactions: [],
       watchlist: [],
+      squadFeeds: [],
       selectedDate: "TODAY",
       activeTab: "MATCHES",
       expandedMatchIds: ["m-new-ars", "m-tot-ars", "m-mci-liv", "m-kor-jpn"],
@@ -3146,6 +3178,87 @@ export const useTradeStore = create<TradeStoreState>()(
         };
       },
 
+      publishSquadFeed: (input) => {
+        const state = get();
+        const res = createSquadFeedPost({
+          existingFeeds: state.squadFeeds,
+          user: state.user,
+          title: input.title,
+          description: input.description,
+          formation: input.formation,
+          selectedPlayerIds: input.playerIds,
+          holdings: state.holdings,
+          players: state.players,
+          transactions: state.transactions,
+          playerPrices: state.playerPrices,
+        });
+        if (!res.success) {
+          return {
+            success: false,
+            code: res.code,
+            message: res.message,
+          };
+        }
+        const nextAccounts = syncActiveUserToAccounts(state);
+        set({
+          squadFeeds: res.feeds,
+          accounts: nextAccounts,
+        });
+        return {
+          success: true,
+          message: res.message,
+          feed: res.feed,
+        };
+      },
+
+      deleteSquadFeed: (feedId) => {
+        const state = get();
+        const res = deleteSquadFeedPost({
+          existingFeeds: state.squadFeeds,
+          feedId,
+          user: state.user,
+        });
+        if (!res.success) {
+          return { success: false, message: res.message };
+        }
+        set({ squadFeeds: res.feeds });
+        return { success: true, message: res.message };
+      },
+
+      addSquadComment: (feedId, content) => {
+        const state = get();
+        const res = addSquadFeedComment({
+          existingFeeds: state.squadFeeds,
+          feedId,
+          user: state.user,
+          content,
+        });
+        if (!res.success) {
+          return { success: false, message: res.message };
+        }
+        set({ squadFeeds: res.feeds });
+        return {
+          success: true,
+          message: res.message,
+          comment: res.comment,
+        };
+      },
+
+      deleteSquadComment: (feedId, commentId) => {
+        const state = get();
+        const res = deleteSquadFeedComment({
+          existingFeeds: state.squadFeeds,
+          feedId,
+          commentId,
+          user: state.user,
+        });
+        if (!res.success) {
+          return { success: false, message: res.message };
+        }
+        set({ squadFeeds: res.feeds });
+        return { success: true, message: res.message };
+      },
+
       resetAll: () => {
         const state = get();
         const { user } = state;
@@ -3173,6 +3286,7 @@ export const useTradeStore = create<TradeStoreState>()(
           holdings: {},
           transactions: [],
           watchlist: [],
+          squadFeeds: [],
           selectedDate: "TODAY",
           expandedMatchIds: ["m-new-ars", "m-tot-ars", "m-mci-liv", "m-kor-jpn"],
       activeMatchContext: null,
@@ -3192,6 +3306,7 @@ export const useTradeStore = create<TradeStoreState>()(
         accounts: state.accounts,
         watchlist: state.watchlist,
         playerPrices: state.playerPrices,
+        squadFeeds: state.squadFeeds,
       }),
       merge: (persistedState, currentState) => {
         const persisted = (persistedState as Partial<TradeStoreState>) ?? {};
@@ -3208,12 +3323,14 @@ export const useTradeStore = create<TradeStoreState>()(
         const watchlist = Array.isArray(persisted.watchlist)
           ? persisted.watchlist
           : currentState.watchlist;
+        const squadFeeds = sanitizePersistedSquadFeeds(persisted.squadFeeds);
 
         return {
           ...currentState,
           ...persisted,
           accounts,
           watchlist,
+          squadFeeds,
           cash,
           realizedPnL,
           playerPrices,

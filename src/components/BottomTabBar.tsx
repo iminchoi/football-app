@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { CalendarDays, Briefcase, LineChart } from "lucide-react";
+import { CalendarDays, Briefcase, LineChart, Users } from "lucide-react";
 import { BottomTab } from "@/types";
 import { useTradeStore } from "@/store/useTradeStore";
 
@@ -10,6 +10,7 @@ export default function BottomTabBar() {
   const activeTab = useTradeStore((s) => s.activeTab);
   const setActiveTab = useTradeStore((s) => s.setActiveTab);
   const holdings = useTradeStore((s) => s.holdings);
+  const squadFeedsCount = useTradeStore((s) => s.squadFeeds.length);
 
   const totalHoldingsQty = user
     ? Object.values(holdings).reduce((sum, h) => sum + h.quantity, 0)
@@ -27,21 +28,27 @@ export default function BottomTabBar() {
       icon: CalendarDays,
     },
     {
-      key: "PORTFOLIO",
-      label: "마이 포트폴리오",
-      icon: Briefcase,
-      badge: totalHoldingsQty > 0 ? totalHoldingsQty : undefined,
-    },
-    {
       key: "MARKET",
       label: "시세/차트",
       icon: LineChart,
+    },
+    {
+      key: "SQUAD",
+      label: "스쿼드",
+      icon: Users,
+      badge: squadFeedsCount > 0 ? squadFeedsCount : undefined,
+    },
+    {
+      key: "PORTFOLIO",
+      label: "포트폴리오",
+      icon: Briefcase,
+      badge: totalHoldingsQty > 0 ? totalHoldingsQty : undefined,
     },
   ];
 
   return (
     <nav className="lg:hidden fixed bottom-0 left-1/2 z-30 w-full max-w-[480px] -translate-x-1/2 border-t border-gray-200 bg-[#FFFFFF]/95">
-      <div className="grid grid-cols-3 h-16">
+      <div className="grid grid-cols-4 h-16">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.key;

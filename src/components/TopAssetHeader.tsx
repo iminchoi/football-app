@@ -78,6 +78,7 @@ function MarketCountdownBadge({
 const NAV_TABS: { key: BottomTab; label: string }[] = [
   { key: "MATCHES", label: "경기 일정" },
   { key: "MARKET", label: "시세/차트" },
+  { key: "SQUAD", label: "스쿼드 피드" },
   { key: "PORTFOLIO", label: "마이 포트폴리오" },
 ];
 

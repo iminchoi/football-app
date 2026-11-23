@@ -1,12 +1,12 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); full API-Football `/fixtures?id=` parsing now maps `startXI` (with `grid` fallback), `substitutes`, `formation`, `coach`, stoppage-time `Goal`/`Card`/`subst` events, and per-player `players[].statistics[0]` stats (`passes`, `keyPasses`, `shots`, `tackles`, `interceptions`, `blocks`, `dribbles`, `duels`, `saves`, `minutes`, `rating`, `captain`) end-to-end into store and UI without seeded noise.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (67/67 across all 9 suites, 100% mocked/offline).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); 11-player Squad Maker & Community Feed (`SQUAD` tab) is live alongside full API-Football lineup/event/stats parsing.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (73/73 across all 10 suites, 100% mocked/offline).
 
 ## Recent Changes
-- `src/types/index.ts`, `src/lib/providers/ApiFootballProvider.ts`, `src/app/api/matches/route.ts`: Extended `ApiLineupPlayer` & `Player["stats"]` with real pass/shot/defensive/GK/minutes fields, parsed `players[].statistics[0]` (`passes.total`, `passes.key`, `passes.accuracy`, `shots`, `tackles`, `dribbles`, `duels`, `saves`, `cards`), added `grid` position fallback and stoppage-time `time.extra` minute handling, and preserved all fields in `/api/matches`.
-- `src/lib/lineupStatus.ts`, `src/store/useTradeStore.ts`: Propagated real API stats through `applyLineupEntryMeta` and `syncPlayersFromMatches` (removing hardcoded `shotsOnTarget: 1, keyPasses: 1` defaults).
-- `src/lib/playerMatchStats.ts`, `TradeBottomSheet.tsx`, `PlayerDetailModal.tsx`: Added pure real-stat gauge builder (`buildRealMatchStatRows`) so API players display verified pass/shot/defensive/GK stats directly instead of seeded mock numbers.
-- `tests/apiFootballProvider.test.ts`: Added offline mocked Test 8 verifying full lineup, stoppage-time events, passes/stats parsing, and UI stat row formatting.
+- `src/types/index.ts`, `src/lib/squadFeed.ts`: Added `SQUAD` tab type, `SquadFeedPost`/`SquadFeedComment`/`SquadFeedPlayerSnapshot` types, and pure squad domain rules (11 distinct owned players + >=1 GK validation, publish immutability with delete-only permissions, multi-feed support, per-player & squad-level `'보유 중'`/`'일부 매도'`/`'전량 매도'` badge resolution across accounts, comment add/delete, and persistence sanitizer).
+- `src/store/useTradeStore.ts`: Added `squadFeeds` state and `publishSquadFeed`, `deleteSquadFeed`, `addSquadComment`, `deleteSquadComment` actions persisted via Zustand `persist` (`partialize`/`merge`).
+- `src/components/squad/SquadFeedTabView.tsx`, `src/components/TopAssetHeader.tsx`, `src/components/BottomTabBar.tsx`, `src/app/page.tsx`: Built Squad Maker & Community Feed UI (owned-only picker, 11-player pitch snapshot, sell-status badges/captions, delete-only lock, comments) and wired the 4th `스쿼드 피드` navigation tab.
+- `tests/squadFeed.test.ts`: Added 6 unit test suites verifying 11-player/GK/duplicate/ownership validation, dynamic `af-p-...` holdings, publish immutability & multi-feed deletion, `'일부 매도'`/`'전량 매도'` evaluation across accounts, comments, and reload persistence.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

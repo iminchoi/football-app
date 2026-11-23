@@ -119,7 +119,7 @@ export type MatchStatus = "LIVE" | "UPCOMING" | "FT";
 
 export type DateKey = "YESTERDAY" | "TODAY" | "TOMORROW" | "WEEKEND";
 
-export type BottomTab = "MATCHES" | "PORTFOLIO" | "MARKET";
+export type BottomTab = "MATCHES" | "PORTFOLIO" | "MARKET" | "SQUAD";
 
 export type TradeType = "BUY" | "SELL";
 
@@ -393,6 +393,43 @@ export interface PointTransaction {
   balanceAfter: number;
   realizedPnL?: number;
   timestamp: string;
+}
+
+export type SquadSaleBadgeStatus = "HOLDING" | "PARTIAL_SOLD" | "FULLY_SOLD";
+
+export interface SquadFeedPlayerSnapshot {
+  playerId: string;
+  name: string;
+  englishName?: string;
+  teamName: string;
+  teamShort: string;
+  teamColor: string;
+  position: Position;
+  backNumber: number;
+  publishedQuantity: number;
+  publishedPrice: number;
+  avgBuyPrice: number;
+}
+
+export interface SquadFeedComment {
+  id: string;
+  feedId: string;
+  authorId: string;
+  authorName: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface SquadFeedPost {
+  id: string;
+  authorId: string;
+  authorName: string;
+  title: string;
+  description: string;
+  formation: string;
+  players: SquadFeedPlayerSnapshot[];
+  createdAt: string;
+  comments: SquadFeedComment[];
 }
 
 export interface ActiveMatchContext {
