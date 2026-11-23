@@ -111,11 +111,71 @@ export interface ApiFootballRawPlayerStatsTeam {
     player?: { id?: number; name?: string };
     statistics?: Array<{
       games?: {
+        minutes?: number | null;
+        number?: number | null;
+        position?: string | null;
         rating?: string | number | null;
         captain?: boolean | null;
+        substitute?: boolean | null;
+      };
+      shots?: {
+        total?: number | null;
+        on?: number | null;
+      };
+      goals?: {
+        total?: number | null;
+        conceded?: number | null;
+        assists?: number | null;
+        saves?: number | null;
+      };
+      passes?: {
+        total?: number | null;
+        key?: number | null;
+        accuracy?: string | number | null;
+      };
+      tackles?: {
+        total?: number | null;
+        blocks?: number | null;
+        interceptions?: number | null;
+      };
+      duels?: {
+        total?: number | null;
+        won?: number | null;
+      };
+      dribbles?: {
+        attempts?: number | null;
+        success?: number | null;
+        past?: number | null;
+      };
+      cards?: {
+        yellow?: number | null;
+        red?: number | null;
       };
     }>;
   }>;
+}
+
+interface ParsedApiFootballPlayerStats {
+  rating?: number;
+  isCaptain?: boolean;
+  minutesPlayed?: number;
+  goals?: number;
+  assists?: number;
+  shotsTotal?: number;
+  shotsOnTarget?: number;
+  passesTotal?: number;
+  passAccuracy?: number;
+  keyPasses?: number;
+  tackles?: number;
+  interceptions?: number;
+  blocks?: number;
+  dribblesAttempted?: number;
+  dribblesSuccess?: number;
+  duelsTotal?: number;
+  duelsWon?: number;
+  saves?: number;
+  yellowCards?: number;
+  redCards?: number;
 }
 
 export interface ApiFootballRawEvent {
@@ -250,11 +310,46 @@ export function mapApiFootballStatus(
   return { status: "UPCOMING", rawStatus: "SCHEDULED", phase: "PRE", minute: undefined };
 }
 
+function parseNonNegativeInt(val: unknown): number | undefined {
+  if (typeof val === "number" && Number.isFinite(val) && val >= 0) {
+    return Math.round(val);
+  }
+  if (typeof val === "string" && val.trim() !== "") {
+    const num = Number(val.trim());
+    if (Number.isFinite(num) && num >= 0) return Math.round(num);
+  }
+  return undefined;
+}
+
+function parsePassAccuracyPercent(val: unknown): number | undefined {
+  if (typeof val === "number" && Number.isFinite(val)) {
+    return Math.max(0, Math.min(100, Math.round(val)));
+  }
+  if (typeof val === "string") {
+    const cleaned = val.trim().replace(/%$/, "").trim();
+    if (!cleaned) return undefined;
+    const num = Number(cleaned);
+    if (Number.isFinite(num)) {
+      return Math.max(0, Math.min(100, Math.round(num)));
+    }
+  }
+  return undefined;
+}
+
 function mapPosCode(
   rawPos: string | undefined,
-  counts: { df: number; mf: number; fw: number }
+  counts: { df: number; mf: number; fw: number },
+  rawGrid?: string | null,
+  maxGridRow = 4
 ): Position {
-  const code = String(rawPos || "").trim().toUpperCase();
+  let code = String(rawPos || "").trim().toUpperCase();
+  if (!code && rawGrid) {
+    const row = Number(String(rawGrid).split(":")[0]);
+    if (row === 1) code = "G";
+    else if (row === 2) code = "D";
+    else if (row >= maxGridRow && maxGridRow >= 3) code = "F";
+    else if (row > 2) code = "M";
+  }
   if (code === "G" || code === "GK") return "GK";
   if (code === "D" || code === "DF") {
     const cycle: Position[] = ["LB", "CB", "CB", "RB"];
@@ -278,17 +373,21 @@ export function normalizeApiFootballLineupList(
   rawList: ApiFootballRawLineupPlayer[] | undefined,
   teamName: string,
   isInternational: boolean,
-  playerStatsById?: ReadonlyMap<number, { rating?: number; isCaptain?: boolean }>
+  playerStatsById?: ReadonlyMap<number, ParsedApiFootballPlayerStats>
 ): ApiLineupPlayer[] | undefined {
   if (!Array.isArray(rawList) || rawList.length === 0) return undefined;
   const counts = { df: 0, mf: 0, fw: 0 };
+  const maxGridRow = rawList.reduce((max, item) => {
+    const row = Number(String(item.player?.grid || "").split(":")[0]);
+    return Number.isFinite(row) && row > max ? row : max;
+  }, 4);
 
   return rawList.map((item, idx) => {
     const p = item.player;
     const rawName = String(p?.name || `선수 ${idx + 1}`).trim();
     const numericId = typeof p?.id === "number" ? p.id : undefined;
     const externalId = numericId !== undefined ? String(numericId) : `${teamName}-${idx}`;
-    const position = mapPosCode(p?.pos, counts);
+    const position = mapPosCode(p?.pos, counts, p?.grid, maxGridRow);
     const statMeta = numericId !== undefined ? playerStatsById?.get(numericId) : undefined;
 
     return {
@@ -299,6 +398,32 @@ export function normalizeApiFootballLineupList(
       ...(typeof p?.number === "number" ? { shirtNumber: p.number } : {}),
       ...(statMeta?.rating !== undefined ? { rating: statMeta.rating } : {}),
       ...(statMeta?.isCaptain ? { isCaptain: true } : {}),
+      ...(statMeta?.minutesPlayed !== undefined ? { minutesPlayed: statMeta.minutesPlayed } : {}),
+      ...(statMeta?.goals !== undefined ? { goals: statMeta.goals } : {}),
+      ...(statMeta?.assists !== undefined ? { assists: statMeta.assists } : {}),
+      ...(statMeta?.shotsTotal !== undefined ? { shotsTotal: statMeta.shotsTotal } : {}),
+      ...(statMeta?.shotsOnTarget !== undefined ? { shotsOnTarget: statMeta.shotsOnTarget } : {}),
+      ...(statMeta?.passesTotal !== undefined ? { passesTotal: statMeta.passesTotal } : {}),
+      ...(statMeta?.passAccuracy !== undefined ? { passAccuracy: statMeta.passAccuracy } : {}),
+      ...(statMeta?.keyPasses !== undefined ? { keyPasses: statMeta.keyPasses } : {}),
+      ...(statMeta?.tackles !== undefined ? { tackles: statMeta.tackles } : {}),
+      ...(statMeta?.interceptions !== undefined ? { interceptions: statMeta.interceptions } : {}),
+      ...(statMeta?.blocks !== undefined ? { blocks: statMeta.blocks } : {}),
+      ...(statMeta?.dribblesAttempted !== undefined
+        ? { dribblesAttempted: statMeta.dribblesAttempted }
+        : {}),
+      ...(statMeta?.dribblesSuccess !== undefined
+        ? { dribblesSuccess: statMeta.dribblesSuccess }
+        : {}),
+      ...(statMeta?.duelsTotal !== undefined ? { duelsTotal: statMeta.duelsTotal } : {}),
+      ...(statMeta?.duelsWon !== undefined ? { duelsWon: statMeta.duelsWon } : {}),
+      ...(statMeta?.saves !== undefined ? { saves: statMeta.saves } : {}),
+      ...(statMeta?.yellowCards !== undefined && statMeta.yellowCards > 0
+        ? { yellowCards: statMeta.yellowCards }
+        : {}),
+      ...(statMeta?.redCards !== undefined && statMeta.redCards > 0
+        ? { redCards: statMeta.redCards }
+        : {}),
       team: teamName,
       nationalTeam: isInternational ? teamName : "",
     };
@@ -337,12 +462,18 @@ export function normalizeApiFootballEvents(
   let runningHome = 0;
   let runningAway = 0;
 
-  const sorted = [...rawEvents].sort(
-    (a, b) => (a.time?.elapsed ?? 0) - (b.time?.elapsed ?? 0)
-  );
+  const sorted = [...rawEvents].sort((a, b) => {
+    const aMin = (a.time?.elapsed ?? 0) + (a.time?.extra ?? 0) * 0.01;
+    const bMin = (b.time?.elapsed ?? 0) + (b.time?.extra ?? 0) * 0.01;
+    return aMin - bMin;
+  });
 
   sorted.forEach((ev, idx) => {
-    const elapsed = Math.max(1, Math.min(95, Math.round(ev.time?.elapsed ?? 45)));
+    const baseElapsed = ev.time?.elapsed ?? 45;
+    const extraMin =
+      typeof ev.time?.extra === "number" && ev.time.extra > 0 ? ev.time.extra : 0;
+    const rawMinute = baseElapsed >= 90 ? baseElapsed + extraMin : baseElapsed;
+    const elapsed = Math.max(1, Math.min(95, Math.round(rawMinute)));
     const typeUpper = String(ev.type || "").trim().toUpperCase();
     const detailUpper = String(ev.detail || "").trim().toUpperCase();
     const isHome =
@@ -595,13 +726,16 @@ export function normalizeApiFootballFixture(
       ? undefined
       : item.goals?.away ?? item.score?.fulltime?.away ?? 0;
 
-  const playerStatsById = new Map<number, { rating?: number; isCaptain?: boolean }>();
+  const playerStatsById = new Map<number, ParsedApiFootballPlayerStats>();
   if (Array.isArray(item.players)) {
     for (const teamBlock of item.players) {
       for (const entry of teamBlock.players ?? []) {
         const pid = entry.player?.id;
         if (typeof pid !== "number") continue;
-        const games = entry.statistics?.[0]?.games;
+        const stat = entry.statistics?.[0];
+        if (!stat) continue;
+
+        const games = stat.games;
         const rawRating = games?.rating;
         const parsedRating =
           typeof rawRating === "number"
@@ -614,11 +748,50 @@ export function normalizeApiFootballFixture(
             ? Number(parsedRating.toFixed(1))
             : undefined;
         const isCaptain = Boolean(games?.captain);
-        if (rating !== undefined || isCaptain) {
-          playerStatsById.set(pid, {
-            ...(rating !== undefined ? { rating } : {}),
-            ...(isCaptain ? { isCaptain: true } : {}),
-          });
+        const minutesPlayed = parseNonNegativeInt(games?.minutes);
+        const goals = parseNonNegativeInt(stat.goals?.total);
+        const assists = parseNonNegativeInt(stat.goals?.assists);
+        const saves = parseNonNegativeInt(stat.goals?.saves);
+        const shotsTotal = parseNonNegativeInt(stat.shots?.total);
+        const shotsOnTarget = parseNonNegativeInt(stat.shots?.on);
+        const passesTotal = parseNonNegativeInt(stat.passes?.total);
+        const keyPasses = parseNonNegativeInt(stat.passes?.key);
+        const passAccuracy = parsePassAccuracyPercent(stat.passes?.accuracy);
+        const tackles = parseNonNegativeInt(stat.tackles?.total);
+        const blocks = parseNonNegativeInt(stat.tackles?.blocks);
+        const interceptions = parseNonNegativeInt(stat.tackles?.interceptions);
+        const duelsTotal = parseNonNegativeInt(stat.duels?.total);
+        const duelsWon = parseNonNegativeInt(stat.duels?.won);
+        const dribblesAttempted = parseNonNegativeInt(stat.dribbles?.attempts);
+        const dribblesSuccess = parseNonNegativeInt(stat.dribbles?.success);
+        const yellowCards = parseNonNegativeInt(stat.cards?.yellow);
+        const redCards = parseNonNegativeInt(stat.cards?.red);
+
+        const parsed: ParsedApiFootballPlayerStats = {
+          ...(rating !== undefined ? { rating } : {}),
+          ...(isCaptain ? { isCaptain: true } : {}),
+          ...(minutesPlayed !== undefined ? { minutesPlayed } : {}),
+          ...(goals !== undefined ? { goals } : {}),
+          ...(assists !== undefined ? { assists } : {}),
+          ...(saves !== undefined ? { saves } : {}),
+          ...(shotsTotal !== undefined ? { shotsTotal } : {}),
+          ...(shotsOnTarget !== undefined ? { shotsOnTarget } : {}),
+          ...(passesTotal !== undefined ? { passesTotal } : {}),
+          ...(keyPasses !== undefined ? { keyPasses } : {}),
+          ...(passAccuracy !== undefined ? { passAccuracy } : {}),
+          ...(tackles !== undefined ? { tackles } : {}),
+          ...(blocks !== undefined ? { blocks } : {}),
+          ...(interceptions !== undefined ? { interceptions } : {}),
+          ...(duelsTotal !== undefined ? { duelsTotal } : {}),
+          ...(duelsWon !== undefined ? { duelsWon } : {}),
+          ...(dribblesAttempted !== undefined ? { dribblesAttempted } : {}),
+          ...(dribblesSuccess !== undefined ? { dribblesSuccess } : {}),
+          ...(yellowCards !== undefined && yellowCards > 0 ? { yellowCards } : {}),
+          ...(redCards !== undefined && redCards > 0 ? { redCards } : {}),
+        };
+
+        if (Object.keys(parsed).length > 0) {
+          playerStatsById.set(pid, parsed);
         }
       }
     }

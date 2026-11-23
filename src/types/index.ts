@@ -270,8 +270,20 @@ export interface Player {
     rating: number;
     goals: number;
     assists: number;
+    shotsTotal?: number;
     shotsOnTarget: number;
     keyPasses: number;
+    passesTotal?: number;
+    passAccuracy?: number;
+    minutesPlayed?: number;
+    tackles?: number;
+    interceptions?: number;
+    blocks?: number;
+    dribblesAttempted?: number;
+    dribblesSuccess?: number;
+    duelsTotal?: number;
+    duelsWon?: number;
+    saves?: number;
     yellowCards?: number;
     redCards?: number;
   };
@@ -292,6 +304,22 @@ export interface ApiLineupPlayer {
   yellowCards?: number;
   redCards?: number;
   rating?: number;
+  minutesPlayed?: number;
+  goals?: number;
+  assists?: number;
+  shotsTotal?: number;
+  shotsOnTarget?: number;
+  passesTotal?: number;
+  passAccuracy?: number;
+  keyPasses?: number;
+  tackles?: number;
+  interceptions?: number;
+  blocks?: number;
+  dribblesAttempted?: number;
+  dribblesSuccess?: number;
+  duelsTotal?: number;
+  duelsWon?: number;
+  saves?: number;
 }
 
 export interface ApiMatchEvent {

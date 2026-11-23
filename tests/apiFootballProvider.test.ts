@@ -18,6 +18,10 @@ import {
 } from "../src/lib/playerQuote.ts";
 import { resolvePlayerMatchStatus } from "../src/lib/lineupStatus.ts";
 import { buildTeamLineupForMatch } from "../src/lib/lineupBuilder.ts";
+import {
+  buildRealMatchStatRows,
+  hasRealPlayerMatchStats,
+} from "../src/lib/playerMatchStats.ts";
 
 test("1. API-Football status, lineup, and event normalization maps to PRE/1H/HT/2H/FT and REAL DEEP_DATA events", () => {
   assert.deepEqual(mapApiFootballStatus("NS", null), {
@@ -787,4 +791,194 @@ test("7. Free Plan ids-parameter rejection falls back to /fixtures?id={id}, pres
   assert.equal(cachedDateRes.matches[5].homeTeam.bench?.length, 2);
 
   ApiFootballProvider.clearCachesForTesting();
+});
+
+test("8. Mocked full API-Football fixture payload maps passes, shots, tackles, dribbles, duels, saves, stoppage-time goals, cards, and grid-fallback positions end-to-end", () => {
+  const fullFixture: ApiFootballRawFixtureItem = {
+    fixture: {
+      id: 1559999,
+      date: "2026-11-22T15:00:00+00:00",
+      status: { short: "FT", elapsed: 90 },
+    },
+    league: { id: 39, name: "Premier League", country: "England" },
+    teams: {
+      home: { id: 42, name: "Arsenal" },
+      away: { id: 49, name: "Chelsea" },
+    },
+    goals: { home: 3, away: 1 },
+    lineups: [
+      {
+        team: { id: 42, name: "Arsenal" },
+        coach: { id: 1, name: "Mikel Arteta" },
+        formation: "4-3-3",
+        startXI: [
+          // Missing pos must fall back cleanly to GK via grid "1:1"
+          { player: { id: 1001, name: "D. Raya", number: 22, pos: undefined, grid: "1:1" } },
+          { player: { id: 1002, name: "W. Saliba", number: 2, pos: "D", grid: "2:2" } },
+          { player: { id: 1003, name: "M. Odegaard", number: 8, pos: "M", grid: "3:2" } },
+          { player: { id: 1004, name: "B. Saka", number: 7, pos: "F", grid: "4:3" } },
+        ],
+        substitutes: [
+          { player: { id: 1005, name: "L. Trossard", number: 19, pos: "F", grid: null } },
+        ],
+      },
+      {
+        team: { id: 49, name: "Chelsea" },
+        coach: { id: 2, name: "Enzo Maresca" },
+        formation: "4-2-3-1",
+        startXI: [
+          { player: { id: 2001, name: "C. Palmer", number: 20, pos: "M", grid: "4:2" } },
+        ],
+        substitutes: [],
+      },
+    ],
+    events: [
+      {
+        time: { elapsed: 18, extra: null },
+        team: { id: 42, name: "Arsenal" },
+        player: { id: 1004, name: "Bukayo Saka" },
+        assist: { id: 1003, name: "Martin Odegaard" },
+        type: "Goal",
+        detail: "Normal Goal",
+      },
+      {
+        time: { elapsed: 41, extra: null },
+        team: { id: 42, name: "Arsenal" },
+        player: { id: 1003, name: "Martin Odegaard" },
+        assist: { id: null, name: null },
+        type: "Goal",
+        detail: "Penalty",
+      },
+      {
+        time: { elapsed: 55, extra: null },
+        team: { id: 49, name: "Chelsea" },
+        player: { id: 2001, name: "Cole Palmer" },
+        assist: { id: null, name: null },
+        type: "Goal",
+        detail: "Missed Penalty",
+      },
+      {
+        time: { elapsed: 77, extra: null },
+        team: { id: 42, name: "Arsenal" },
+        player: { id: 1004, name: "Bukayo Saka" },
+        assist: { id: 1005, name: "Leandro Trossard" },
+        type: "subst",
+        detail: "Substitution 1",
+      },
+      {
+        time: { elapsed: 84, extra: null },
+        team: { id: 49, name: "Chelsea" },
+        player: { id: 2001, name: "Cole Palmer" },
+        assist: { id: null, name: null },
+        type: "Card",
+        detail: "Second Yellow card",
+      },
+      {
+        time: { elapsed: 90, extra: 4 },
+        team: { id: 42, name: "Arsenal" },
+        player: { id: 1005, name: "Leandro Trossard" },
+        assist: { id: null, name: null },
+        type: "Goal",
+        detail: "Normal Goal",
+      },
+    ],
+    players: [
+      {
+        team: { id: 42, name: "Arsenal" },
+        players: [
+          {
+            player: { id: 1001, name: "David Raya" },
+            statistics: [
+              {
+                games: { minutes: 90, rating: "7.9", captain: false },
+                goals: { total: 0, conceded: 1, assists: 0, saves: 5 },
+                passes: { total: 28, key: 0, accuracy: "79%" },
+                duels: { total: 2, won: 2 },
+              },
+            ],
+          },
+          {
+            player: { id: 1003, name: "Martin Odegaard" },
+            statistics: [
+              {
+                games: { minutes: 90, rating: "8.6", captain: true },
+                shots: { total: 4, on: 2 },
+                goals: { total: 1, assists: 1 },
+                passes: { total: 64, key: 3, accuracy: "88%" },
+                tackles: { total: 3, blocks: 1, interceptions: 2 },
+                dribbles: { attempts: 4, success: 3 },
+                duels: { total: 9, won: 6 },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  const match = normalizeApiFootballFixture(fullFixture);
+  assert.equal(match.usesDummyLineup, false);
+  assert.equal(match.homeManager, "Mikel Arteta");
+  assert.equal(match.homeTeam.lineup?.[0].position, "GK");
+
+  // Verify stoppage time goal (90+4' -> 94), missed penalty ignored, second yellow -> RED_CARD, subst -> SUB_OUT + SUB_IN
+  assert.equal(
+    match.events?.some((e) => e.type === "GOAL" && e.playerId === "af-p-1005" && e.minute === 94),
+    true
+  );
+  assert.equal(
+    match.events?.some((e) => e.type === "GOAL" && e.playerId === "af-p-2001"),
+    false
+  );
+  assert.equal(
+    match.events?.some((e) => e.type === "RED_CARD" && e.playerId === "af-p-2001" && e.minute === 84),
+    true
+  );
+  assert.equal(
+    match.events?.some((e) => e.type === "SUB_IN" && e.playerId === "af-p-1005" && e.minute === 77),
+    true
+  );
+
+  const built = buildTeamLineupForMatch(match, "HOME", []);
+  const ode = built.startingLineup.find((p) => p.id === "af-p-1003");
+  const raya = built.startingLineup.find((p) => p.id === "af-p-1001");
+  const saliba = built.startingLineup.find((p) => p.id === "af-p-1002");
+
+  assert.ok(ode);
+  assert.equal(ode?.stats.passesTotal, 64);
+  assert.equal(ode?.stats.passAccuracy, 88);
+  assert.equal(ode?.stats.keyPasses, 3);
+  assert.equal(ode?.stats.shotsTotal, 4);
+  assert.equal(ode?.stats.shotsOnTarget, 2);
+  assert.equal(ode?.stats.tackles, 3);
+  assert.equal(ode?.stats.interceptions, 2);
+  assert.equal(ode?.stats.blocks, 1);
+  assert.equal(ode?.isCaptain, true);
+
+  assert.equal(hasRealPlayerMatchStats(ode), true);
+  const odeRows = buildRealMatchStatRows(ode!);
+  assert.equal(
+    odeRows.find((r) => r.label.includes("패스"))?.valueText,
+    "56/64 (88%)"
+  );
+  assert.equal(
+    odeRows.find((r) => r.label === "키패스")?.valueText,
+    "3회"
+  );
+
+  assert.ok(raya);
+  const rayaRows = buildRealMatchStatRows(raya!);
+  assert.equal(
+    rayaRows.find((r) => r.label.includes("선방"))?.valueText,
+    "5회"
+  );
+  assert.equal(
+    rayaRows.find((r) => r.label.includes("패스"))?.valueText,
+    "22/28 (79%)"
+  );
+
+  // Player without players[] stats returns false / [] cleanly (no fake seeded stats)
+  assert.ok(saliba);
+  assert.equal(hasRealPlayerMatchStats(saliba), false);
+  assert.deepEqual(buildRealMatchStatRows(saliba!), []);
 });

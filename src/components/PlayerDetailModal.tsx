@@ -27,6 +27,10 @@ import { useTradeStore, doesPlayerBelongToMatch } from "@/store/useTradeStore";
 import { resolveMatchForPlayerView } from "@/lib/matchSync";
 import { resolvePlayerDisplayName } from "@/lib/playerDisplayName";
 import {
+  buildRealMatchStatRows,
+  hasRealPlayerMatchStats,
+} from "@/lib/playerMatchStats";
+import {
   PLAYER_DETAILED_PROFILES,
   PlayerDetailedProfile,
   CareerSeasonRow,
@@ -397,6 +401,9 @@ export default function PlayerDetailModal({
   const isScoreOnlyRealMode =
     activeMatch?.providerMode === "SCORE_ONLY" &&
     !(player.events ?? []).some((e) => e.source === "SIMULATED");
+  const realMatchStatRows = hasRealPlayerMatchStats(player)
+    ? buildRealMatchStatRows(player)
+    : [];
 
   const radarData = [
     {
@@ -707,6 +714,38 @@ export default function PlayerDetailModal({
               ))}
             </div>
           </div>
+
+          {/* 2.5) 당일 경기 실측 스탯 (API-Football 패스/슈팅/수비 데이터 존재 시 표시) */}
+          {realMatchStatRows.length > 0 && (
+            <div className="rounded-2xl border border-emerald-200/80 bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="h-4 w-4 text-[#00985f]" />
+                  <h3 className="text-xs font-extrabold text-gray-900">
+                    당일 경기 실측 스탯 (패스·슈팅·수비)
+                  </h3>
+                </div>
+                <span className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 font-mono text-[10px] font-extrabold text-[#00985f]">
+                  평점 {player.stats.rating.toFixed(1)}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {realMatchStatRows.map((row) => (
+                  <div
+                    key={row.label}
+                    className="rounded-xl border border-gray-100 bg-[#f8f9fa] px-3 py-2"
+                  >
+                    <span className="block text-[10px] font-semibold text-gray-500 truncate">
+                      {row.label}
+                    </span>
+                    <strong className="mt-0.5 block font-mono text-xs font-extrabold text-gray-900 tabular-nums">
+                      {row.valueText}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* 3) 현재 시즌 리그 성적 요약 그리드 (Season Stats - 8-Grid) */}
           <div className="rounded-2xl border border-gray-200/90 bg-white p-4 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">

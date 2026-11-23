@@ -227,6 +227,22 @@ interface FootballDataLineupPlayerRaw {
   yellowCards?: number;
   redCards?: number;
   rating?: number;
+  minutesPlayed?: number;
+  goals?: number;
+  assists?: number;
+  shotsTotal?: number;
+  shotsOnTarget?: number;
+  passesTotal?: number;
+  passAccuracy?: number;
+  keyPasses?: number;
+  tackles?: number;
+  interceptions?: number;
+  blocks?: number;
+  dribblesAttempted?: number;
+  dribblesSuccess?: number;
+  duelsTotal?: number;
+  duelsWon?: number;
+  saves?: number;
 }
 
 interface FootballDataTeamRaw {
@@ -488,6 +504,26 @@ function normalizeLineupPlayers(
       ...(raw.yellowCards !== undefined ? { yellowCards: raw.yellowCards } : {}),
       ...(raw.redCards !== undefined ? { redCards: raw.redCards } : {}),
       ...(raw.rating !== undefined ? { rating: raw.rating } : {}),
+      ...(raw.minutesPlayed !== undefined ? { minutesPlayed: raw.minutesPlayed } : {}),
+      ...(raw.goals !== undefined ? { goals: raw.goals } : {}),
+      ...(raw.assists !== undefined ? { assists: raw.assists } : {}),
+      ...(raw.shotsTotal !== undefined ? { shotsTotal: raw.shotsTotal } : {}),
+      ...(raw.shotsOnTarget !== undefined ? { shotsOnTarget: raw.shotsOnTarget } : {}),
+      ...(raw.passesTotal !== undefined ? { passesTotal: raw.passesTotal } : {}),
+      ...(raw.passAccuracy !== undefined ? { passAccuracy: raw.passAccuracy } : {}),
+      ...(raw.keyPasses !== undefined ? { keyPasses: raw.keyPasses } : {}),
+      ...(raw.tackles !== undefined ? { tackles: raw.tackles } : {}),
+      ...(raw.interceptions !== undefined ? { interceptions: raw.interceptions } : {}),
+      ...(raw.blocks !== undefined ? { blocks: raw.blocks } : {}),
+      ...(raw.dribblesAttempted !== undefined
+        ? { dribblesAttempted: raw.dribblesAttempted }
+        : {}),
+      ...(raw.dribblesSuccess !== undefined
+        ? { dribblesSuccess: raw.dribblesSuccess }
+        : {}),
+      ...(raw.duelsTotal !== undefined ? { duelsTotal: raw.duelsTotal } : {}),
+      ...(raw.duelsWon !== undefined ? { duelsWon: raw.duelsWon } : {}),
+      ...(raw.saves !== undefined ? { saves: raw.saves } : {}),
     };
   });
 }

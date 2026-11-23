@@ -542,6 +542,51 @@ export function applyLineupEntryMeta(
       },
     };
   }
+  const mergedStats: Player["stats"] = {
+    ...player.stats,
+    ...(typeof entry.rating === "number" ? { rating: entry.rating } : {}),
+    ...(typeof entry.minutesPlayed === "number"
+      ? { minutesPlayed: entry.minutesPlayed }
+      : {}),
+    ...(typeof entry.goals === "number" ? { goals: entry.goals } : {}),
+    ...(typeof entry.assists === "number" ? { assists: entry.assists } : {}),
+    ...(typeof entry.shotsTotal === "number"
+      ? { shotsTotal: entry.shotsTotal }
+      : {}),
+    ...(typeof entry.shotsOnTarget === "number"
+      ? { shotsOnTarget: entry.shotsOnTarget }
+      : {}),
+    ...(typeof entry.passesTotal === "number"
+      ? { passesTotal: entry.passesTotal }
+      : {}),
+    ...(typeof entry.passAccuracy === "number"
+      ? { passAccuracy: entry.passAccuracy }
+      : {}),
+    ...(typeof entry.keyPasses === "number" ? { keyPasses: entry.keyPasses } : {}),
+    ...(typeof entry.tackles === "number" ? { tackles: entry.tackles } : {}),
+    ...(typeof entry.interceptions === "number"
+      ? { interceptions: entry.interceptions }
+      : {}),
+    ...(typeof entry.blocks === "number" ? { blocks: entry.blocks } : {}),
+    ...(typeof entry.dribblesAttempted === "number"
+      ? { dribblesAttempted: entry.dribblesAttempted }
+      : {}),
+    ...(typeof entry.dribblesSuccess === "number"
+      ? { dribblesSuccess: entry.dribblesSuccess }
+      : {}),
+    ...(typeof entry.duelsTotal === "number"
+      ? { duelsTotal: entry.duelsTotal }
+      : {}),
+    ...(typeof entry.duelsWon === "number" ? { duelsWon: entry.duelsWon } : {}),
+    ...(typeof entry.saves === "number" ? { saves: entry.saves } : {}),
+    ...(isPositiveCount(entry.yellowCards)
+      ? { yellowCards: Math.floor(entry.yellowCards) }
+      : {}),
+    ...(isPositiveCount(entry.redCards)
+      ? { redCards: Math.floor(entry.redCards) }
+      : {}),
+  };
+
   return {
     ...player,
     ...(entry.isCaptain !== undefined ? { isCaptain: entry.isCaptain } : {}),
@@ -557,9 +602,7 @@ export function applyLineupEntryMeta(
     ...(isPositiveCount(entry.redCards)
       ? { redCards: Math.floor(entry.redCards) }
       : {}),
-    ...(typeof entry.rating === "number"
-      ? { stats: { ...player.stats, rating: entry.rating } }
-      : {}),
+    stats: mergedStats,
   };
 }
 

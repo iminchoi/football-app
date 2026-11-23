@@ -27,6 +27,10 @@ import {
 } from "@/lib/priceEngine";
 import { resolvePlayerQuote } from "@/lib/playerQuote";
 import {
+  buildRealMatchStatRows,
+  hasRealPlayerMatchStats,
+} from "@/lib/playerMatchStats";
+import {
   resolveMatchClock,
   resolveMatchForPlayerView,
 } from "@/lib/matchSync";
@@ -643,8 +647,15 @@ export default function TradeBottomSheet({
     periodStartPrice > 0 ? (periodDiff / periodStartPrice) * 100 : 0;
   const isUp = period === "TICK" ? pctFromBase >= 0 : periodDiff >= 0;
 
-  // 7-Row FotMob Gauge Stats
-  const fotMobStats = buildFotMobStats(player);
+  // Real API-Football stats when present; otherwise demo FotMob Gauge Stats (never fabricating for SCORE_ONLY / unpopulated DEEP_DATA)
+  const hasRealMatchStats = hasRealPlayerMatchStats(player);
+  const isApiDeepDataPlayer =
+    playerMatch?.providerMode === "DEEP_DATA" || player.id.startsWith("af-p-");
+  const fotMobStats = hasRealMatchStats
+    ? buildRealMatchStatRows(player)
+    : isApiDeepDataPlayer
+    ? []
+    : buildFotMobStats(player);
 
   // Max purchasable or sellable quantity (bounded by cash points on BUY)
   const affordableQty = user ? Math.max(0, Math.floor(cash / currentPrice)) : 9999;
@@ -1003,7 +1014,9 @@ export default function TradeBottomSheet({
                 </span>
               </div>
               <span className="text-[10px] font-medium text-gray-400">
-                FotMob 퍼포먼스 지표 (7개 항목)
+                {hasRealMatchStats
+                  ? "API-Football 실측 경기 스탯"
+                  : "FotMob 퍼포먼스 지표 (7개 항목)"}
               </span>
             </div>
 
@@ -1011,6 +1024,12 @@ export default function TradeBottomSheet({
             !(player.events ?? []).some((e) => e.source === "SIMULATED") ? (
               <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-xs font-bold text-slate-600">
                 데이터 없음 (실제 스코어 전용 모드)
+              </div>
+            ) : fotMobStats.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-xs font-bold text-slate-500">
+                {effectiveStatus === "UPCOMING"
+                  ? "킥오프 후 패스·슈팅 등 실측 경기 스탯이 표시됩니다"
+                  : "이 경기의 선수별 상세 스탯이 제공되지 않았습니다"}
               </div>
             ) : (
               <div className="space-y-1.5">

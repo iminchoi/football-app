@@ -1478,6 +1478,52 @@ export const useTradeStore = create<TradeStoreState>()(
                     ) {
                       updated = { ...updated, redCards: item.redCards };
                     }
+                    const nextRealStats: Player["stats"] = {
+                      ...updated.stats,
+                      ...(typeof item.rating === "number" ? { rating: item.rating } : {}),
+                      ...(typeof item.minutesPlayed === "number"
+                        ? { minutesPlayed: item.minutesPlayed }
+                        : {}),
+                      ...(typeof item.goals === "number" ? { goals: item.goals } : {}),
+                      ...(typeof item.assists === "number" ? { assists: item.assists } : {}),
+                      ...(typeof item.shotsTotal === "number"
+                        ? { shotsTotal: item.shotsTotal }
+                        : {}),
+                      ...(typeof item.shotsOnTarget === "number"
+                        ? { shotsOnTarget: item.shotsOnTarget }
+                        : {}),
+                      ...(typeof item.passesTotal === "number"
+                        ? { passesTotal: item.passesTotal }
+                        : {}),
+                      ...(typeof item.passAccuracy === "number"
+                        ? { passAccuracy: item.passAccuracy }
+                        : {}),
+                      ...(typeof item.keyPasses === "number"
+                        ? { keyPasses: item.keyPasses }
+                        : {}),
+                      ...(typeof item.tackles === "number" ? { tackles: item.tackles } : {}),
+                      ...(typeof item.interceptions === "number"
+                        ? { interceptions: item.interceptions }
+                        : {}),
+                      ...(typeof item.blocks === "number" ? { blocks: item.blocks } : {}),
+                      ...(typeof item.dribblesAttempted === "number"
+                        ? { dribblesAttempted: item.dribblesAttempted }
+                        : {}),
+                      ...(typeof item.dribblesSuccess === "number"
+                        ? { dribblesSuccess: item.dribblesSuccess }
+                        : {}),
+                      ...(typeof item.duelsTotal === "number"
+                        ? { duelsTotal: item.duelsTotal }
+                        : {}),
+                      ...(typeof item.duelsWon === "number" ? { duelsWon: item.duelsWon } : {}),
+                      ...(typeof item.saves === "number" ? { saves: item.saves } : {}),
+                    };
+                    if (
+                      JSON.stringify(nextRealStats) !==
+                      JSON.stringify(updated.stats)
+                    ) {
+                      updated = { ...updated, stats: nextRealStats };
+                    }
                   }
                 }
 
@@ -1583,10 +1629,46 @@ export const useTradeStore = create<TradeStoreState>()(
                 },
                 stats: {
                   rating: item.rating ?? 7.3,
-                  goals: 0,
-                  assists: 0,
-                  shotsOnTarget: 1,
-                  keyPasses: 1,
+                  goals: allowLineupEvents ? item.goals ?? 0 : 0,
+                  assists: allowLineupEvents ? item.assists ?? 0 : 0,
+                  shotsOnTarget: allowLineupEvents ? item.shotsOnTarget ?? 0 : 0,
+                  keyPasses: allowLineupEvents ? item.keyPasses ?? 0 : 0,
+                  ...(allowLineupEvents && typeof item.shotsTotal === "number"
+                    ? { shotsTotal: item.shotsTotal }
+                    : {}),
+                  ...(allowLineupEvents && typeof item.passesTotal === "number"
+                    ? { passesTotal: item.passesTotal }
+                    : {}),
+                  ...(allowLineupEvents && typeof item.passAccuracy === "number"
+                    ? { passAccuracy: item.passAccuracy }
+                    : {}),
+                  ...(allowLineupEvents && typeof item.minutesPlayed === "number"
+                    ? { minutesPlayed: item.minutesPlayed }
+                    : {}),
+                  ...(allowLineupEvents && typeof item.tackles === "number"
+                    ? { tackles: item.tackles }
+                    : {}),
+                  ...(allowLineupEvents && typeof item.interceptions === "number"
+                    ? { interceptions: item.interceptions }
+                    : {}),
+                  ...(allowLineupEvents && typeof item.blocks === "number"
+                    ? { blocks: item.blocks }
+                    : {}),
+                  ...(allowLineupEvents && typeof item.dribblesAttempted === "number"
+                    ? { dribblesAttempted: item.dribblesAttempted }
+                    : {}),
+                  ...(allowLineupEvents && typeof item.dribblesSuccess === "number"
+                    ? { dribblesSuccess: item.dribblesSuccess }
+                    : {}),
+                  ...(allowLineupEvents && typeof item.duelsTotal === "number"
+                    ? { duelsTotal: item.duelsTotal }
+                    : {}),
+                  ...(allowLineupEvents && typeof item.duelsWon === "number"
+                    ? { duelsWon: item.duelsWon }
+                    : {}),
+                  ...(allowLineupEvents && typeof item.saves === "number"
+                    ? { saves: item.saves }
+                    : {}),
                   ...(allowLineupEvents &&
                   typeof item.yellowCards === "number" &&
                   item.yellowCards > 0

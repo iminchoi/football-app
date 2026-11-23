@@ -1,12 +1,12 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `ApiFootballProvider` detects Free Plan `/fixtures?ids=` restrictions and falls back cleanly to single-fixture `/fixtures?id={id}` (with on-demand `/api/matches?fixtureId=` loading on card expand), preserving `startXI`, `substitutes`, `formation`, `coach`, `rating`/`captain`, and both `SUB_OUT`/`SUB_IN` events.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (66/66 across all 9 suites).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); full API-Football `/fixtures?id=` parsing now maps `startXI` (with `grid` fallback), `substitutes`, `formation`, `coach`, stoppage-time `Goal`/`Card`/`subst` events, and per-player `players[].statistics[0]` stats (`passes`, `keyPasses`, `shots`, `tackles`, `interceptions`, `blocks`, `dribbles`, `duels`, `saves`, `minutes`, `rating`, `captain`) end-to-end into store and UI without seeded noise.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (67/67 across all 9 suites, 100% mocked/offline).
 
 ## Recent Changes
-- `src/lib/providers/ApiFootballProvider.ts`, `src/app/api/matches/route.ts`: Added Free Plan fallback from `/fixtures?ids=` to `/fixtures?id={id}` (`API_FOOTBALL_SINGLE_ID_EAGER_LIMIT = 5`), added on-demand `fetchFixtureDetail` & `?fixtureId=` route, emitted `SUB_IN` alongside `SUB_OUT` from `subst.assist`, and extracted player `rating`/`isCaptain` from `item.players`.
-- `src/lib/lineupStatus.ts`, `src/lib/lineupBuilder.ts`: Added `af-p-` prefix matching in `doesIdentityMatchPlayer`/`hasConflictingAuthoritativeIds` and ID-first deduplication for explicit API rosters.
-- `MatchesTabView.tsx`, `MatchAccordionCard.tsx`, `FormationPitchModal.tsx`: Wired on-demand fixture detail fetching when expanding any unenriched `af-*` match, prioritized official starters in card summaries, and added detail-loading UI state.
-- `tests/apiFootballProvider.test.ts`: Added Test 7 covering live Free Plan response structure, `ids` fallback, `SUB_IN`/`SUB_OUT`, ratings/captain, and on-demand `fetchFixtureDetail` cache patching.
+- `src/types/index.ts`, `src/lib/providers/ApiFootballProvider.ts`, `src/app/api/matches/route.ts`: Extended `ApiLineupPlayer` & `Player["stats"]` with real pass/shot/defensive/GK/minutes fields, parsed `players[].statistics[0]` (`passes.total`, `passes.key`, `passes.accuracy`, `shots`, `tackles`, `dribbles`, `duels`, `saves`, `cards`), added `grid` position fallback and stoppage-time `time.extra` minute handling, and preserved all fields in `/api/matches`.
+- `src/lib/lineupStatus.ts`, `src/store/useTradeStore.ts`: Propagated real API stats through `applyLineupEntryMeta` and `syncPlayersFromMatches` (removing hardcoded `shotsOnTarget: 1, keyPasses: 1` defaults).
+- `src/lib/playerMatchStats.ts`, `TradeBottomSheet.tsx`, `PlayerDetailModal.tsx`: Added pure real-stat gauge builder (`buildRealMatchStatRows`) so API players display verified pass/shot/defensive/GK stats directly instead of seeded mock numbers.
+- `tests/apiFootballProvider.test.ts`: Added offline mocked Test 8 verifying full lineup, stoppage-time events, passes/stats parsing, and UI stat row formatting.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.
