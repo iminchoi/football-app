@@ -650,7 +650,7 @@ export class ApiFootballProvider implements MatchDataProvider {
 
   static isConfigured(rawKey = process.env.API_FOOTBALL_KEY): boolean {
     const clean = (rawKey ?? "").trim();
-    return clean.length >= 16 && /^[a-zA-Z0-9]+$/.test(clean);
+    return clean.length >= 16 && /^[a-zA-Z0-9_-]+$/.test(clean);
   }
 
   static clearCachesForTesting(): void {

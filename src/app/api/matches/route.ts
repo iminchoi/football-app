@@ -563,25 +563,29 @@ export async function GET(request: NextRequest) {
     ? rawDateParam
     : getKstTodayStr();
 
+  const rawAfKey = process.env.API_FOOTBALL_KEY?.trim() ?? "";
+  const isAfKeyConfigured = ApiFootballProvider.isConfigured(rawAfKey);
+  let afErrorMessage: string | null = null;
+
   // Priority 1: API-Football v3 (`process.env.API_FOOTBALL_KEY`) with server memory cache & fallback
-  if (ApiFootballProvider.isConfigured()) {
+  if (isAfKeyConfigured) {
     try {
       const afProvider = new ApiFootballProvider();
       const afResult = await afProvider.fetchMatchesForDate(targetDate);
-      if (afResult.matches.length > 0) {
-        return NextResponse.json({
-          source: "API_FOOTBALL",
-          date: targetDate,
-          count: afResult.matches.length,
-          fromCache: afResult.fromCache,
-          staleFallback: afResult.staleFallback,
-          matches: afResult.matches.map((m) =>
-            enrichMatchMetadata(m, Boolean(m.isInternational))
-          ),
-        });
-      }
-    } catch {
-      // Fall through cleanly to football-data.org / fixture replay / simulated fallback
+      return NextResponse.json({
+        source: "API_FOOTBALL",
+        date: targetDate,
+        count: afResult.matches.length,
+        fromCache: afResult.fromCache,
+        staleFallback: afResult.staleFallback,
+        matches: afResult.matches.map((m) =>
+          enrichMatchMetadata(m, Boolean(m.isInternational))
+        ),
+      });
+    } catch (err: unknown) {
+      afErrorMessage =
+        err instanceof Error ? err.message : "API-Football 요청 실패";
+      // Fall through cleanly to football-data.org / demo fallback on error
     }
   }
 
@@ -591,12 +595,16 @@ export async function GET(request: NextRequest) {
   const isValidKey = apiKey.length >= 16 && /^[a-zA-Z0-9]+$/.test(apiKey);
 
   if (!apiKey || !isValidKey) {
+    const fallbackMessage = afErrorMessage
+      ? `API-Football 조회 중 오류가 발생해 데모 경기 데이터를 표시합니다. (${afErrorMessage})`
+      : rawAfKey && !isAfKeyConfigured
+      ? ".env.local의 API_FOOTBALL_KEY 형식이 유효하지 않아 데모 경기 데이터를 표시합니다."
+      : ".env.local에 API_FOOTBALL_KEY가 비어 있어 데모 경기 데이터를 표시합니다.";
+
     return NextResponse.json({
       source: "MOCK_FALLBACK",
       date: targetDate,
-      message: !apiKey
-        ? ".env.local에 FOOTBALL_DATA_API_KEY가 비어 있어 데모 경기 데이터를 표시합니다."
-        : ".env.local의 FOOTBALL_DATA_API_KEY 형식이 유효하지 않습니다.",
+      message: fallbackMessage,
       matches: INITIAL_MATCHES.map((m) => enrichMatchMetadata(m, false)),
     });
   }

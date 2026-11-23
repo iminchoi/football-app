@@ -10,6 +10,7 @@ import {
   type ApiFootballRawFixtureItem,
   type ApiFootballRawLineup,
 } from "../src/lib/providers/index.ts";
+import { resolveFetchedMatchesForDate } from "../src/lib/matchSync.ts";
 
 test("1. API-Football status, lineup, and event normalization maps to PRE/1H/HT/2H/FT and REAL DEEP_DATA events", () => {
   assert.deepEqual(mapApiFootballStatus("NS", null), {
@@ -235,6 +236,89 @@ test("2. ApiFootballProvider caches date queries by TTL and falls back to last c
   assert.equal(third.matches.length, 1);
   assert.equal(third.matches[0].id, "af-5001");
   assert.equal(callCount, 2);
+
+  ApiFootballProvider.clearCachesForTesting();
+});
+
+test("3. Date-scoped API_FOOTBALL queries isolate cache per date and preserve empty/past/future dates without demo fallback", async () => {
+  ApiFootballProvider.clearCachesForTesting();
+
+  const seenUrls: string[] = [];
+  const mockFetch: typeof fetch = async (input) => {
+    const url = String(input);
+    seenUrls.push(url);
+
+    if (url.includes("date=2026-11-18")) {
+      return new Response(
+        JSON.stringify({
+          errors: [],
+          response: [
+            {
+              fixture: {
+                id: 7001,
+                date: "2026-11-18T19:45:00+00:00",
+                status: { short: "FT", elapsed: 90 },
+              },
+              league: { id: 39, name: "Premier League", country: "England" },
+              teams: {
+                home: { id: 42, name: "Arsenal" },
+                away: { id: 49, name: "Chelsea" },
+              },
+              goals: { home: 2, away: 1 },
+            },
+          ],
+        }),
+        { status: 200 }
+      );
+    }
+
+    if (url.includes("date=2026-11-26")) {
+      return new Response(
+        JSON.stringify({ errors: [], response: [] }),
+        { status: 200 }
+      );
+    }
+
+    return new Response(JSON.stringify({ errors: [], response: [] }), {
+      status: 200,
+    });
+  };
+
+  const provider = new ApiFootballProvider({
+    apiKey: "valid-api_key-1234567890",
+    fetchImpl: mockFetch,
+  });
+
+  const pastRes = await provider.fetchMatchesForDate("2026-11-18", {
+    enrichTopDetailsCount: 0,
+  });
+  assert.equal(pastRes.matches.length, 1);
+  assert.equal(pastRes.matches[0].status, "FT");
+  assert.equal(pastRes.matches[0].providerMode, "DEEP_DATA");
+
+  const emptyFutureRes = await provider.fetchMatchesForDate("2026-11-26", {
+    enrichTopDetailsCount: 0,
+  });
+  assert.equal(emptyFutureRes.matches.length, 0);
+  assert.equal(emptyFutureRes.fromCache, false);
+
+  // Confirm resolveFetchedMatchesForDate keeps empty API_FOOTBALL date empty instead of falling back to demo fixtures
+  const mergedEmptyFuture = resolveFetchedMatchesForDate({
+    source: "API_FOOTBALL",
+    matches: emptyFutureRes.matches,
+    fallbackMatches: pastRes.matches,
+    fixturePool: pastRes.matches,
+    requestedDateStr: "2026-11-26",
+    todayStr: "2026-11-23",
+  });
+  assert.equal(mergedEmptyFuture.length, 0);
+
+  // Second query on 2026-11-26 hits cache without another external call
+  const cachedEmpty = await provider.fetchMatchesForDate("2026-11-26", {
+    enrichTopDetailsCount: 0,
+  });
+  assert.equal(cachedEmpty.fromCache, true);
+  assert.equal(seenUrls.length, 2);
 
   ApiFootballProvider.clearCachesForTesting();
 });

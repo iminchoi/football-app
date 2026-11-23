@@ -1,11 +1,11 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `ApiFootballProvider` (`v3.football.api-sports.io`) integrated at highest priority when `process.env.API_FOOTBALL_KEY` is configured, with differential TTL memory caching and fallback to `FootballData` / `FixtureReplay` / `SimulatedEvents`.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (31/31 across 6 suites).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `ApiFootballProvider` handles today, past, and future date queries cleanly without falling back to demo fixtures on empty API dates, and fallback guidance messages reference `API_FOOTBALL_KEY`.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (32/32 across 6 suites).
 
 ## Recent Changes
-- `src/lib/providers/ApiFootballProvider.ts`, `src/lib/providers/index.ts`: Added `ApiFootballProvider` normalizing `/fixtures`, `/fixtures/lineups`, and `/fixtures/events` into `PRE`/`1H`/`HT`/`2H`/`FT` states, lineups, and `REAL`/`DEEP_DATA` events with differential TTL cache (`35s` live, `7m` static, `30m` locked lineups/FT) and `429`/8s timeout stale-cache fallback.
-- `src/app/api/matches/route.ts`, `src/lib/matchSync.ts`, `src/components/matches/MatchesTabView.tsx`: Connected `ApiFootballProvider` priority and `API_FOOTBALL` source handling.
-- `tests/apiFootballProvider.test.ts`: Added unit tests for status/lineup/event normalization, TTL cache hit, and `429` stale-snapshot fallback.
+- `src/app/api/matches/route.ts`: Returned `API_FOOTBALL` directly on successful `fetchMatchesForDate` (including 0-match dates), surfaced `API-Football` error details on actual upstream failures, and updated fallback guidance copy from `FOOTBALL_DATA_API_KEY` to `API_FOOTBALL_KEY`.
+- `src/lib/providers/ApiFootballProvider.ts`: Relaxed `isConfigured` key regex to accept hyphens/underscores (`[a-zA-Z0-9_-]`).
+- `tests/apiFootballProvider.test.ts`: Added date-scoped cache isolation and empty/past/future `API_FOOTBALL` response tests.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.
