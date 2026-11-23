@@ -490,3 +490,108 @@ test("5. resolveHoldingPlayer preserves dynamic API-Football holdings and matchC
   assert.equal(liveQuote.currentPrice, 13100);
   assert.equal(liveQuote.diff, 700);
 });
+
+test("6. All matches within the same league (even 5th, 6th, 7th+) are batch-enriched via /fixtures?ids=... without stopping at 4", async () => {
+  ApiFootballProvider.clearCachesForTesting();
+
+  const seenUrls: string[] = [];
+  const fixtureIds = [6001, 6002, 6003, 6004, 6005, 6006, 6007];
+
+  const makeFixtureMeta = (id: number, isUpcoming: boolean): ApiFootballRawFixtureItem => ({
+    fixture: {
+      id,
+      date: "2026-11-23T15:00:00+00:00",
+      status: isUpcoming
+        ? { short: "NS", elapsed: null }
+        : { short: "FT", elapsed: 90 },
+    },
+    league: { id: 39, name: "Premier League", country: "England" },
+    teams: {
+      home: { id: 100 + id, name: `Home Club ${id}` },
+      away: { id: 200 + id, name: `Away Club ${id}` },
+    },
+    goals: isUpcoming ? { home: null, away: null } : { home: 1, away: 0 },
+  });
+
+  const makeFixtureDetails = (id: number, isUpcoming: boolean): ApiFootballRawFixtureItem => ({
+    ...makeFixtureMeta(id, isUpcoming),
+    lineups: [
+      {
+        team: { id: 100 + id, name: `Home Club ${id}` },
+        formation: "4-4-2",
+        startXI: [
+          { player: { id: id * 10 + 1, name: `Starter ${id}`, number: 9, pos: "F" } },
+        ],
+        substitutes: [],
+      },
+    ],
+    events: isUpcoming
+      ? []
+      : [
+          {
+            time: { elapsed: 37 },
+            team: { id: 100 + id, name: `Home Club ${id}` },
+            player: { id: id * 10 + 1, name: `Starter ${id}` },
+            type: "Goal",
+            detail: "Normal Goal",
+          },
+        ],
+  });
+
+  const mockFetch: typeof fetch = async (input) => {
+    const url = String(input);
+    seenUrls.push(url);
+
+    if (url.includes("/fixtures?date=")) {
+      return new Response(
+        JSON.stringify({
+          errors: [],
+          response: fixtureIds.map((id, idx) => makeFixtureMeta(id, idx === 6)),
+        }),
+        { status: 200 }
+      );
+    }
+
+    if (url.includes("/fixtures?ids=")) {
+      const idsPart = url.split("ids=")[1]?.split("&")[0] ?? "";
+      const requestedIds = idsPart.split("-").map(Number);
+      return new Response(
+        JSON.stringify({
+          errors: [],
+          response: requestedIds.map((id) =>
+            makeFixtureDetails(id, id === 6007)
+          ),
+        }),
+        { status: 200 }
+      );
+    }
+
+    return new Response(JSON.stringify({ errors: [], response: [] }), {
+      status: 200,
+    });
+  };
+
+  const provider = new ApiFootballProvider({
+    apiKey: "valid-api_key-1234567890",
+    fetchImpl: mockFetch,
+  });
+
+  const res = await provider.fetchMatchesForDate("2026-11-23");
+  assert.equal(res.matches.length, 7);
+  // Only 2 API calls total: 1 for /fixtures?date= and 1 batch call /fixtures?ids=...
+  assert.equal(seenUrls.length, 2);
+  assert.ok(seenUrls[1].includes("/fixtures?ids="));
+
+  // Verify ALL 7 matches (especially #5 #6 #7 in the same Premier League!) received real lineups & events
+  for (const m of res.matches) {
+    assert.equal(m.usesDummyLineup, false);
+    assert.equal(m.homeTeam.lineup?.length, 1);
+    assert.equal(m.homeTeam.formation, "4-4-2");
+    if (m.status === "FT") {
+      assert.equal(m.events?.length, 1);
+      assert.equal(m.events?.[0].source, "REAL");
+    }
+  }
+
+  ApiFootballProvider.clearCachesForTesting();
+});

@@ -32,10 +32,8 @@ import {
   resolveSyncedMatch,
 } from "@/lib/matchSync";
 import { resolvePlayerQuote } from "@/lib/playerQuote";
-import {
-  buildTeamLineupForMatch,
-  FormationPitchContent,
-} from "./FormationPitchModal";
+import { buildTeamLineupForMatch } from "@/lib/lineupBuilder";
+import { FormationPitchContent } from "./FormationPitchModal";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface MatchAccordionCardProps {
@@ -141,7 +139,10 @@ export default function MatchAccordionCard({
         return baseTeamPlayers.slice(0, 3);
       }
 
-      const lineup = buildTeamLineupForMatch(syncedMatch, side, players);
+      const lineup = buildTeamLineupForMatch(syncedMatch, side, players, {
+        isNationalTeamMatch,
+        doesPlayerBelongToTeam,
+      });
       const merged: Player[] = [...baseTeamPlayers];
       for (const candidate of lineup.startingLineup) {
         if (merged.length >= 3) break;
@@ -348,7 +349,12 @@ export default function MatchAccordionCard({
 
               {/* Compact Key Player Rows: [등번호] [선수명] [포지션] [잔여/보유] [현재 시세] [등락률(%)] [매수 버튼] */}
               <div className="space-y-1.5">
-                {activeKeyPlayers.slice(0, 3).map((player) => {
+                {activeKeyPlayers.length === 0 ? (
+                  <div className="rounded-xl border border-gray-200/80 bg-white px-3 py-3 text-center text-[11px] font-medium text-gray-500">
+                    공식 선발 라인업 정보 없음 (전체 라인업 보기에서 상세 확인)
+                  </div>
+                ) : (
+                  activeKeyPlayers.slice(0, 3).map((player) => {
                   const quote = resolvePlayerQuote(player, clock.status);
                   const diff = quote.diff;
                   const changePct = quote.changePct.toFixed(2);
@@ -507,7 +513,7 @@ export default function MatchAccordionCard({
                       </div>
                     </div>
                   );
-                })}
+                }))}
               </div>
 
               {/* Stage 2 Trigger CTA: [전체 라인업 및 포메이션 보기 ➔] */}

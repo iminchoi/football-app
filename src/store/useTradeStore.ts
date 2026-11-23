@@ -1494,7 +1494,9 @@ export const useTradeStore = create<TradeStoreState>()(
               );
               const newId =
                 itemIdStr && !itemIdStr.startsWith("pitch-")
-                  ? itemIdStr.startsWith("p-") || itemIdStr.startsWith("api-p-")
+                  ? itemIdStr.startsWith("p-") ||
+                    itemIdStr.startsWith("api-p-") ||
+                    itemIdStr.startsWith("af-p-")
                     ? itemIdStr
                     : `api-p-${itemIdStr}`
                   : extIdStr

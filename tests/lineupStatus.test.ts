@@ -9,6 +9,10 @@ import {
   resolveMatchManagers,
   resolvePlayerMatchStatus,
 } from "../src/lib/lineupStatus.ts";
+import {
+  buildFormationRows,
+  buildTeamLineupForMatch,
+} from "../src/lib/lineupBuilder.ts";
 import { extractInitialMatchEvents } from "../src/lib/priceEngine.ts";
 import { FixtureReplayProvider } from "../src/lib/providers/index.ts";
 import type { Match, Player } from "../src/types/index.ts";
@@ -1024,4 +1028,115 @@ test("distinct authoritative IDs block same-team alias collisions while keeping 
   });
   assert.equal(status101.yellowCards, 0);
   assert.equal(status101.subOutMinute, undefined);
+});
+
+test("buildTeamLineupForMatch never injects fixed dummy stars into API matches and supports non-433/4231 real lineups cleanly", () => {
+  // 1) API-backed match with no official lineup returns empty arrays (no 손흥민/홀란드/황희찬 dummy injection)
+  const unannouncedApiMatch = makeBaseMatch({
+    id: "af-77701",
+    utcDate: "2026-11-23T19:00:00+00:00",
+    providerMode: "DEEP_DATA",
+    usesDummyLineup: true,
+    homeTeam: {
+      id: "bre",
+      name: "Brentford",
+      shortName: "BRE",
+      color: "#E30613",
+      formation: "4-3-3",
+    },
+    awayTeam: {
+      id: "ful",
+      name: "Fulham",
+      shortName: "FUL",
+      color: "#111827",
+      formation: "4-2-3-1",
+    },
+  });
+
+  const emptyHome = buildTeamLineupForMatch(unannouncedApiMatch, "HOME", []);
+  assert.equal(emptyHome.startingLineup.length, 0);
+  assert.equal(emptyHome.benchLineup.length, 0);
+
+  // 2) API match with real 3-4-2-1 lineup (3 DF, 4 MF, 2 AM, 1 ST, 1 GK) + 2 subs keeps all 11 real starters and exact 2 bench players
+  const real3421Match = makeBaseMatch({
+    id: "af-77702",
+    utcDate: "2026-11-23T15:00:00+00:00",
+    providerMode: "DEEP_DATA",
+    usesDummyLineup: false,
+    homeTeam: {
+      id: "cry",
+      name: "Crystal Palace",
+      shortName: "CRY",
+      color: "#1B458F",
+      score: 1,
+      formation: "3-4-2-1",
+      lineup: [
+        { id: "af-p-1", name: "Henderson", position: "GK", shirtNumber: 1 },
+        { id: "af-p-2", name: "Guehi", position: "CB", shirtNumber: 6 },
+        { id: "af-p-3", name: "Lacroix", position: "CB", shirtNumber: 5 },
+        { id: "af-p-4", name: "Chalobah", position: "CB", shirtNumber: 27 },
+        { id: "af-p-5", name: "Munoz", position: "DM", shirtNumber: 12 },
+        { id: "af-p-6", name: "Wharton", position: "CM", shirtNumber: 20 },
+        { id: "af-p-7", name: "Hughes", position: "CM", shirtNumber: 19 },
+        { id: "af-p-8", name: "Mitchell", position: "DM", shirtNumber: 3 },
+        { id: "af-p-9", name: "Eze", position: "LAM", shirtNumber: 10 },
+        { id: "af-p-10", name: "Sarr", position: "RAM", shirtNumber: 7 },
+        { id: "af-p-11", name: "Mateta", position: "ST", shirtNumber: 14 },
+      ],
+      bench: [
+        { id: "af-p-12", name: "Nketiah", position: "ST", shirtNumber: 9 },
+        { id: "af-p-13", name: "Turner", position: "GK", shirtNumber: 30 },
+      ],
+    },
+  });
+
+  // Extra store player from the same club must NOT replace any real starter or pad bench
+  const nonStartingStoreTeammate = makeBasePlayer({
+    id: "af-p-999",
+    name: "Clyne",
+    teamId: "cry",
+    teamName: "Crystal Palace",
+    teamShort: "CRY",
+    position: "RB",
+  });
+
+  const built = buildTeamLineupForMatch(real3421Match, "HOME", [
+    nonStartingStoreTeammate,
+  ]);
+  assert.equal(built.formation, "3-4-2-1");
+  assert.equal(built.startingLineup.length, 11);
+  assert.equal(built.benchLineup.length, 2);
+  assert.equal(
+    built.startingLineup.some((p) => p.id.startsWith("pitch-cry") || p.id === "af-p-999"),
+    false
+  );
+  assert.equal(
+    built.startingLineup.some((p) => p.name === "손흥민" || p.name === "홀란드"),
+    false
+  );
+
+  const rows = buildFormationRows(built.startingLineup, built.formation);
+  assert.deepEqual(
+    rows.map((r) => r.length),
+    [1, 2, 4, 3, 1]
+  );
+
+  // 3) Offline club demo match without API ID / utcDate still builds full 11+5 demo lineup
+  const offlineDemoMatch = makeBaseMatch({
+    id: "m-demo-local",
+    leagueId: "epl",
+    leagueName: "프리미어리그",
+    utcDate: undefined,
+    usesDummyLineup: undefined,
+    homeTeam: {
+      id: "demo",
+      name: "Demo FC",
+      shortName: "DEM",
+      color: "#111827",
+      formation: "4-3-3",
+    },
+  });
+  const demoBuilt = buildTeamLineupForMatch(offlineDemoMatch, "HOME", []);
+  assert.equal(demoBuilt.startingLineup.length, 11);
+  assert.equal(demoBuilt.benchLineup.length, 5);
 });

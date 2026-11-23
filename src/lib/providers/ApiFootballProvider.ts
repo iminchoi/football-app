@@ -20,6 +20,7 @@ import type {
 
 export const API_FOOTBALL_BASE_URL = "https://v3.football.api-sports.io";
 export const API_FOOTBALL_TIMEOUT_MS = 8000;
+export const API_FOOTBALL_BATCH_IDS_LIMIT = 20;
 
 export type ApiFootballErrorCode =
   | "PLAN_WINDOW"
@@ -779,61 +780,71 @@ export class ApiFootballProvider implements MatchDataProvider {
     }
   }
 
-  private async fetchFixtureLineupsCached(
-    fixtureId: number,
-    status: MatchStatus
-  ): Promise<ApiFootballRawLineup[]> {
-    const now = this.nowFn();
-    const cached = ApiFootballProvider.lineupsByFixtureCache.get(fixtureId);
-    if (cached && now < cached.expiresAt) {
-      return cached.value;
-    }
-    try {
-      const lineups = await this.requestJson<ApiFootballRawLineup[]>(
-        `/fixtures/lineups?fixture=${fixtureId}`
-      );
-      const ttl =
-        status === "UPCOMING"
-          ? CACHE_TTL_MS.PRE_LINEUPS
-          : CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS;
-      ApiFootballProvider.lineupsByFixtureCache.set(fixtureId, {
-        value: lineups,
-        expiresAt: now + ttl,
-        updatedAt: now,
-      });
-      return lineups;
-    } catch {
-      return cached?.value ?? [];
-    }
-  }
+  private async fetchFixtureDetailsBatch(
+    items: Array<{ fixtureId: number; status: MatchStatus }>
+  ): Promise<Map<number, { lineups?: ApiFootballRawLineup[]; events?: ApiFootballRawEvent[] }>> {
+    const result = new Map<
+      number,
+      { lineups?: ApiFootballRawLineup[]; events?: ApiFootballRawEvent[] }
+    >();
+    if (items.length === 0) return result;
 
-  private async fetchFixtureEventsCached(
-    fixtureId: number,
-    status: MatchStatus
-  ): Promise<ApiFootballRawEvent[]> {
-    if (status === "UPCOMING") return [];
+    const statusById = new Map<number, MatchStatus>();
+    for (const entry of items) {
+      statusById.set(entry.fixtureId, entry.status);
+    }
+
     const now = this.nowFn();
-    const cached = ApiFootballProvider.eventsByFixtureCache.get(fixtureId);
-    if (cached && now < cached.expiresAt) {
-      return cached.value;
+    for (let i = 0; i < items.length; i += API_FOOTBALL_BATCH_IDS_LIMIT) {
+      const chunk = items.slice(i, i + API_FOOTBALL_BATCH_IDS_LIMIT);
+      const idsParam = chunk.map((c) => c.fixtureId).join("-");
+      try {
+        const detailed = await this.requestJson<ApiFootballRawFixtureItem[]>(
+          `/fixtures?ids=${idsParam}`
+        );
+        for (const item of detailed) {
+          const fId = item.fixture?.id;
+          if (!fId) continue;
+          const status =
+            statusById.get(fId) ??
+            mapApiFootballStatus(
+              item.fixture?.status?.short,
+              item.fixture?.status?.elapsed
+            ).status;
+
+          const lineups = Array.isArray(item.lineups) ? item.lineups : [];
+          const lineupTtl =
+            status === "UPCOMING"
+              ? CACHE_TTL_MS.PRE_LINEUPS
+              : CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS;
+          ApiFootballProvider.lineupsByFixtureCache.set(fId, {
+            value: lineups,
+            expiresAt: now + lineupTtl,
+            updatedAt: now,
+          });
+
+          let events: ApiFootballRawEvent[] | undefined;
+          if (status !== "UPCOMING") {
+            events = Array.isArray(item.events) ? item.events : [];
+            const eventTtl =
+              status === "LIVE"
+                ? CACHE_TTL_MS.LIVE_EVENTS
+                : CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS;
+            ApiFootballProvider.eventsByFixtureCache.set(fId, {
+              value: events,
+              expiresAt: now + eventTtl,
+              updatedAt: now,
+            });
+          }
+
+          result.set(fId, { lineups, events });
+        }
+      } catch {
+        // On transient batch error / 429, fall back to cached lineups/events below.
+      }
     }
-    try {
-      const events = await this.requestJson<ApiFootballRawEvent[]>(
-        `/fixtures/events?fixture=${fixtureId}`
-      );
-      const ttl =
-        status === "LIVE"
-          ? CACHE_TTL_MS.LIVE_EVENTS
-          : CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS;
-      ApiFootballProvider.eventsByFixtureCache.set(fixtureId, {
-        value: events,
-        expiresAt: now + ttl,
-        updatedAt: now,
-      });
-      return events;
-    } catch {
-      return cached?.value ?? [];
-    }
+
+    return result;
   }
 
   /**
@@ -889,27 +900,85 @@ export class ApiFootballProvider implements MatchDataProvider {
         return orderA - orderB;
       });
 
-      const enrichLimit = options?.enrichTopDetailsCount ?? 4;
-      let enrichedCount = 0;
+      const explicitEnrichLimit = options?.enrichTopDetailsCount;
+      const shouldEnrichDetails = explicitEnrichLimit !== 0;
+
+      const itemsNeedingDetails: Array<{ fixtureId: number; status: MatchStatus }> = [];
+      if (shouldEnrichDetails) {
+        const prioritizedCandidates: Array<{
+          fixtureId: number;
+          status: MatchStatus;
+          priority: number;
+        }> = [];
+        for (const item of selectedRaw) {
+          const fId = item.fixture?.id;
+          if (!fId) continue;
+          const st = mapApiFootballStatus(
+            item.fixture?.status?.short,
+            item.fixture?.status?.elapsed
+          ).status;
+
+          const hasInlineLineups =
+            Array.isArray(item.lineups) && item.lineups.length > 0;
+          const hasInlineEvents =
+            Array.isArray(item.events) && item.events.length > 0;
+          const cachedLineups = ApiFootballProvider.lineupsByFixtureCache.get(fId);
+          const cachedEvents = ApiFootballProvider.eventsByFixtureCache.get(fId);
+
+          const lineupsFresh =
+            hasInlineLineups || (cachedLineups !== undefined && now < cachedLineups.expiresAt);
+          const eventsFresh =
+            st === "UPCOMING" ||
+            hasInlineEvents ||
+            (cachedEvents !== undefined && now < cachedEvents.expiresAt);
+
+          if (!lineupsFresh || !eventsFresh) {
+            prioritizedCandidates.push({
+              fixtureId: fId,
+              status: st,
+              priority: st === "LIVE" ? 0 : st === "FT" ? 1 : 2,
+            });
+          }
+        }
+        prioritizedCandidates.sort((a, b) => a.priority - b.priority);
+        const bounded =
+          explicitEnrichLimit !== undefined && explicitEnrichLimit > 0
+            ? prioritizedCandidates.slice(0, explicitEnrichLimit)
+            : prioritizedCandidates;
+        for (const c of bounded) {
+          itemsNeedingDetails.push({ fixtureId: c.fixtureId, status: c.status });
+        }
+      }
+
+      const fetchedDetailsMap =
+        itemsNeedingDetails.length > 0
+          ? await this.fetchFixtureDetailsBatch(itemsNeedingDetails)
+          : new Map<number, { lineups?: ApiFootballRawLineup[]; events?: ApiFootballRawEvent[] }>();
 
       const normalized: Match[] = [];
       for (const item of selectedRaw) {
         const fId = item.fixture?.id;
-        const st = mapApiFootballStatus(
-          item.fixture?.status?.short,
-          item.fixture?.status?.elapsed
-        ).status;
-
         let lineups = item.lineups;
         let events = item.events;
 
-        if (fId && enrichedCount < enrichLimit && st !== "UPCOMING") {
-          enrichedCount += 1;
-          if (!lineups || lineups.length === 0) {
-            lineups = await this.fetchFixtureLineupsCached(fId, st);
+        if (fId) {
+          const detail = fetchedDetailsMap.get(fId);
+          if ((!lineups || lineups.length === 0) && detail?.lineups?.length) {
+            lineups = detail.lineups;
+          } else if (!lineups || lineups.length === 0) {
+            const cachedLineups = ApiFootballProvider.lineupsByFixtureCache.get(fId);
+            if (cachedLineups?.value.length) {
+              lineups = cachedLineups.value;
+            }
           }
-          if (!events || events.length === 0) {
-            events = await this.fetchFixtureEventsCached(fId, st);
+
+          if ((!events || events.length === 0) && detail?.events?.length) {
+            events = detail.events;
+          } else if (!events || events.length === 0) {
+            const cachedEvents = ApiFootballProvider.eventsByFixtureCache.get(fId);
+            if (cachedEvents?.value.length) {
+              events = cachedEvents.value;
+            }
           }
         }
 

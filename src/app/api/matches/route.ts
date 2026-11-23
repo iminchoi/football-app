@@ -144,12 +144,19 @@ function mapApiStatus(rawStatus: string): MatchStatus {
 
 function normalizeFormationCode(
   rawFormation?: string,
-  fallback: "4-3-3" | "4-2-3-1" = "4-3-3"
-): "4-3-3" | "4-2-3-1" {
+  fallback: "4-3-3" | "4-2-3-1" = "4-3-3",
+  preserveNumericDashed = false
+): string {
   if (!rawFormation) return fallback;
   const cleaned = rawFormation.trim();
   if (cleaned === "4-2-3-1") return "4-2-3-1";
   if (cleaned === "4-3-3") return "4-3-3";
+  if (preserveNumericDashed && /^\d+(?:-\d+){2,3}$/.test(cleaned)) {
+    const parts = cleaned.split("-").map(Number);
+    if (parts.reduce((sum, n) => sum + n, 0) === 10) {
+      return cleaned;
+    }
+  }
   return fallback;
 }
 
@@ -419,13 +426,19 @@ function normalizeLineupPlayers(
       .toLowerCase()
       .replace(/[^a-z0-9가-힣]+/g, "-")
       .replace(/^-+|-+$/g, "");
+    const rawIdStr = rawId !== undefined ? String(rawId) : "";
     const externalId =
-      rawId !== undefined
-        ? String(rawId)
+      raw.externalId !== undefined
+        ? String(raw.externalId)
+        : rawId !== undefined
+        ? rawIdStr
         : `ext-${teamName.toLowerCase()}-${slug || idx}`;
     const normalizedId =
-      rawId !== undefined && String(rawId).startsWith("p-")
-        ? String(rawId)
+      rawId !== undefined &&
+      (rawIdStr.startsWith("p-") ||
+        rawIdStr.startsWith("af-p-") ||
+        rawIdStr.startsWith("api-p-"))
+        ? rawIdStr
         : `api-p-${externalId}`;
 
     const upperRawPos = String(raw.position || "").trim().toUpperCase();
@@ -487,12 +500,17 @@ function enrichMatchMetadata(match: Match, defaultInternational = false): Match 
       match.leagueCountry.includes("A매치") ||
       match.leagueName.includes("A매치"));
 
+  const preserveFormation = match.providerMode === "DEEP_DATA";
   return {
     ...match,
     isInternational,
     homeTeam: {
       ...match.homeTeam,
-      formation: normalizeFormationCode(match.homeTeam.formation, "4-3-3"),
+      formation: normalizeFormationCode(
+        match.homeTeam.formation,
+        "4-3-3",
+        preserveFormation
+      ),
       lineup: normalizeLineupPlayers(
         match.homeTeam.lineup,
         match.homeTeam.name,
@@ -506,7 +524,11 @@ function enrichMatchMetadata(match: Match, defaultInternational = false): Match 
     },
     awayTeam: {
       ...match.awayTeam,
-      formation: normalizeFormationCode(match.awayTeam.formation, "4-2-3-1"),
+      formation: normalizeFormationCode(
+        match.awayTeam.formation,
+        "4-2-3-1",
+        preserveFormation
+      ),
       lineup: normalizeLineupPlayers(
         match.awayTeam.lineup,
         match.awayTeam.name,

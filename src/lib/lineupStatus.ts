@@ -62,7 +62,7 @@ function isVerifiedRealEvent(ev?: {
 }
 
 function extractNumericApiId(id: string): string | null {
-  const m = /^(?:api-p-)?(\d+)$/.exec(id);
+  const m = /^(?:api-p-|af-p-)?(\d+)$/.exec(id);
   return m ? m[1] : null;
 }
 
