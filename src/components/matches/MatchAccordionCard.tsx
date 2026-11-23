@@ -41,6 +41,7 @@ interface MatchAccordionCardProps {
   players: Player[];
   holdings: Record<string, Holding>;
   isExpanded: boolean;
+  isLoadingDetail?: boolean;
   onToggleExpand: () => void;
   onSelectPlayerTrade: (
     player: Player,
@@ -54,6 +55,7 @@ export default function MatchAccordionCard({
   players,
   holdings,
   isExpanded,
+  isLoadingDetail = false,
   onToggleExpand,
   onSelectPlayerTrade,
 }: MatchAccordionCardProps) {
@@ -105,6 +107,18 @@ export default function MatchAccordionCard({
     const isAMatch = isNationalTeamMatch(syncedMatch);
     const pickTop3 = (side: "HOME" | "AWAY"): Player[] => {
       const team = side === "HOME" ? syncedMatch.homeTeam : syncedMatch.awayTeam;
+      const hasExplicitLineup =
+        Array.isArray(team.lineup) && team.lineup.length > 0;
+      const lineup = buildTeamLineupForMatch(syncedMatch, side, players, {
+        isNationalTeamMatch,
+        doesPlayerBelongToTeam,
+      });
+
+      // When official/explicit lineups exist for this match, always show the real starters first
+      if (hasExplicitLineup && lineup.startingLineup.length > 0) {
+        return lineup.startingLineup.slice(0, 3);
+      }
+
       const sameMatchPlayers = players.filter(
         (p) =>
           !p.id.startsWith("pitch-") &&
@@ -139,10 +153,6 @@ export default function MatchAccordionCard({
         return baseTeamPlayers.slice(0, 3);
       }
 
-      const lineup = buildTeamLineupForMatch(syncedMatch, side, players, {
-        isNationalTeamMatch,
-        doesPlayerBelongToTeam,
-      });
       const merged: Player[] = [...baseTeamPlayers];
       for (const candidate of lineup.startingLineup) {
         if (merged.length >= 3) break;
@@ -307,6 +317,7 @@ export default function MatchAccordionCard({
               match={syncedMatch}
               players={players}
               holdings={holdings}
+              isLoadingDetail={isLoadingDetail}
               onSelectPlayerTrade={onSelectPlayerTrade}
               onCollapseInline={() => {
                 setIsInlinePitchOpen(false);
@@ -351,7 +362,9 @@ export default function MatchAccordionCard({
               <div className="space-y-1.5">
                 {activeKeyPlayers.length === 0 ? (
                   <div className="rounded-xl border border-gray-200/80 bg-white px-3 py-3 text-center text-[11px] font-medium text-gray-500">
-                    공식 선발 라인업 정보 없음 (전체 라인업 보기에서 상세 확인)
+                    {isLoadingDetail
+                      ? "공식 선발 라인업 및 경기 데이터를 불러오는 중..."
+                      : "공식 선발 라인업 정보 없음 (전체 라인업 보기에서 상세 확인)"}
                   </div>
                 ) : (
                   activeKeyPlayers.slice(0, 3).map((player) => {

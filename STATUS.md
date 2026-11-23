@@ -1,12 +1,12 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `ApiFootballProvider` batch-enriches all matches per date via `/fixtures?ids=...` (20 IDs/call) without the 4-match index cap, and `lineupBuilder` prevents dummy star rosters from mixing into API matches or non-433/4231 formations.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (65/65 across all 9 suites).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `ApiFootballProvider` detects Free Plan `/fixtures?ids=` restrictions and falls back cleanly to single-fixture `/fixtures?id={id}` (with on-demand `/api/matches?fixtureId=` loading on card expand), preserving `startXI`, `substitutes`, `formation`, `coach`, `rating`/`captain`, and both `SUB_OUT`/`SUB_IN` events.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (66/66 across all 9 suites).
 
 ## Recent Changes
-- `src/lib/providers/ApiFootballProvider.ts`: Removed the 4-match `enrichTopDetailsCount` cap and added chunked `/fixtures?ids=...` batch enrichment (`API_FOOTBALL_BATCH_IDS_LIMIT = 20`) for all matches (LIVE/FT prioritized, UPCOMING included when lineups exist).
-- `src/app/api/matches/route.ts`, `src/store/useTradeStore.ts`, `src/lib/lineupStatus.ts`: Preserved `af-p-` player IDs and real dashed formations (`3-4-2-1`, `4-4-2`, etc.) on `DEEP_DATA` matches.
-- `src/lib/lineupBuilder.ts`, `FormationPitchModal.tsx`, `MatchAccordionCard.tsx`: Extracted pure lineup/formation-row builder, blocked fixed dummy rosters (`FALLBACK_POOL_BY_POSITION`/`BENCH_5_TEMPLATE`) on API-backed or `usesDummyLineup` matches, and added empty-lineup UI notices.
-- `tests/apiFootballProvider.test.ts`, `tests/lineupStatus.test.ts`: Added tests for 7+ same-league batch enrichment and real vs empty API lineup rendering.
+- `src/lib/providers/ApiFootballProvider.ts`, `src/app/api/matches/route.ts`: Added Free Plan fallback from `/fixtures?ids=` to `/fixtures?id={id}` (`API_FOOTBALL_SINGLE_ID_EAGER_LIMIT = 5`), added on-demand `fetchFixtureDetail` & `?fixtureId=` route, emitted `SUB_IN` alongside `SUB_OUT` from `subst.assist`, and extracted player `rating`/`isCaptain` from `item.players`.
+- `src/lib/lineupStatus.ts`, `src/lib/lineupBuilder.ts`: Added `af-p-` prefix matching in `doesIdentityMatchPlayer`/`hasConflictingAuthoritativeIds` and ID-first deduplication for explicit API rosters.
+- `MatchesTabView.tsx`, `MatchAccordionCard.tsx`, `FormationPitchModal.tsx`: Wired on-demand fixture detail fetching when expanding any unenriched `af-*` match, prioritized official starters in card summaries, and added detail-loading UI state.
+- `tests/apiFootballProvider.test.ts`: Added Test 7 covering live Free Plan response structure, `ids` fallback, `SUB_IN`/`SUB_OUT`, ratings/captain, and on-demand `fetchFixtureDetail` cache patching.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

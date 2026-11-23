@@ -465,6 +465,7 @@ export interface FormationPitchContentProps {
   players: Player[];
   holdings: Record<string, Holding>;
   providerEventsByPlayer?: Record<string, PlayerEvent[]>;
+  isLoadingDetail?: boolean;
   onSelectPlayerTrade: (
     player: Player,
     type: TradeType,
@@ -478,6 +479,7 @@ export function FormationPitchContent({
   players,
   holdings,
   providerEventsByPlayer,
+  isLoadingDetail = false,
   onSelectPlayerTrade,
   onCollapseInline,
 }: FormationPitchContentProps) {
@@ -662,10 +664,16 @@ export function FormationPitchContent({
           {startingRows.length === 0 ? (
             <div className="my-auto mx-auto max-w-[280px] rounded-2xl border border-[#00A878]/20 bg-white/95 px-4 py-5 text-center shadow-xs">
               <p className="text-xs font-extrabold text-gray-900">
-                {isUpcoming ? "공식 선발 라인업 발표 전입니다" : "공식 선발 라인업 정보 없음"}
+                {isLoadingDetail
+                  ? "공식 선발 라인업을 불러오는 중..."
+                  : isUpcoming
+                  ? "공식 선발 라인업 발표 전입니다"
+                  : "공식 선발 라인업 정보 없음"}
               </p>
               <p className="mt-1 text-[11px] font-medium text-gray-500 leading-relaxed">
-                {isUpcoming
+                {isLoadingDetail
+                  ? "API-Football에서 선발·교체 명단과 경기 이벤트를 조회하고 있습니다."
+                  : isUpcoming
                   ? "킥오프 약 45분 전 공식 라인업이 공개되면 실제 출전 명단이 자동으로 표시됩니다."
                   : "이 경기는 API에서 공식 선발 라인업이 제공되지 않았습니다."}
               </p>

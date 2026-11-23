@@ -77,7 +77,15 @@ export function hasConflictingAuthoritativeIds(
   const a = normalizeId(playerId);
   const b = normalizeId(candidateId);
   if (!a || !b) return false;
-  if (a === b || a === `api-p-${b}` || `api-p-${a}` === b) return false;
+  if (
+    a === b ||
+    a === `api-p-${b}` ||
+    `api-p-${a}` === b ||
+    a === `af-p-${b}` ||
+    `af-p-${a}` === b
+  ) {
+    return false;
+  }
 
   const numA = extractNumericApiId(a);
   const numB = extractNumericApiId(b);
@@ -113,7 +121,9 @@ export function doesIdentityMatchPlayer(
     if (
       player.id === idStr ||
       player.id === `api-p-${idStr}` ||
-      `api-p-${player.id}` === idStr
+      `api-p-${player.id}` === idStr ||
+      player.id === `af-p-${idStr}` ||
+      `af-p-${player.id}` === idStr
     ) {
       return true;
     }

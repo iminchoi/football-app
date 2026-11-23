@@ -123,6 +123,8 @@ export default function MatchesTabView({
   const [dataSource, setDataSource] = useState<string>("LOADING");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadingDetailIds, setLoadingDetailIds] = useState<string[]>([]);
+  const requestedDetailIdsRef = useRef<Set<string>>(new Set());
 
   // Close calendar popover when clicking outside
   useEffect(() => {
@@ -148,6 +150,8 @@ export default function MatchesTabView({
 
       setIsLoading(true);
       setStatusMessage(null);
+      requestedDetailIdsRef.current.clear();
+      setLoadingDetailIds([]);
       const fallbackMatches = useTradeStore.getState().matches;
 
       try {
@@ -223,6 +227,63 @@ export default function MatchesTabView({
   }, [fetchMatchesByDate, selectedDateStr]);
 
   useEffect(() => () => fetchControllerRef.current?.abort(), []);
+
+  // On-demand single-fixture detail fetch when expanding any API-Football match
+  // whose lineups/events were not eagerly loaded on initial date fetch.
+  const requestMatchDetail = useCallback(
+    async (match: Match) => {
+      if (!match.id.startsWith("af-") || !match.usesDummyLineup) return;
+      if (requestedDetailIdsRef.current.has(match.id)) return;
+      requestedDetailIdsRef.current.add(match.id);
+      setLoadingDetailIds((prev) =>
+        prev.includes(match.id) ? prev : [...prev, match.id]
+      );
+      try {
+        const res = await fetch(
+          `/api/matches?fixtureId=${encodeURIComponent(match.id)}`,
+          { cache: "no-store" }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const detailedMatch = data?.match as Match | null | undefined;
+        if (!detailedMatch || detailedMatch.id !== match.id) return;
+
+        setApiMatches((prev) =>
+          prev.map((m) => (m.id === detailedMatch.id ? detailedMatch : m))
+        );
+        syncPlayersFromMatches([detailedMatch]);
+
+        if (selectedDateStr === todayStr) {
+          const latestToday = useTradeStore.getState().todayMatches;
+          if (latestToday.some((m) => m.id === detailedMatch.id)) {
+            setTodayMatches(
+              latestToday.map((m) =>
+                m.id === detailedMatch.id ? detailedMatch : m
+              )
+            );
+          }
+        }
+      } catch {
+        // Leave existing match state untouched on transient network error
+      } finally {
+        setLoadingDetailIds((prev) => prev.filter((id) => id !== match.id));
+      }
+    },
+    [selectedDateStr, setTodayMatches, syncPlayersFromMatches, todayStr]
+  );
+
+  useEffect(() => {
+    for (const m of apiMatches) {
+      if (
+        expandedMatchIds.includes(m.id) &&
+        m.id.startsWith("af-") &&
+        m.usesDummyLineup &&
+        !requestedDetailIdsRef.current.has(m.id)
+      ) {
+        void requestMatchDetail(m);
+      }
+    }
+  }, [apiMatches, expandedMatchIds, requestMatchDetail]);
 
   // Overlay live store match state (clock/scores) through the single synced resolver;
   // finished matches keep their FT state so a past date never shows LIVE.
@@ -592,6 +653,7 @@ export default function MatchesTabView({
                       players={matchedPlayers}
                       holdings={visibleHoldings}
                       isExpanded={expandedMatchIds.includes(match.id)}
+                      isLoadingDetail={loadingDetailIds.includes(match.id)}
                       onToggleExpand={() => toggleExpandMatch(match.id)}
                       onSelectPlayerTrade={onSelectPlayerTrade}
                     />

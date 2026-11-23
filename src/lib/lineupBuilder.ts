@@ -846,10 +846,19 @@ export function buildTeamLineupForMatch(
     usedNames.add(p.name.trim());
   };
 
-  const isPlayerUsed = (p: Pick<Player, "id" | "name" | "englishName">) =>
-    usedIds.has(p.id) ||
-    usedNames.has(p.name.trim()) ||
-    usedNames.has(formatPlayerDisplayName(p, "full"));
+  const isPlayerUsed = (p: Pick<Player, "id" | "name" | "englishName">) => {
+    if (usedIds.has(p.id)) return true;
+    if (
+      hasExplicitLineup &&
+      (p.id.startsWith("af-p-") || p.id.startsWith("api-p-") || p.id.startsWith("p-"))
+    ) {
+      return false;
+    }
+    return (
+      usedNames.has(p.name.trim()) ||
+      usedNames.has(formatPlayerDisplayName(p, "full"))
+    );
+  };
 
   const teamSeed = hashSeed(`${match.id}-${activeTeam.id}-${side}`);
   const sidePoolOffset = side === "HOME" ? 0 : 5;
@@ -1230,7 +1239,7 @@ export function buildTeamLineupForMatch(
       return;
     }
 
-    if (entry && entry.name && !usedNames.has(entry.name.trim())) {
+    if (entry && entry.name) {
       const normalizedPos = normalizeDetailedPosition(entry.position);
       const pool = FALLBACK_POOL_BY_POSITION[normalizedPos];
       const basePrice = roundToTen(
@@ -1241,12 +1250,16 @@ export function buildTeamLineupForMatch(
         entry.id !== undefined
           ? String(entry.id)
           : `pitch-api-bench-${match.id}-${activeTeam.id}-${idx}`;
+      const hasExplicitId = entry.id !== undefined;
       const canonicalNames = canonicalizeIncomingPlayerNames({
         id: tempId,
         name: entry.name.trim(),
         englishName: entry.name.trim(),
       });
-      if (!usedIds.has(tempId) && !usedNames.has(canonicalNames.name)) {
+      const duplicateByName =
+        !hasExplicitId &&
+        (usedNames.has(entry.name.trim()) || usedNames.has(canonicalNames.name));
+      if (!usedIds.has(tempId) && !duplicateByName) {
         usedIds.add(tempId);
         usedNames.add(entry.name.trim());
         usedNames.add(canonicalNames.name);

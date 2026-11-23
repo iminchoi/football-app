@@ -21,6 +21,7 @@ import type {
 export const API_FOOTBALL_BASE_URL = "https://v3.football.api-sports.io";
 export const API_FOOTBALL_TIMEOUT_MS = 8000;
 export const API_FOOTBALL_BATCH_IDS_LIMIT = 20;
+export const API_FOOTBALL_SINGLE_ID_EAGER_LIMIT = 5;
 
 export type ApiFootballErrorCode =
   | "PLAN_WINDOW"
@@ -101,6 +102,20 @@ export interface ApiFootballRawFixtureItem {
   };
   events?: ApiFootballRawEvent[];
   lineups?: ApiFootballRawLineup[];
+  players?: ApiFootballRawPlayerStatsTeam[];
+}
+
+export interface ApiFootballRawPlayerStatsTeam {
+  team?: { id?: number; name?: string };
+  players?: Array<{
+    player?: { id?: number; name?: string };
+    statistics?: Array<{
+      games?: {
+        rating?: string | number | null;
+        captain?: boolean | null;
+      };
+    }>;
+  }>;
 }
 
 export interface ApiFootballRawEvent {
@@ -262,7 +277,8 @@ function mapPosCode(
 export function normalizeApiFootballLineupList(
   rawList: ApiFootballRawLineupPlayer[] | undefined,
   teamName: string,
-  isInternational: boolean
+  isInternational: boolean,
+  playerStatsById?: ReadonlyMap<number, { rating?: number; isCaptain?: boolean }>
 ): ApiLineupPlayer[] | undefined {
   if (!Array.isArray(rawList) || rawList.length === 0) return undefined;
   const counts = { df: 0, mf: 0, fw: 0 };
@@ -270,8 +286,10 @@ export function normalizeApiFootballLineupList(
   return rawList.map((item, idx) => {
     const p = item.player;
     const rawName = String(p?.name || `선수 ${idx + 1}`).trim();
-    const externalId = p?.id !== undefined ? String(p.id) : `${teamName}-${idx}`;
+    const numericId = typeof p?.id === "number" ? p.id : undefined;
+    const externalId = numericId !== undefined ? String(numericId) : `${teamName}-${idx}`;
     const position = mapPosCode(p?.pos, counts);
+    const statMeta = numericId !== undefined ? playerStatsById?.get(numericId) : undefined;
 
     return {
       id: `af-p-${externalId}`,
@@ -279,6 +297,8 @@ export function normalizeApiFootballLineupList(
       name: rawName,
       position,
       ...(typeof p?.number === "number" ? { shirtNumber: p.number } : {}),
+      ...(statMeta?.rating !== undefined ? { rating: statMeta.rating } : {}),
+      ...(statMeta?.isCaptain ? { isCaptain: true } : {}),
       team: teamName,
       nationalTeam: isInternational ? teamName : "",
     };
@@ -477,19 +497,62 @@ export function normalizeApiFootballEvents(
       return;
     }
 
-    if (typeUpper === "SUBST" && playerName) {
-      const subEvId = `${matchId}-af-sub-${elapsed}-${playerId ?? idx}`;
-      apiEvents.push({
-        id: subEvId,
-        minute: elapsed,
-        type: "SUB_OUT",
-        playerId,
-        playerName,
-        teamName: teamLabel,
-        source: "REAL",
-        estimated: false,
-        metadata: { estimated: false },
-      });
+    if (typeUpper === "SUBST") {
+      const subInName = String(ev.assist?.name || "").trim();
+      const subInId =
+        ev.assist?.id !== undefined && ev.assist?.id !== null
+          ? `af-p-${ev.assist.id}`
+          : undefined;
+
+      if (playerName) {
+        const subOutEvId = `${matchId}-af-subout-${elapsed}-${playerId ?? idx}`;
+        apiEvents.push({
+          id: subOutEvId,
+          minute: elapsed,
+          type: "SUB_OUT",
+          playerId,
+          playerName,
+          ...(playerId ? { playerOutId: playerId } : {}),
+          playerOutName: playerName,
+          ...(subInId ? { playerInId: subInId } : {}),
+          ...(subInName ? { playerInName: subInName } : {}),
+          teamName: teamLabel,
+          source: "REAL",
+          estimated: false,
+          metadata: { estimated: false },
+        });
+      }
+
+      if (subInName) {
+        const subInEvId = `${matchId}-af-subin-${elapsed}-${subInId ?? idx}`;
+        apiEvents.push({
+          id: subInEvId,
+          minute: elapsed,
+          type: "SUB_IN",
+          playerId: subInId,
+          playerName: subInName,
+          ...(playerId ? { playerOutId: playerId } : {}),
+          ...(playerName ? { playerOutName: playerName } : {}),
+          ...(subInId ? { playerInId: subInId } : {}),
+          playerInName: subInName,
+          teamName: teamLabel,
+          source: "REAL",
+          estimated: false,
+          metadata: { estimated: false },
+        });
+        teamEvents.push({
+          id: subInEvId,
+          matchId,
+          minute: elapsed,
+          teamSide,
+          kind: "SUB_IN",
+          actorPlayerId: subInId,
+          source: "REAL",
+          estimated: false,
+          metadata: { estimated: false },
+          description: `${subInName} 교체 투입`,
+        });
+      }
     }
   });
 
@@ -532,36 +595,79 @@ export function normalizeApiFootballFixture(
       ? undefined
       : item.goals?.away ?? item.score?.fulltime?.away ?? 0;
 
-  const rawHomeLineup = item.lineups?.find(
+  const playerStatsById = new Map<number, { rating?: number; isCaptain?: boolean }>();
+  if (Array.isArray(item.players)) {
+    for (const teamBlock of item.players) {
+      for (const entry of teamBlock.players ?? []) {
+        const pid = entry.player?.id;
+        if (typeof pid !== "number") continue;
+        const games = entry.statistics?.[0]?.games;
+        const rawRating = games?.rating;
+        const parsedRating =
+          typeof rawRating === "number"
+            ? rawRating
+            : typeof rawRating === "string" && rawRating.trim() !== ""
+            ? Number(rawRating)
+            : NaN;
+        const rating =
+          Number.isFinite(parsedRating) && parsedRating > 0
+            ? Number(parsedRating.toFixed(1))
+            : undefined;
+        const isCaptain = Boolean(games?.captain);
+        if (rating !== undefined || isCaptain) {
+          playerStatsById.set(pid, {
+            ...(rating !== undefined ? { rating } : {}),
+            ...(isCaptain ? { isCaptain: true } : {}),
+          });
+        }
+      }
+    }
+  }
+
+  let rawHomeLineup = item.lineups?.find(
     (l) =>
       (homeTeamIdNum !== undefined && l.team?.id === homeTeamIdNum) ||
       l.team?.name?.trim().toLowerCase() === homeTeamName.toLowerCase()
   );
-  const rawAwayLineup = item.lineups?.find(
+  let rawAwayLineup = item.lineups?.find(
     (l) =>
       (awayTeamIdNum !== undefined && l.team?.id === awayTeamIdNum) ||
       l.team?.name?.trim().toLowerCase() === awayTeamName.toLowerCase()
   );
+  if (Array.isArray(item.lineups) && item.lineups.length === 2) {
+    if (!rawHomeLineup && rawAwayLineup) {
+      rawHomeLineup = item.lineups.find((l) => l !== rawAwayLineup);
+    } else if (!rawAwayLineup && rawHomeLineup) {
+      rawAwayLineup = item.lineups.find((l) => l !== rawHomeLineup);
+    } else if (!rawHomeLineup && !rawAwayLineup) {
+      rawHomeLineup = item.lineups[0];
+      rawAwayLineup = item.lineups[1];
+    }
+  }
 
   const homeLineup = normalizeApiFootballLineupList(
     rawHomeLineup?.startXI,
     homeTeamName,
-    isInternational
+    isInternational,
+    playerStatsById
   );
   const homeBench = normalizeApiFootballLineupList(
     rawHomeLineup?.substitutes,
     homeTeamName,
-    isInternational
+    isInternational,
+    playerStatsById
   );
   const awayLineup = normalizeApiFootballLineupList(
     rawAwayLineup?.startXI,
     awayTeamName,
-    isInternational
+    isInternational,
+    playerStatsById
   );
   const awayBench = normalizeApiFootballLineupList(
     rawAwayLineup?.substitutes,
     awayTeamName,
-    isInternational
+    isInternational,
+    playerStatsById
   );
 
   const usesDummyLineup =
@@ -609,6 +715,7 @@ export function normalizeApiFootballFixture(
       crest: item.teams?.home?.logo || undefined,
       score: homeScore,
       formation: rawHomeLineup?.formation || "4-3-3",
+      ...(rawHomeLineup?.coach?.name ? { manager: rawHomeLineup.coach.name } : {}),
       ...(homeLineup ? { lineup: homeLineup } : {}),
       ...(homeBench ? { bench: homeBench } : {}),
     },
@@ -620,6 +727,7 @@ export function normalizeApiFootballFixture(
       crest: item.teams?.away?.logo || undefined,
       score: awayScore,
       formation: rawAwayLineup?.formation || "4-2-3-1",
+      ...(rawAwayLineup?.coach?.name ? { manager: rawAwayLineup.coach.name } : {}),
       ...(awayLineup ? { lineup: awayLineup } : {}),
       ...(awayBench ? { bench: awayBench } : {}),
     },
@@ -648,6 +756,10 @@ export class ApiFootballProvider implements MatchDataProvider {
     string,
     CacheRecord<Match[]>
   >();
+  private static readonly fixtureDetailCache = new Map<
+    number,
+    CacheRecord<Match>
+  >();
   private static readonly planWindowErrorCache = new Map<
     string,
     CacheRecord<ApiFootballError>
@@ -660,6 +772,11 @@ export class ApiFootballProvider implements MatchDataProvider {
     number,
     CacheRecord<ApiFootballRawEvent[]>
   >();
+  private static readonly playersByFixtureCache = new Map<
+    number,
+    CacheRecord<ApiFootballRawPlayerStatsTeam[]>
+  >();
+  private static batchIdsSupported: boolean | null = null;
 
   private readonly apiKey: string;
   private readonly fetchImpl: typeof fetch;
@@ -682,9 +799,12 @@ export class ApiFootballProvider implements MatchDataProvider {
 
   static clearCachesForTesting(): void {
     ApiFootballProvider.fixturesByDateCache.clear();
+    ApiFootballProvider.fixtureDetailCache.clear();
     ApiFootballProvider.planWindowErrorCache.clear();
     ApiFootballProvider.lineupsByFixtureCache.clear();
     ApiFootballProvider.eventsByFixtureCache.clear();
+    ApiFootballProvider.playersByFixtureCache.clear();
+    ApiFootballProvider.batchIdsSupported = null;
   }
 
   private async requestJson<T>(endpointWithQuery: string): Promise<T> {
@@ -780,12 +900,150 @@ export class ApiFootballProvider implements MatchDataProvider {
     }
   }
 
+  private storeFixtureDetailCaches(
+    item: ApiFootballRawFixtureItem,
+    fallbackStatus?: MatchStatus
+  ): {
+    lineups: ApiFootballRawLineup[];
+    events?: ApiFootballRawEvent[];
+    players?: ApiFootballRawPlayerStatsTeam[];
+    normalized: Match;
+  } | null {
+    const fId = item.fixture?.id;
+    if (!fId) return null;
+
+    const now = this.nowFn();
+    const status =
+      fallbackStatus ??
+      mapApiFootballStatus(
+        item.fixture?.status?.short,
+        item.fixture?.status?.elapsed
+      ).status;
+
+    const lineups = Array.isArray(item.lineups) ? item.lineups : [];
+    const lineupTtl =
+      status === "UPCOMING"
+        ? CACHE_TTL_MS.PRE_LINEUPS
+        : CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS;
+    ApiFootballProvider.lineupsByFixtureCache.set(fId, {
+      value: lineups,
+      expiresAt: now + lineupTtl,
+      updatedAt: now,
+    });
+
+    let events: ApiFootballRawEvent[] | undefined;
+    if (status !== "UPCOMING") {
+      events = Array.isArray(item.events) ? item.events : [];
+      const eventTtl =
+        status === "LIVE"
+          ? CACHE_TTL_MS.LIVE_EVENTS
+          : CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS;
+      ApiFootballProvider.eventsByFixtureCache.set(fId, {
+        value: events,
+        expiresAt: now + eventTtl,
+        updatedAt: now,
+      });
+    }
+
+    const players = Array.isArray(item.players) ? item.players : undefined;
+    if (players && players.length > 0) {
+      ApiFootballProvider.playersByFixtureCache.set(fId, {
+        value: players,
+        expiresAt: now + CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS,
+        updatedAt: now,
+      });
+    }
+
+    const normalized = normalizeApiFootballFixture({
+      ...item,
+      ...(lineups.length > 0 ? { lineups } : {}),
+      ...(events && events.length > 0 ? { events } : {}),
+      ...(players && players.length > 0 ? { players } : {}),
+    });
+
+    const detailTtl =
+      status === "LIVE"
+        ? CACHE_TTL_MS.LIVE_EVENTS
+        : status === "UPCOMING"
+        ? CACHE_TTL_MS.PRE_LINEUPS
+        : CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS;
+    ApiFootballProvider.fixtureDetailCache.set(fId, {
+      value: normalized,
+      expiresAt: now + detailTtl,
+      updatedAt: now,
+    });
+
+    // Patch any cached date list containing this fixture so subsequent date reads stay enriched
+    for (const [dateKey, rec] of ApiFootballProvider.fixturesByDateCache.entries()) {
+      const idx = rec.value.findIndex((m) => m.id === normalized.id);
+      if (idx !== -1) {
+        const nextList = [...rec.value];
+        nextList[idx] = normalized;
+        ApiFootballProvider.fixturesByDateCache.set(dateKey, {
+          ...rec,
+          value: nextList,
+        });
+      }
+    }
+
+    return { lineups, events, players, normalized };
+  }
+
+  /**
+   * Fetch full detail (lineups, bench, formation, coach, events, player ratings)
+   * for a single fixture via `GET /fixtures?id={fixtureId}` (1 API call on Free Plan).
+   */
+  async fetchFixtureDetail(
+    fixtureId: number
+  ): Promise<{ match: Match | null; fromCache: boolean }> {
+    const now = this.nowFn();
+    const cached = ApiFootballProvider.fixtureDetailCache.get(fixtureId);
+    if (cached && now < cached.expiresAt) {
+      return { match: cached.value, fromCache: true };
+    }
+
+    if (!ApiFootballProvider.isConfigured(this.apiKey)) {
+      return { match: cached?.value ?? null, fromCache: Boolean(cached) };
+    }
+
+    try {
+      const items = await this.requestJson<ApiFootballRawFixtureItem[]>(
+        `/fixtures?id=${encodeURIComponent(String(fixtureId))}`
+      );
+      const raw = items[0];
+      if (!raw) {
+        return { match: cached?.value ?? null, fromCache: Boolean(cached) };
+      }
+      const stored = this.storeFixtureDetailCaches(raw);
+      return { match: stored?.normalized ?? null, fromCache: false };
+    } catch (err) {
+      if (cached) {
+        return { match: cached.value, fromCache: true };
+      }
+      throw err;
+    }
+  }
+
   private async fetchFixtureDetailsBatch(
-    items: Array<{ fixtureId: number; status: MatchStatus }>
-  ): Promise<Map<number, { lineups?: ApiFootballRawLineup[]; events?: ApiFootballRawEvent[] }>> {
+    items: Array<{ fixtureId: number; status: MatchStatus }>,
+    singleIdCap: number
+  ): Promise<
+    Map<
+      number,
+      {
+        lineups?: ApiFootballRawLineup[];
+        events?: ApiFootballRawEvent[];
+        players?: ApiFootballRawPlayerStatsTeam[];
+      }
+    >
+  > {
     const result = new Map<
       number,
-      { lineups?: ApiFootballRawLineup[]; events?: ApiFootballRawEvent[] }
+      {
+        lineups?: ApiFootballRawLineup[];
+        events?: ApiFootballRawEvent[];
+        players?: ApiFootballRawPlayerStatsTeam[];
+      }
     >();
     if (items.length === 0) return result;
 
@@ -794,53 +1052,68 @@ export class ApiFootballProvider implements MatchDataProvider {
       statusById.set(entry.fixtureId, entry.status);
     }
 
-    const now = this.nowFn();
-    for (let i = 0; i < items.length; i += API_FOOTBALL_BATCH_IDS_LIMIT) {
-      const chunk = items.slice(i, i + API_FOOTBALL_BATCH_IDS_LIMIT);
-      const idsParam = chunk.map((c) => c.fixtureId).join("-");
-      try {
-        const detailed = await this.requestJson<ApiFootballRawFixtureItem[]>(
-          `/fixtures?ids=${idsParam}`
-        );
-        for (const item of detailed) {
-          const fId = item.fixture?.id;
-          if (!fId) continue;
-          const status =
-            statusById.get(fId) ??
-            mapApiFootballStatus(
-              item.fixture?.status?.short,
-              item.fixture?.status?.elapsed
-            ).status;
+    let needSingleFallback =
+      items.length === 1 || ApiFootballProvider.batchIdsSupported === false;
 
-          const lineups = Array.isArray(item.lineups) ? item.lineups : [];
-          const lineupTtl =
-            status === "UPCOMING"
-              ? CACHE_TTL_MS.PRE_LINEUPS
-              : CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS;
-          ApiFootballProvider.lineupsByFixtureCache.set(fId, {
-            value: lineups,
-            expiresAt: now + lineupTtl,
-            updatedAt: now,
-          });
+    if (!needSingleFallback) {
+      for (let i = 0; i < items.length; i += API_FOOTBALL_BATCH_IDS_LIMIT) {
+        const chunk = items.slice(i, i + API_FOOTBALL_BATCH_IDS_LIMIT);
+        const idsParam = chunk.map((c) => c.fixtureId).join("-");
+        try {
+          const detailed = await this.requestJson<ApiFootballRawFixtureItem[]>(
+            `/fixtures?ids=${idsParam}`
+          );
+          if (detailed.length > 0) {
+            ApiFootballProvider.batchIdsSupported = true;
+          }
+          for (const item of detailed) {
+            const fId = item.fixture?.id;
+            if (!fId) continue;
+            const stored = this.storeFixtureDetailCaches(item, statusById.get(fId));
+            if (stored) {
+              result.set(fId, {
+                lineups: stored.lineups,
+                events: stored.events,
+                players: stored.players,
+              });
+            }
+          }
+        } catch (err) {
+          if (err instanceof ApiFootballError && err.code === "PLAN_WINDOW") {
+            // Free Plan blocks the `ids` batch parameter; immediately switch to `/fixtures?id={id}`.
+            ApiFootballProvider.batchIdsSupported = false;
+            needSingleFallback = true;
+            break;
+          }
+          // On transient batch error / 429, fall back to cached lineups/events below.
+        }
+      }
+    }
 
-          let events: ApiFootballRawEvent[] | undefined;
-          if (status !== "UPCOMING") {
-            events = Array.isArray(item.events) ? item.events : [];
-            const eventTtl =
-              status === "LIVE"
-                ? CACHE_TTL_MS.LIVE_EVENTS
-                : CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS;
-            ApiFootballProvider.eventsByFixtureCache.set(fId, {
-              value: events,
-              expiresAt: now + eventTtl,
-              updatedAt: now,
+    if (needSingleFallback) {
+      const remaining = items
+        .filter((entry) => !result.has(entry.fixtureId))
+        .slice(0, Math.max(0, singleIdCap));
+      for (const entry of remaining) {
+        try {
+          const singleItems = await this.requestJson<ApiFootballRawFixtureItem[]>(
+            `/fixtures?id=${entry.fixtureId}`
+          );
+          const item = singleItems[0];
+          if (!item) continue;
+          const stored = this.storeFixtureDetailCaches(item, entry.status);
+          if (stored) {
+            result.set(entry.fixtureId, {
+              lineups: stored.lineups,
+              events: stored.events,
+              players: stored.players,
             });
           }
-
-          result.set(fId, { lineups, events });
+        } catch (err) {
+          if (err instanceof ApiFootballError && err.code === "RATE_LIMIT") {
+            break;
+          }
         }
-      } catch {
-        // On transient batch error / 429, fall back to cached lineups/events below.
       }
     }
 
@@ -950,16 +1223,29 @@ export class ApiFootballProvider implements MatchDataProvider {
         }
       }
 
+      const singleIdCap =
+        explicitEnrichLimit !== undefined && explicitEnrichLimit > 0
+          ? explicitEnrichLimit
+          : API_FOOTBALL_SINGLE_ID_EAGER_LIMIT;
+
       const fetchedDetailsMap =
         itemsNeedingDetails.length > 0
-          ? await this.fetchFixtureDetailsBatch(itemsNeedingDetails)
-          : new Map<number, { lineups?: ApiFootballRawLineup[]; events?: ApiFootballRawEvent[] }>();
+          ? await this.fetchFixtureDetailsBatch(itemsNeedingDetails, singleIdCap)
+          : new Map<
+              number,
+              {
+                lineups?: ApiFootballRawLineup[];
+                events?: ApiFootballRawEvent[];
+                players?: ApiFootballRawPlayerStatsTeam[];
+              }
+            >();
 
       const normalized: Match[] = [];
       for (const item of selectedRaw) {
         const fId = item.fixture?.id;
         let lineups = item.lineups;
         let events = item.events;
+        let players = item.players;
 
         if (fId) {
           const detail = fetchedDetailsMap.get(fId);
@@ -980,6 +1266,15 @@ export class ApiFootballProvider implements MatchDataProvider {
               events = cachedEvents.value;
             }
           }
+
+          if ((!players || players.length === 0) && detail?.players?.length) {
+            players = detail.players;
+          } else if (!players || players.length === 0) {
+            const cachedPlayers = ApiFootballProvider.playersByFixtureCache.get(fId);
+            if (cachedPlayers?.value.length) {
+              players = cachedPlayers.value;
+            }
+          }
         }
 
         normalized.push(
@@ -987,6 +1282,7 @@ export class ApiFootballProvider implements MatchDataProvider {
             ...item,
             ...(lineups && lineups.length > 0 ? { lineups } : {}),
             ...(events && events.length > 0 ? { events } : {}),
+            ...(players && players.length > 0 ? { players } : {}),
           })
         );
       }

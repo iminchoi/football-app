@@ -16,6 +16,8 @@ import {
   resolveHoldingPlayer,
   resolvePlayerQuote,
 } from "../src/lib/playerQuote.ts";
+import { resolvePlayerMatchStatus } from "../src/lib/lineupStatus.ts";
+import { buildTeamLineupForMatch } from "../src/lib/lineupBuilder.ts";
 
 test("1. API-Football status, lineup, and event normalization maps to PRE/1H/HT/2H/FT and REAL DEEP_DATA events", () => {
   assert.deepEqual(mapApiFootballStatus("NS", null), {
@@ -592,6 +594,197 @@ test("6. All matches within the same league (even 5th, 6th, 7th+) are batch-enri
       assert.equal(m.events?.[0].source, "REAL");
     }
   }
+
+  ApiFootballProvider.clearCachesForTesting();
+});
+
+test("7. Free Plan ids-parameter rejection falls back to /fixtures?id={id}, preserves startXI/substitutes/coach/rating/captain/SUB_IN, and supports on-demand fetchFixtureDetail", async () => {
+  ApiFootballProvider.clearCachesForTesting();
+
+  const seenUrls: string[] = [];
+  const fixtureIds = [1557467, 1557468, 1557470, 1557471, 1557476, 1563263];
+
+  const makeMeta = (id: number): ApiFootballRawFixtureItem => ({
+    fixture: {
+      id,
+      date: "2026-11-22T15:00:00+00:00",
+      status: { short: "FT", elapsed: 90 },
+    },
+    league: {
+      id: id === 1563263 ? 40 : 39,
+      name: id === 1563263 ? "Championship" : "Premier League",
+      country: "England",
+    },
+    teams: {
+      home: { id: 66, name: "Aston Villa" },
+      away: { id: 746, name: "Sunderland" },
+    },
+    goals: { home: 2, away: 0 },
+  });
+
+  const makeFullDetail = (id: number): ApiFootballRawFixtureItem => ({
+    ...makeMeta(id),
+    lineups: [
+      {
+        team: { id: 66, name: "Aston Villa" },
+        coach: { id: 18, name: "Unai Emery" },
+        formation: "4-2-3-1",
+        startXI: [
+          { player: { id: 199578, name: "Z. Suzuki", number: 1, pos: "G", grid: "1:1" } },
+          { player: { id: 19071, name: "E. Buendia", number: 10, pos: "M", grid: "4:2" } },
+          { player: { id: 511, name: "L. Goretzka", number: 8, pos: "M", grid: "3:1" } },
+        ],
+        substitutes: [
+          { player: { id: 446249, name: "I. Mbaye", number: 19, pos: "F", grid: null } },
+          { player: { id: 19191, name: "J. McGinn", number: 7, pos: "M", grid: null } },
+        ],
+      },
+      {
+        team: { id: 746, name: "Sunderland" },
+        coach: { id: 99, name: "Regis Le Bris" },
+        formation: "4-3-3",
+        startXI: [
+          { player: { id: 119121, name: "T. Hume", number: 32, pos: "D", grid: "2:4" } },
+        ],
+        substitutes: [],
+      },
+    ],
+    events: [
+      {
+        time: { elapsed: 54, extra: null },
+        team: { id: 66, name: "Aston Villa" },
+        player: { id: 511, name: "Leon Goretzka" },
+        assist: { id: null, name: null },
+        type: "Card",
+        detail: "Yellow Card",
+      },
+      {
+        time: { elapsed: 60, extra: null },
+        team: { id: 66, name: "Aston Villa" },
+        player: { id: 19071, name: "Emiliano Buendía" },
+        assist: { id: 446249, name: "Ibrahim Mbaye" },
+        type: "subst",
+        detail: "Substitution 2",
+      },
+    ],
+    players: [
+      {
+        team: { id: 66, name: "Aston Villa" },
+        players: [
+          {
+            player: { id: 511, name: "Leon Goretzka" },
+            statistics: [{ games: { rating: "7.8", captain: true } }],
+          },
+          {
+            player: { id: 446249, name: "Ibrahim Mbaye" },
+            statistics: [{ games: { rating: "7.1", captain: false } }],
+          },
+        ],
+      },
+    ],
+  });
+
+  const mockFetch: typeof fetch = async (input) => {
+    const url = String(input);
+    seenUrls.push(url);
+
+    if (url.includes("/fixtures?date=")) {
+      return new Response(
+        JSON.stringify({
+          errors: [],
+          response: fixtureIds.map((id) => makeMeta(id)),
+        }),
+        { status: 200 }
+      );
+    }
+
+    if (url.includes("/fixtures?ids=")) {
+      return new Response(
+        JSON.stringify({
+          errors: { plan: "Free plans do not have access to the Ids parameter." },
+          response: [],
+        }),
+        { status: 200 }
+      );
+    }
+
+    if (url.includes("/fixtures?id=")) {
+      const idNum = Number(url.split("id=")[1]?.split("&")[0]);
+      return new Response(
+        JSON.stringify({
+          errors: [],
+          response: [makeFullDetail(idNum)],
+        }),
+        { status: 200 }
+      );
+    }
+
+    return new Response(JSON.stringify({ errors: [], response: [] }), {
+      status: 200,
+    });
+  };
+
+  const provider = new ApiFootballProvider({
+    apiKey: "valid-api_key-1234567890",
+    fetchImpl: mockFetch,
+  });
+
+  // Initial date fetch detects Free Plan ids restriction and falls back to /fixtures?id= for the first 5 (all 5 PL matches)
+  const dateRes = await provider.fetchMatchesForDate("2026-11-22");
+  assert.equal(dateRes.matches.length, 6);
+  for (let i = 0; i < 5; i++) {
+    assert.equal(dateRes.matches[i].usesDummyLineup, false);
+    assert.equal(dateRes.matches[i].homeManager, "Unai Emery");
+    assert.equal(dateRes.matches[i].homeTeam.manager, "Unai Emery");
+    assert.equal(dateRes.matches[i].homeTeam.lineup?.length, 3);
+    assert.equal(dateRes.matches[i].homeTeam.bench?.length, 2);
+  }
+  // 6th fixture awaits on-demand fetchFixtureDetail
+  assert.equal(dateRes.matches[5].usesDummyLineup, true);
+
+  // Verify SUB_IN & SUB_OUT + abbreviated lineup name ("I. Mbaye") vs full event name ("Ibrahim Mbaye") via af-p-446249
+  const firstMatch = dateRes.matches[0];
+  const subInEv = firstMatch.events?.find(
+    (e) => e.type === "SUB_IN" && e.playerId === "af-p-446249"
+  );
+  const subOutEv = firstMatch.events?.find(
+    (e) => e.type === "SUB_OUT" && e.playerId === "af-p-19071"
+  );
+  assert.ok(subInEv);
+  assert.equal(subInEv?.minute, 60);
+  assert.ok(subOutEv);
+  assert.equal(subOutEv?.minute, 60);
+
+  const built = buildTeamLineupForMatch(firstMatch, "HOME", []);
+  assert.equal(built.startingLineup.length, 3);
+  assert.equal(built.benchLineup.length, 2);
+
+  const goretzka = built.startingLineup.find((p) => p.id === "af-p-511");
+  assert.ok(goretzka);
+  assert.equal(goretzka?.stats.rating, 7.8);
+  assert.equal(goretzka?.isCaptain, true);
+
+  const mbayeBench = built.benchLineup.find((p) => p.id === "af-p-446249");
+  assert.ok(mbayeBench);
+  const mbayeStatus = resolvePlayerMatchStatus({
+    player: mbayeBench!,
+    match: firstMatch,
+    teamSide: "HOME",
+  });
+  assert.equal(mbayeStatus.subInMinute, 60);
+
+  // On-demand fetchFixtureDetail enriches the 6th match and patches fixturesByDateCache
+  const detail6 = await provider.fetchFixtureDetail(1563263);
+  assert.equal(detail6.fromCache, false);
+  assert.equal(detail6.match?.usesDummyLineup, false);
+  assert.equal(detail6.match?.homeTeam.lineup?.length, 3);
+  assert.equal(detail6.match?.homeTeam.bench?.length, 2);
+
+  // Cached date read now reflects the newly loaded 6th match immediately without extra API calls
+  const cachedDateRes = await provider.fetchMatchesForDate("2026-11-22");
+  assert.equal(cachedDateRes.fromCache, true);
+  assert.equal(cachedDateRes.matches[5].usesDummyLineup, false);
+  assert.equal(cachedDateRes.matches[5].homeTeam.bench?.length, 2);
 
   ApiFootballProvider.clearCachesForTesting();
 });

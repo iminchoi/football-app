@@ -580,14 +580,49 @@ function shiftDateString(dateStr: string, deltaDays: number): string {
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
+  const rawFixtureIdParam = (searchParams.get("fixtureId") || "").trim();
   const rawDateParam = (searchParams.get("date") || "").trim();
+
+  const rawAfKey = process.env.API_FOOTBALL_KEY?.trim() ?? "";
+  const isAfKeyConfigured = ApiFootballProvider.isConfigured(rawAfKey);
+
+  // On-demand single-fixture detail lookup (`/api/matches?fixtureId=af-1557467` or `1557467`)
+  if (rawFixtureIdParam) {
+    const numericIdMatch = /^(?:af-)?(\d+)$/.exec(rawFixtureIdParam);
+    if (!numericIdMatch || !isAfKeyConfigured) {
+      return NextResponse.json(
+        { source: "API_FOOTBALL", match: null, fromCache: false },
+        { status: 200 }
+      );
+    }
+    try {
+      const afProvider = new ApiFootballProvider();
+      const detail = await afProvider.fetchFixtureDetail(Number(numericIdMatch[1]));
+      return NextResponse.json({
+        source: "API_FOOTBALL",
+        fromCache: detail.fromCache,
+        match: detail.match
+          ? enrichMatchMetadata(detail.match, Boolean(detail.match.isInternational))
+          : null,
+      });
+    } catch (err: unknown) {
+      const message =
+        err instanceof ApiFootballError
+          ? err.userMessage
+          : err instanceof Error
+          ? err.message
+          : "경기 상세 조회 실패";
+      return NextResponse.json(
+        { source: "API_FOOTBALL", match: null, message },
+        { status: 200 }
+      );
+    }
+  }
 
   const targetDate = isValidDateStr(rawDateParam)
     ? rawDateParam
     : getKstTodayStr();
 
-  const rawAfKey = process.env.API_FOOTBALL_KEY?.trim() ?? "";
-  const isAfKeyConfigured = ApiFootballProvider.isConfigured(rawAfKey);
   let afErrorMessage: string | null = null;
 
   // Priority 1: API-Football v3 (`process.env.API_FOOTBALL_KEY`) with server memory cache & fallback
