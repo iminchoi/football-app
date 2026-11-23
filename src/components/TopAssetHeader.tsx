@@ -19,7 +19,10 @@ import {
   resolveMatchScore,
   resolveSyncedMatchFromContext,
 } from "@/lib/matchSync";
-import { resolvePlayerQuote } from "@/lib/playerQuote";
+import {
+  resolveHoldingPlayer,
+  resolvePlayerQuote,
+} from "@/lib/playerQuote";
 import {
   formatPlayerDisplayName,
   matchesPlayerSearchQuery,
@@ -89,8 +92,10 @@ export default function TopAssetHeader({
   const cash = useTradeStore((s) => s.cash);
   const players = useTradeStore((s) => s.players);
   const matches = useTradeStore((s) => s.matches);
+  const playerPrices = useTradeStore((s) => s.playerPrices);
   const activeMatchContext = useTradeStore((s) => s.activeMatchContext);
   const holdings = useTradeStore((s) => s.holdings);
+  const transactions = useTradeStore((s) => s.transactions);
   const activeTab = useTradeStore((s) => s.activeTab);
   const setActiveTab = useTradeStore((s) => s.setActiveTab);
   const logout = useTradeStore((s) => s.logout);
@@ -158,8 +163,7 @@ export default function TopAssetHeader({
   if (user) {
     for (const h of Object.values(holdings)) {
       if (h.quantity <= 0) continue;
-      const p = players.find((pl) => pl.id === h.playerId);
-      if (!p) continue;
+      const p = resolveHoldingPlayer(h, players, transactions, playerPrices);
       const holdingMatch = resolveMatchForPlayerView({
         player: p,
         storeMatches: matches,

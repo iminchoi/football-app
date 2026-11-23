@@ -21,6 +21,28 @@ import type {
 export const API_FOOTBALL_BASE_URL = "https://v3.football.api-sports.io";
 export const API_FOOTBALL_TIMEOUT_MS = 8000;
 
+export type ApiFootballErrorCode =
+  | "PLAN_WINDOW"
+  | "RATE_LIMIT"
+  | "TIMEOUT"
+  | "UPSTREAM_ERROR";
+
+export class ApiFootballError extends Error {
+  readonly code: ApiFootballErrorCode;
+  readonly userMessage: string;
+
+  constructor(
+    code: ApiFootballErrorCode,
+    userMessage: string,
+    internalMessage?: string
+  ) {
+    super(internalMessage ?? userMessage);
+    this.name = "ApiFootballError";
+    this.code = code;
+    this.userMessage = userMessage;
+  }
+}
+
 /**
  * Differential cache TTLs to protect the free plan (100 calls/day):
  * - Live fixtures / live events: 35 seconds (within 30-45s window)
@@ -625,6 +647,10 @@ export class ApiFootballProvider implements MatchDataProvider {
     string,
     CacheRecord<Match[]>
   >();
+  private static readonly planWindowErrorCache = new Map<
+    string,
+    CacheRecord<ApiFootballError>
+  >();
   private static readonly lineupsByFixtureCache = new Map<
     number,
     CacheRecord<ApiFootballRawLineup[]>
@@ -655,6 +681,7 @@ export class ApiFootballProvider implements MatchDataProvider {
 
   static clearCachesForTesting(): void {
     ApiFootballProvider.fixturesByDateCache.clear();
+    ApiFootballProvider.planWindowErrorCache.clear();
     ApiFootballProvider.lineupsByFixtureCache.clear();
     ApiFootballProvider.eventsByFixtureCache.clear();
   }
@@ -675,10 +702,18 @@ export class ApiFootballProvider implements MatchDataProvider {
       );
 
       if (res.status === 429) {
-        throw new Error("API_FOOTBALL_RATE_LIMIT_429");
+        throw new ApiFootballError(
+          "RATE_LIMIT",
+          "API-Football 일일/분당 호출 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.",
+          "API_FOOTBALL_RATE_LIMIT_429"
+        );
       }
       if (!res.ok) {
-        throw new Error(`API_FOOTBALL_HTTP_${res.status}`);
+        throw new ApiFootballError(
+          "UPSTREAM_ERROR",
+          `API-Football 서버 응답 오류(HTTP ${res.status})가 발생했습니다.`,
+          `API_FOOTBALL_HTTP_${res.status}`
+        );
       }
 
       const body = (await res.json()) as {
@@ -691,12 +726,54 @@ export class ApiFootballProvider implements MatchDataProvider {
         ((Array.isArray(body.errors) && body.errors.length > 0) ||
           (!Array.isArray(body.errors) && Object.keys(body.errors).length > 0))
       ) {
-        throw new Error(
-          `API_FOOTBALL_API_ERROR:${JSON.stringify(body.errors)}`
+        const rawErrText = JSON.stringify(body.errors);
+        const lowerErr = rawErrText.toLowerCase();
+        const errObj = !Array.isArray(body.errors) ? body.errors : null;
+
+        if (
+          (errObj && "plan" in errObj) ||
+          lowerErr.includes("free plans do not have access") ||
+          lowerErr.includes("free plan")
+        ) {
+          throw new ApiFootballError(
+            "PLAN_WINDOW",
+            "API-Football 무료 플랜 조회 가능 기간(오늘 기준 3일) 밖의 날짜입니다. 데모/폴백 일정을 표시합니다.",
+            `API_FOOTBALL_PLAN_WINDOW:${rawErrText}`
+          );
+        }
+
+        if (
+          (errObj && ("requests" in errObj || "rateLimit" in errObj)) ||
+          lowerErr.includes("request limit") ||
+          lowerErr.includes("too many requests")
+        ) {
+          throw new ApiFootballError(
+            "RATE_LIMIT",
+            "API-Football 일일/분당 호출 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.",
+            `API_FOOTBALL_RATE_LIMIT:${rawErrText}`
+          );
+        }
+
+        throw new ApiFootballError(
+          "UPSTREAM_ERROR",
+          "API-Football 데이터 조회 중 일시적인 오류가 발생했습니다.",
+          `API_FOOTBALL_API_ERROR:${rawErrText}`
         );
       }
 
       return (body.response ?? ([] as unknown as T)) as T;
+    } catch (err) {
+      if (err instanceof ApiFootballError) {
+        throw err;
+      }
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new ApiFootballError(
+          "TIMEOUT",
+          "API-Football 응답 시간이 초과되었습니다(8초).",
+          "API_FOOTBALL_TIMEOUT"
+        );
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
     }
@@ -781,6 +858,12 @@ export class ApiFootballProvider implements MatchDataProvider {
       };
     }
 
+    const cachedPlanErr =
+      ApiFootballProvider.planWindowErrorCache.get(targetDate);
+    if (!cached && cachedPlanErr && now < cachedPlanErr.expiresAt) {
+      throw cachedPlanErr.value;
+    }
+
     if (!ApiFootballProvider.isConfigured(this.apiKey)) {
       if (cached) {
         return { matches: cached.value, fromCache: true, staleFallback: true };
@@ -844,6 +927,7 @@ export class ApiFootballProvider implements MatchDataProvider {
         ? CACHE_TTL_MS.LIVE_FIXTURES
         : CACHE_TTL_MS.STATIC_FIXTURES;
 
+      ApiFootballProvider.planWindowErrorCache.delete(targetDate);
       ApiFootballProvider.fixturesByDateCache.set(targetDate, {
         value: normalized,
         expiresAt: now + ttl,
@@ -862,6 +946,13 @@ export class ApiFootballProvider implements MatchDataProvider {
           fromCache: true,
           staleFallback: true,
         };
+      }
+      if (err instanceof ApiFootballError && err.code === "PLAN_WINDOW") {
+        ApiFootballProvider.planWindowErrorCache.set(targetDate, {
+          value: err,
+          expiresAt: now + CACHE_TTL_MS.STATIC_FIXTURES,
+          updatedAt: now,
+        });
       }
       throw err;
     }

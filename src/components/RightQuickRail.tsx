@@ -13,7 +13,10 @@ import {
   resolveMatchClock,
   resolveMatchForPlayerView,
 } from "@/lib/matchSync";
-import { resolvePlayerQuote } from "@/lib/playerQuote";
+import {
+  resolveHoldingPlayer,
+  resolvePlayerQuote,
+} from "@/lib/playerQuote";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 type QuickRailTab = "INVEST" | "WATCHLIST" | "RECENT" | null;
@@ -36,7 +39,9 @@ export default function RightQuickRail({
   const cash = useTradeStore((s) => s.cash);
   const players = useTradeStore((s) => s.players);
   const matches = useTradeStore((s) => s.matches);
+  const playerPrices = useTradeStore((s) => s.playerPrices);
   const holdings = useTradeStore((s) => s.holdings);
+  const transactions = useTradeStore((s) => s.transactions);
   const watchlist = useTradeStore((s) => s.watchlist);
 
   const [activeRail, setActiveRail] = useState<QuickRailTab>(null);
@@ -50,12 +55,8 @@ export default function RightQuickRail({
         .filter((h) => h.quantity > 0)
         .map((h) => ({
           holding: h,
-          player: players.find((p) => p.id === h.playerId),
+          player: resolveHoldingPlayer(h, players, transactions, playerPrices),
         }))
-        .filter(
-          (item): item is { holding: (typeof holdings)[string]; player: Player } =>
-            Boolean(item.player)
-        )
     : [];
 
   const watchlistPlayers = watchlist

@@ -1,11 +1,13 @@
 import {
   API_FOOTBALL_AVAILABLE_EVENT_TYPES,
+  ApiFootballError,
   ApiFootballProvider,
   CACHE_TTL_MS,
   mapApiFootballStatus,
   normalizeApiFootballEvents,
   normalizeApiFootballFixture,
   normalizeApiFootballLineupList,
+  type ApiFootballErrorCode,
   type ApiFootballRawEvent,
   type ApiFootballRawFixtureItem,
   type ApiFootballRawLineup,
@@ -37,6 +39,7 @@ import {
 } from "./types.ts";
 
 export {
+  ApiFootballError,
   ApiFootballProvider,
   API_FOOTBALL_AVAILABLE_EVENT_TYPES,
   CACHE_TTL_MS,
@@ -55,6 +58,7 @@ export {
   FORBIDDEN_SIMULATED_EVENT_TYPES,
   SCORE_ONLY_EVENT_TYPES,
   SIMULATED_EVENT_TYPES,
+  type ApiFootballErrorCode,
   type ApiFootballRawFixtureItem,
   type ApiFootballRawEvent,
   type ApiFootballRawLineup,

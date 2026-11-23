@@ -1,11 +1,12 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `ApiFootballProvider` handles today, past, and future date queries cleanly without falling back to demo fixtures on empty API dates, and fallback guidance messages reference `API_FOOTBALL_KEY`.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (32/32 across 6 suites).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); `ApiFootballProvider` handles 3-day Free Plan window errors with typed `ApiFootballError`, negative caching, and clean Korean guidance, while `PortfolioTabView`, `RightQuickRail`, and `TopAssetHeader` share `resolveHoldingPlayer` so dynamic/API-Football holdings never drop after reload.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (63/63 across all 9 suites).
 
 ## Recent Changes
-- `src/app/api/matches/route.ts`: Returned `API_FOOTBALL` directly on successful `fetchMatchesForDate` (including 0-match dates), surfaced `API-Football` error details on actual upstream failures, and updated fallback guidance copy from `FOOTBALL_DATA_API_KEY` to `API_FOOTBALL_KEY`.
-- `src/lib/providers/ApiFootballProvider.ts`: Relaxed `isConfigured` key regex to accept hyphens/underscores (`[a-zA-Z0-9_-]`).
-- `tests/apiFootballProvider.test.ts`: Added date-scoped cache isolation and empty/past/future `API_FOOTBALL` response tests.
+- `src/lib/playerQuote.ts`, `PortfolioTabView.tsx`, `RightQuickRail.tsx`, `TopAssetHeader.tsx`: Extracted shared `resolveHoldingPlayer` helper (preserving `holding.matchContext?.matchId`), eliminated duplicated inline fallback construction and unused imports, and unified dynamic holding valuation across portfolio, quick rail, and top header.
+- `src/lib/providers/ApiFootballProvider.ts`, `src/lib/providers/index.ts`, `src/app/api/matches/route.ts`: Added `ApiFootballError` (`PLAN_WINDOW`, `RATE_LIMIT`, `TIMEOUT`, `UPSTREAM_ERROR`) and isolated `planWindowErrorCache` negative caching for Free Plan 3-day window dates.
+- `src/components/market/MarketChartTabView.tsx`: Removed unused `Match` type import.
+- `tests/apiFootballProvider.test.ts`: Added unit tests for 3-day Free Plan `PLAN_WINDOW` negative caching / clean Korean messaging and `resolveHoldingPlayer` + `PRE`/`LIVE` quote consistency.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

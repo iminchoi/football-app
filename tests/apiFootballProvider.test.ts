@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  ApiFootballError,
   ApiFootballProvider,
   CACHE_TTL_MS,
   mapApiFootballStatus,
@@ -11,6 +12,10 @@ import {
   type ApiFootballRawLineup,
 } from "../src/lib/providers/index.ts";
 import { resolveFetchedMatchesForDate } from "../src/lib/matchSync.ts";
+import {
+  resolveHoldingPlayer,
+  resolvePlayerQuote,
+} from "../src/lib/playerQuote.ts";
 
 test("1. API-Football status, lineup, and event normalization maps to PRE/1H/HT/2H/FT and REAL DEEP_DATA events", () => {
   assert.deepEqual(mapApiFootballStatus("NS", null), {
@@ -321,4 +326,167 @@ test("3. Date-scoped API_FOOTBALL queries isolate cache per date and preserve em
   assert.equal(seenUrls.length, 2);
 
   ApiFootballProvider.clearCachesForTesting();
+});
+
+test("4. Free Plan 3-day window PLAN_WINDOW error returns clean Korean userMessage, negative-caches, and does not corrupt valid date caches", async () => {
+  ApiFootballProvider.clearCachesForTesting();
+
+  let nowMs = 1_700_000_000_000;
+  let outOfWindowCalls = 0;
+  let inWindowCalls = 0;
+
+  const mockFetch: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("date=2026-11-28")) {
+      outOfWindowCalls += 1;
+      return new Response(
+        JSON.stringify({
+          errors: {
+            plan: "Free plans do not have access to this date, try from 2026-11-22 to 2026-11-24.",
+          },
+          response: [],
+        }),
+        { status: 200 }
+      );
+    }
+
+    inWindowCalls += 1;
+    return new Response(
+      JSON.stringify({
+        errors: [],
+        response: [
+          {
+            fixture: {
+              id: 8001,
+              date: "2026-11-23T19:00:00+00:00",
+              status: { short: "NS", elapsed: null },
+            },
+            league: { id: 39, name: "Premier League", country: "England" },
+            teams: {
+              home: { id: 40, name: "Liverpool" },
+              away: { id: 42, name: "Arsenal" },
+            },
+            goals: { home: null, away: null },
+          },
+        ],
+      }),
+      { status: 200 }
+    );
+  };
+
+  const provider = new ApiFootballProvider({
+    apiKey: "valid-api_key-1234567890",
+    fetchImpl: mockFetch,
+    nowFn: () => nowMs,
+  });
+
+  // Valid in-window date populates positive cache
+  const validRes = await provider.fetchMatchesForDate("2026-11-23", {
+    enrichTopDetailsCount: 0,
+  });
+  assert.equal(validRes.matches.length, 1);
+  assert.equal(inWindowCalls, 1);
+
+  // Out-of-window date throws typed ApiFootballError with clean Korean message (no raw JSON)
+  await assert.rejects(
+    () => provider.fetchMatchesForDate("2026-11-28"),
+    (err: unknown) => {
+      assert.ok(err instanceof ApiFootballError);
+      assert.equal(err.code, "PLAN_WINDOW");
+      assert.ok(err.userMessage.includes("3일"));
+      assert.ok(!err.userMessage.includes("{"));
+      return true;
+    }
+  );
+  assert.equal(outOfWindowCalls, 1);
+
+  // Repeat click on the same out-of-window date within TTL rethrows cached error without burning quota
+  nowMs += 60_000;
+  await assert.rejects(
+    () => provider.fetchMatchesForDate("2026-11-28"),
+    (err: unknown) => err instanceof ApiFootballError && err.code === "PLAN_WINDOW"
+  );
+  assert.equal(outOfWindowCalls, 1);
+
+  // Valid in-window cache remains completely untouched
+  const stillCached = await provider.fetchMatchesForDate("2026-11-23", {
+    enrichTopDetailsCount: 0,
+  });
+  assert.equal(stillCached.fromCache, true);
+  assert.equal(stillCached.matches.length, 1);
+  assert.equal(inWindowCalls, 1);
+
+  ApiFootballProvider.clearCachesForTesting();
+});
+
+test("5. resolveHoldingPlayer preserves dynamic API-Football holdings and matchContext consistently across PRE/LIVE quotes", () => {
+  const holding = {
+    playerId: "af-p-90123",
+    quantity: 3,
+    avgBuyPrice: 12400,
+    matchContext: {
+      matchId: "af-8001",
+      competition: "Premier League",
+      homeTeam: "LIV",
+      awayTeam: "ARS",
+      homeScore: 0,
+      awayScore: 0,
+      status: "PRE" as const,
+      rawStatus: "SCHEDULED",
+      kickoffTime: "04:00",
+      minute: 0,
+    },
+  };
+
+  const resolved = resolveHoldingPlayer(
+    holding,
+    [],
+    [
+      {
+        id: "tx-1",
+        timestamp: "2026-11-23T01:00:00Z",
+        type: "BUY",
+        playerId: "af-p-90123",
+        playerName: "Dominik Szoboszlai",
+        teamShort: "LIV",
+        quantity: 3,
+        unitPrice: 12400,
+        totalAmount: 37200,
+        balanceAfter: 62800,
+      },
+    ],
+    {
+      "af-p-90123": {
+        openPrice: 12400,
+        previousPrice: 12400,
+        currentPrice: 13100,
+        highPrice: 13100,
+        lowPrice: 12400,
+        volume: 12,
+        priceHistory: [
+          { minute: 0, price: 12400 },
+          { minute: 30, price: 13100 },
+        ],
+        events: [],
+      },
+    }
+  );
+
+  assert.equal(resolved.id, "af-p-90123");
+  assert.equal(resolved.name, "Dominik Szoboszlai");
+  assert.equal(resolved.matchId, "af-8001");
+  assert.equal(resolved.currentPrice, 13100);
+
+  // Under UPCOMING (PRE), quote pins cleanly to basePrice (12400, 0%)
+  const preQuote = resolvePlayerQuote(resolved, "UPCOMING");
+  assert.equal(preQuote.isPreMatch, true);
+  assert.equal(preQuote.currentPrice, 12400);
+  assert.equal(preQuote.diff, 0);
+  assert.equal(preQuote.changePct, 0);
+
+  // Under LIVE, quote reflects live price (13100)
+  const liveQuote = resolvePlayerQuote(resolved, "LIVE");
+  assert.equal(liveQuote.isPreMatch, false);
+  assert.equal(liveQuote.currentPrice, 13100);
+  assert.equal(liveQuote.diff, 700);
 });

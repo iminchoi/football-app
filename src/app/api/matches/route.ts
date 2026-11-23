@@ -13,6 +13,7 @@ import {
 } from "@/data/dummyData";
 import { deduplicateMatches } from "@/lib/matchSync";
 import {
+  ApiFootballError,
   ApiFootballProvider,
   getActiveMatchDataProvider,
 } from "@/lib/providers";
@@ -584,7 +585,11 @@ export async function GET(request: NextRequest) {
       });
     } catch (err: unknown) {
       afErrorMessage =
-        err instanceof Error ? err.message : "API-Football 요청 실패";
+        err instanceof ApiFootballError
+          ? err.userMessage
+          : err instanceof Error
+          ? err.message
+          : "API-Football 요청 실패";
       // Fall through cleanly to football-data.org / demo fallback on error
     }
   }
@@ -596,7 +601,9 @@ export async function GET(request: NextRequest) {
 
   if (!apiKey || !isValidKey) {
     const fallbackMessage = afErrorMessage
-      ? `API-Football 조회 중 오류가 발생해 데모 경기 데이터를 표시합니다. (${afErrorMessage})`
+      ? afErrorMessage.endsWith("표시합니다.")
+        ? afErrorMessage
+        : `API-Football 조회 중 오류가 발생해 데모 경기 데이터를 표시합니다. (${afErrorMessage})`
       : rawAfKey && !isAfKeyConfigured
       ? ".env.local의 API_FOOTBALL_KEY 형식이 유효하지 않아 데모 경기 데이터를 표시합니다."
       : ".env.local에 API_FOOTBALL_KEY가 비어 있어 데모 경기 데이터를 표시합니다.";
