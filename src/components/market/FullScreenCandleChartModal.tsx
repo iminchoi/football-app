@@ -1,6 +1,13 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { X, Star } from "lucide-react";
 import {
   AreaSeries,
@@ -45,6 +52,7 @@ import {
   CandleTimeframe,
   ChartEventType,
   Match,
+  MatchEvent,
   Player,
   TradeType,
 } from "@/types";
@@ -126,6 +134,99 @@ function toChartTime(index: number): UTCTimestamp {
   return (BASE_TIMESTAMP_SEC + index * 60) as UTCTimestamp;
 }
 
+const EMPTY_MATCH_EVENTS: MatchEvent[] = [];
+
+interface CrosshairHudProps {
+  subscribe: (listener: () => void) => () => void;
+  getSnapshot: () => CandleData | null;
+  timeframe: CandleTimeframe;
+  chartMode: ChartDisplayMode;
+}
+
+function getServerHoveredCandleSnapshot(): CandleData | null {
+  return null;
+}
+
+const CrosshairHud = React.memo(function CrosshairHud({
+  subscribe,
+  getSnapshot,
+  timeframe,
+  chartMode,
+}: CrosshairHudProps) {
+  const hoveredCandle = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerHoveredCandleSnapshot
+  );
+
+  if (!hoveredCandle) return null;
+
+  return (
+    <div className="pointer-events-none absolute top-2 left-2.5 right-2.5 z-10 flex items-center justify-between gap-2 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF]/95 px-2.5 py-1 font-sans tabular-nums text-[11px] text-[#64748B] shadow-sm backdrop-blur-sm">
+      <div className="flex items-center gap-2 truncate">
+        <span className="font-bold text-[#0F172A]">
+          {formatAxisMatchMinute(hoveredCandle, timeframe)}
+        </span>
+        {chartMode === "CANDLE" ? (
+          <>
+            <span>
+              시{" "}
+              <strong className="text-[#0F172A]">
+                {hoveredCandle.open.toLocaleString()}
+              </strong>
+            </span>
+            <span>
+              고{" "}
+              <strong className="text-[#0F172A]">
+                {hoveredCandle.high.toLocaleString()}
+              </strong>
+            </span>
+            <span>
+              저{" "}
+              <strong className="text-[#0F172A]">
+                {hoveredCandle.low.toLocaleString()}
+              </strong>
+            </span>
+            <span>
+              종{" "}
+              <strong
+                className={
+                  hoveredCandle.close > hoveredCandle.open
+                    ? "text-[#00A878]"
+                    : hoveredCandle.close < hoveredCandle.open
+                    ? "text-[#F07868]"
+                    : "text-[#0F172A]"
+                }
+              >
+                {hoveredCandle.close.toLocaleString()}
+              </strong>
+            </span>
+            <span>
+              량{" "}
+              <strong className="text-[#0F172A]">
+                {hoveredCandle.volume.toLocaleString()}
+              </strong>
+            </span>
+          </>
+        ) : (
+          <span>
+            가격{" "}
+            <strong className="text-[#0F172A]">
+              {hoveredCandle.close.toLocaleString()}P
+            </strong>
+          </span>
+        )}
+      </div>
+      {hoveredCandle.matchEvent && (
+        <span className="shrink-0 font-semibold text-[#00A878]">
+          {EVENT_PIN_CONFIG[hoveredCandle.matchEvent.type]?.icon ?? "⚽"}{" "}
+          {hoveredCandle.matchEvent.minute}&apos;
+        </span>
+      )}
+    </div>
+  );
+});
+
 export default function FullScreenCandleChartModal({
   player: initialPlayer,
   isOpen,
@@ -150,12 +251,38 @@ export default function FullScreenCandleChartModal({
   const [timeframe, setTimeframe] = useState<CandleTimeframe>("3M");
   const [chartMode, setChartMode] = useState<ChartDisplayMode>("CANDLE");
   const [preMatchMode, setPreMatchMode] = useState<"PRE" | "LAST_FT">("PRE");
-  const [hoveredCandle, setHoveredCandle] = useState<CandleData | null>(null);
+  const [selectedEventMinute, setSelectedEventMinute] = useState<number | null>(
+    null
+  );
+
+  const hoveredCandleRef = useRef<CandleData | null>(null);
+  const crosshairListenersRef = useRef<Set<() => void>>(new Set());
+  const selectedEventMinuteRef = useRef<number | null>(null);
+
+  const notifyHoveredCandle = useCallback((next: CandleData | null) => {
+    if (hoveredCandleRef.current === next) return;
+    hoveredCandleRef.current = next;
+    crosshairListenersRef.current.forEach((listener) => listener());
+  }, []);
+
+  const subscribeHoveredCandle = useCallback((listener: () => void) => {
+    crosshairListenersRef.current.add(listener);
+    return () => {
+      crosshairListenersRef.current.delete(listener);
+    };
+  }, []);
+
+  const getHoveredCandleSnapshot = useCallback(
+    () => hoveredCandleRef.current,
+    []
+  );
 
   useEffect(() => {
     setPreMatchMode("PRE");
-    setHoveredCandle(null);
-  }, [isOpen, player?.id]);
+    selectedEventMinuteRef.current = null;
+    setSelectedEventMinute(null);
+    notifyHoveredCandle(null);
+  }, [isOpen, player?.id, notifyHoveredCandle]);
 
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -269,6 +396,29 @@ export default function FullScreenCandleChartModal({
     matchStatus,
     currentMinute,
   ]);
+
+  const canonicalEvents = useMemo<MatchEvent[]>(() => {
+    if (!isOpen || !player || !ssotMetrics) return EMPTY_MATCH_EVENTS;
+    if (isViewingLastMatch && lastMatchReview) {
+      return lastMatchReview.events;
+    }
+    if (matchStatus === "UPCOMING") {
+      return EMPTY_MATCH_EVENTS;
+    }
+    return player.events ?? ssotMetrics.events;
+  }, [
+    isOpen,
+    player,
+    ssotMetrics,
+    isViewingLastMatch,
+    lastMatchReview,
+    matchStatus,
+  ]);
+
+  const sortedEventsAsc = useMemo<MatchEvent[]>(() => {
+    if (canonicalEvents.length <= 1) return canonicalEvents;
+    return [...canonicalEvents].sort((a, b) => a.minute - b.minute);
+  }, [canonicalEvents]);
 
   const quote = player ? resolvePlayerQuote(player, matchStatus) : null;
   const openPrice = quote?.openPrice ?? 0;
@@ -438,11 +588,18 @@ export default function FullScreenCandleChartModal({
 
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || param.time === undefined || typeof param.time !== "number") {
-        setHoveredCandle(null);
+        notifyHoveredCandle(null);
         return;
       }
       const matched = timeToCandleRef.current.get(param.time) ?? null;
-      setHoveredCandle(matched);
+      notifyHoveredCandle(matched);
+      if (selectedEventMinuteRef.current !== null) {
+        const hoveredMinute = matched?.matchEvent?.minute ?? matched?.minute ?? null;
+        if (hoveredMinute !== selectedEventMinuteRef.current) {
+          selectedEventMinuteRef.current = null;
+          setSelectedEventMinute(null);
+        }
+      }
     });
 
     chartRef.current = chart;
@@ -478,9 +635,9 @@ export default function FullScreenCandleChartModal({
       volumeSeriesRef.current = null;
       candleMarkersRef.current = null;
       areaMarkersRef.current = null;
-      setHoveredCandle(null);
+      notifyHoveredCandle(null);
     };
-  }, [isOpen]);
+  }, [isOpen, notifyHoveredCandle]);
 
   // Sync data & chart mode (CANDLE vs LINE)
   useEffect(() => {
@@ -613,10 +770,21 @@ export default function FullScreenCandleChartModal({
     const viewKey = `${player?.id ?? ""}:${timeframe}:${preMatchMode}`;
     if (prevViewKeyRef.current !== viewKey) {
       prevViewKeyRef.current = viewKey;
-      setHoveredCandle(null);
+      selectedEventMinuteRef.current = null;
+      setSelectedEventMinute(null);
+      notifyHoveredCandle(null);
       chart.timeScale().fitContent();
     }
-  }, [isOpen, candles, player?.id, timeframe, preMatchMode, chartMode, isDownOverall]);
+  }, [
+    isOpen,
+    candles,
+    player?.id,
+    timeframe,
+    preMatchMode,
+    chartMode,
+    isDownOverall,
+    notifyHoveredCandle,
+  ]);
 
   if (!isOpen || !player || !ssotMetrics) return null;
 
@@ -633,15 +801,6 @@ export default function FullScreenCandleChartModal({
       : matchStatus === "UPCOMING"
       ? openPrice
       : player.lowPrice ?? ssotMetrics.lowPrice;
-  const canonicalEvents =
-    isViewingLastMatch && lastMatchReview
-      ? lastMatchReview.events
-      : matchStatus === "UPCOMING"
-      ? []
-      : player.events ?? ssotMetrics.events;
-  const sortedEventsAsc = [...canonicalEvents].sort(
-    (a, b) => a.minute - b.minute
-  );
   const isHalfTime = !isViewingLastMatch && matchClock.isHalfTime;
 
   const progressPct =
@@ -668,7 +827,9 @@ export default function FullScreenCandleChartModal({
       (c) => c.matchEvent?.minute === minute || c.minute === minute
     );
     if (idx < 0) return;
-    setHoveredCandle(candles[idx]);
+    selectedEventMinuteRef.current = minute;
+    setSelectedEventMinute(minute);
+    notifyHoveredCandle(candles[idx]);
     const chart = chartRef.current;
     if (chart) {
       const halfSpan = Math.max(4, Math.floor(candles.length * 0.25));
@@ -841,71 +1002,13 @@ export default function FullScreenCandleChartModal({
         )}
 
         {/* White Main Chart Surface + Floating 1-Line Crosshair HUD */}
-        <div className="relative mx-4 flex-1 min-h-0 overflow-hidden rounded-2xl border border-[#E2E8F0] bg-[#FFFFFF]">
-          {hoveredCandle && (
-            <div className="pointer-events-none absolute top-2 left-2.5 right-2.5 z-10 flex items-center justify-between gap-2 rounded-lg border border-[#E2E8F0] bg-[#FFFFFF]/95 px-2.5 py-1 font-sans tabular-nums text-[11px] text-[#64748B] shadow-sm backdrop-blur-sm">
-              <div className="flex items-center gap-2 truncate">
-                <span className="font-bold text-[#0F172A]">
-                  {formatAxisMatchMinute(hoveredCandle, timeframe)}
-                </span>
-                {chartMode === "CANDLE" ? (
-                  <>
-                    <span>
-                      시{" "}
-                      <strong className="text-[#0F172A]">
-                        {hoveredCandle.open.toLocaleString()}
-                      </strong>
-                    </span>
-                    <span>
-                      고{" "}
-                      <strong className="text-[#0F172A]">
-                        {hoveredCandle.high.toLocaleString()}
-                      </strong>
-                    </span>
-                    <span>
-                      저{" "}
-                      <strong className="text-[#0F172A]">
-                        {hoveredCandle.low.toLocaleString()}
-                      </strong>
-                    </span>
-                    <span>
-                      종{" "}
-                      <strong
-                        className={
-                          hoveredCandle.close > hoveredCandle.open
-                            ? "text-[#00A878]"
-                            : hoveredCandle.close < hoveredCandle.open
-                            ? "text-[#F07868]"
-                            : "text-[#0F172A]"
-                        }
-                      >
-                        {hoveredCandle.close.toLocaleString()}
-                      </strong>
-                    </span>
-                    <span>
-                      량{" "}
-                      <strong className="text-[#0F172A]">
-                        {hoveredCandle.volume.toLocaleString()}
-                      </strong>
-                    </span>
-                  </>
-                ) : (
-                  <span>
-                    가격{" "}
-                    <strong className="text-[#0F172A]">
-                      {hoveredCandle.close.toLocaleString()}P
-                    </strong>
-                  </span>
-                )}
-              </div>
-              {hoveredCandle.matchEvent && (
-                <span className="shrink-0 font-semibold text-[#00A878]">
-                  {EVENT_PIN_CONFIG[hoveredCandle.matchEvent.type]?.icon ?? "⚽"}{" "}
-                  {hoveredCandle.matchEvent.minute}&apos;
-                </span>
-              )}
-            </div>
-          )}
+        <div className="chart-surface-contain relative mx-4 flex-1 min-h-0 overflow-hidden rounded-2xl border border-[#E2E8F0] bg-[#FFFFFF]">
+          <CrosshairHud
+            subscribe={subscribeHoveredCandle}
+            getSnapshot={getHoveredCandleSnapshot}
+            timeframe={timeframe}
+            chartMode={chartMode}
+          />
 
           {matchStatus === "UPCOMING" && !isViewingLastMatch && (
             <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#FFFFFF]/65 px-4 text-center backdrop-blur-[1px]">
@@ -1066,9 +1169,7 @@ export default function FullScreenCandleChartModal({
               <div className="mt-2 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
                 {sortedEventsAsc.map((ev) => {
                   const cfg = EVENT_PIN_CONFIG[ev.type] ?? EVENT_PIN_CONFIG.GOAL;
-                  const isSelected =
-                    (hoveredCandle?.matchEvent?.minute ?? hoveredCandle?.minute) ===
-                    ev.minute;
+                  const isSelected = selectedEventMinute === ev.minute;
                   const impact = ev.priceImpactPercent;
 
                   return (

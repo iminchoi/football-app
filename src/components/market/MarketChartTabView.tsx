@@ -28,7 +28,7 @@ import {
   resolveMatchScore,
   resolveSyncedMatch,
 } from "@/lib/matchSync";
-import { resolvePlayerQuote } from "@/lib/playerQuote";
+import { PlayerQuote, resolvePlayerQuote } from "@/lib/playerQuote";
 import {
   formatPlayerDisplayName,
   matchesPlayerSearchQuery,
@@ -234,15 +234,22 @@ export default function MarketChartTabView({
     setOnlyWatchlist(false);
   };
 
-  const resolveMarketQuote = (p: Player) => {
-    const matchedGame = resolveMatchForPlayerView({
-      player: p,
-      storeMatches: matches,
-      belongsToMatch: doesPlayerBelongToMatch,
-    });
-    const status = matchedGame ? resolveMatchClock(matchedGame).status : "LIVE";
-    return resolvePlayerQuote(p, status);
-  };
+  const quoteByPlayerId = useMemo<Map<string, PlayerQuote>>(() => {
+    const map = new Map<string, PlayerQuote>();
+    for (const p of players) {
+      const matchedGame = resolveMatchForPlayerView({
+        player: p,
+        storeMatches: matches,
+        belongsToMatch: doesPlayerBelongToMatch,
+      });
+      const status = matchedGame ? resolveMatchClock(matchedGame).status : "LIVE";
+      map.set(p.id, resolvePlayerQuote(p, status));
+    }
+    return map;
+  }, [players, matches]);
+
+  const getCachedMarketQuote = (p: Player): PlayerQuote =>
+    quoteByPlayerId.get(p.id) ?? resolvePlayerQuote(p, "LIVE");
 
   const rankedPlayers = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -260,7 +267,9 @@ export default function MarketChartTabView({
         return false;
       }
 
-      const pct = resolveMarketQuote(p).changePct;
+      const pct = (
+        quoteByPlayerId.get(p.id) ?? resolvePlayerQuote(p, "LIVE")
+      ).changePct;
       if (onlySurge5 && pct < 5) {
         return false;
       }
@@ -276,9 +285,11 @@ export default function MarketChartTabView({
       return true;
     });
 
-    return [...filtered].sort((a, b) => {
-      const quoteA = resolveMarketQuote(a);
-      const quoteB = resolveMarketQuote(b);
+    return filtered.sort((a, b) => {
+      const quoteA =
+        quoteByPlayerId.get(a.id) ?? resolvePlayerQuote(a, "LIVE");
+      const quoteB =
+        quoteByPlayerId.get(b.id) ?? resolvePlayerQuote(b, "LIVE");
 
       if (sortMode === "GAINERS") return quoteB.changePct - quoteA.changePct;
       if (sortMode === "LOSERS") return quoteA.changePct - quoteB.changePct;
@@ -288,6 +299,7 @@ export default function MarketChartTabView({
   }, [
     players,
     matches,
+    quoteByPlayerId,
     searchQuery,
     posFilter,
     leagueFilter,
@@ -318,7 +330,7 @@ export default function MarketChartTabView({
 
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-2.5">
             {spotlightPlayers.map((p) => {
-              const quote = resolveMarketQuote(p);
+              const quote = getCachedMarketQuote(p);
               const rawPct = quote.changePct;
               const maxPct = WEIGHTS.CAP_LIMIT * 100;
               const pct = Math.max(-maxPct, Math.min(maxPct, rawPct));
@@ -611,7 +623,7 @@ export default function MarketChartTabView({
         ) : (
           <div className="divide-y divide-gray-100">
             {rankedPlayers.map((p, idx) => {
-              const quote = resolveMarketQuote(p);
+              const quote = getCachedMarketQuote(p);
               const diff = quote.diff;
               const pct = quote.changePct;
               const isUp = diff > 0;
@@ -628,7 +640,7 @@ export default function MarketChartTabView({
                 <div
                   key={p.id}
                   onClick={() => onSelectPlayerTrade(p, "BUY")}
-                  className={`flex cursor-pointer items-center justify-between gap-3 px-4 py-3 transition hover:bg-[#F7F9F8] ${
+                  className={`market-ranking-row flex cursor-pointer items-center justify-between gap-3 px-4 py-3 transition hover:bg-[#F7F9F8] ${
                     isSelected ? "bg-emerald-50/40" : ""
                   }`}
                 >

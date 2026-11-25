@@ -47,3 +47,20 @@ body {
 .animate-slideUp {
   animation: slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* Isolate chart canvas and floating crosshair HUD mutations from outer layout */
+.chart-surface-contain {
+  contain: layout style paint;
+}
+
+/* Isolate ranking row layout/paint and skip off-screen row rendering */
+.market-ranking-row {
+  content-visibility: auto;
+  contain-intrinsic-size: none auto 62px;
+}
+
+@supports not (content-visibility: auto) {
+  .market-ranking-row {
+    contain: layout style paint;
+  }
+}
