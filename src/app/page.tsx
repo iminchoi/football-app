@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useTradeStore } from "@/store/useTradeStore";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { ActiveMatchContext, Player, TradeType } from "@/types";
 import TopAssetHeader from "@/components/TopAssetHeader";
 import BottomTabBar from "@/components/BottomTabBar";
@@ -26,6 +27,9 @@ export default function HomePage() {
   const hydrateSquadFeedsFromServer = useTradeStore(
     (state) => state.hydrateSquadFeedsFromServer
   );
+  const syncAuthSessionFromServer = useTradeStore(
+    (state) => state.syncAuthSessionFromServer
+  );
 
   const [mounted, setMounted] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
@@ -40,7 +44,32 @@ export default function HomePage() {
     setMounted(true);
     void fetchTodayMatches();
     void hydrateSquadFeedsFromServer();
-  }, [fetchTodayMatches, hydrateSquadFeedsFromServer]);
+    void syncAuthSessionFromServer();
+
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (
+        event === "SIGNED_IN" ||
+        event === "SIGNED_OUT" ||
+        event === "TOKEN_REFRESHED" ||
+        event === "USER_UPDATED"
+      ) {
+        void syncAuthSessionFromServer();
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [
+    fetchTodayMatches,
+    hydrateSquadFeedsFromServer,
+    syncAuthSessionFromServer,
+  ]);
 
   useEffect(() => {
     if (!mounted || !user?.id) return;

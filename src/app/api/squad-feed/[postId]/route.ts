@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isSupabaseAuthConfigured } from "../../../../lib/supabase/config.ts";
+import { getAuthenticatedUser } from "../../../../lib/supabase/server.ts";
 import { getDefaultSquadFeedRepository } from "../../../../lib/repositories/squadFeedRepository.ts";
+import { handleSquadPostDelete } from "../../../../lib/auth/apiAuthService.ts";
 
-async function extractRequesterId(request: NextRequest): Promise<string> {
+async function extractRequestedUserId(
+  request: NextRequest
+): Promise<string | undefined> {
   const { searchParams } = new URL(request.url);
   const fromQuery = (
     searchParams.get("userId") ??
@@ -18,9 +23,9 @@ async function extractRequesterId(request: NextRequest): Promise<string> {
       userId?: string;
       requesterId?: string;
     };
-    return (body.userId ?? body.requesterId ?? "").trim();
+    return (body.userId ?? body.requesterId ?? "").trim() || undefined;
   } catch {
-    return "";
+    return undefined;
   }
 }
 
@@ -61,40 +66,21 @@ export async function DELETE(
   context: { params: Promise<{ postId: string }> }
 ) {
   const { postId } = await context.params;
-  const requesterId = await extractRequesterId(request);
-  if (!requesterId) {
-    return NextResponse.json(
-      {
-        success: false,
-        code: "AUTH_REQUIRED",
-        message: "로그인이 필요한 서비스입니다.",
-      },
-      { status: 401 }
-    );
-  }
 
   try {
+    const authConfigured = isSupabaseAuthConfigured();
+    const sessionUser = authConfigured ? await getAuthenticatedUser() : null;
+    const requestedUserId = await extractRequestedUserId(request);
     const repo = getDefaultSquadFeedRepository();
-    const result = await repo.deletePost({ postId, requesterId });
-    if (!result.success) {
-      const status =
-        result.code === "NOT_FOUND"
-          ? 404
-          : result.code === "FORBIDDEN"
-          ? 403
-          : 400;
-      return NextResponse.json(
-        {
-          ...result,
-          source: repo.kind,
-        },
-        { status }
-      );
-    }
-    return NextResponse.json({
-      ...result,
-      source: repo.kind,
+
+    const result = await handleSquadPostDelete({
+      auth: { authConfigured, sessionUser },
+      repo,
+      postId,
+      requestedUserId,
     });
+
+    return NextResponse.json(result.body, { status: result.status });
   } catch (err: unknown) {
     const message =
       err instanceof Error

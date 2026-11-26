@@ -130,6 +130,8 @@ export interface UserSession {
   name: string;
   role: UserRole;
   cash: number;
+  email?: string;
+  authProvider?: "supabase" | "local";
 }
 
 export interface StoredUserAccount {

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isSupabaseAuthConfigured } from "../../../../../lib/supabase/config.ts";
+import { getAuthenticatedUser } from "../../../../../lib/supabase/server.ts";
 import { getDefaultSquadFeedRepository } from "../../../../../lib/repositories/squadFeedRepository.ts";
+import { handleSquadCommentCreate } from "../../../../../lib/auth/apiAuthService.ts";
 
 interface AddCommentBody {
   authorId?: string;
@@ -27,50 +30,19 @@ export async function POST(
     );
   }
 
-  const authorId = (body.authorId ?? "").trim();
-  if (!authorId) {
-    return NextResponse.json(
-      {
-        success: false,
-        code: "AUTH_REQUIRED",
-        message: "로그인 후 코멘트를 작성할 수 있습니다.",
-      },
-      { status: 401 }
-    );
-  }
-
   try {
+    const authConfigured = isSupabaseAuthConfigured();
+    const sessionUser = authConfigured ? await getAuthenticatedUser() : null;
     const repo = getDefaultSquadFeedRepository();
-    const result = await repo.addComment({
+
+    const result = await handleSquadCommentCreate({
+      auth: { authConfigured, sessionUser },
+      repo,
       postId,
-      authorId,
-      authorName: body.authorName,
-      content: body.content ?? "",
+      body,
     });
 
-    if (!result.success) {
-      const status =
-        result.code === "NOT_FOUND"
-          ? 404
-          : result.code === "AUTH_REQUIRED"
-          ? 401
-          : 400;
-      return NextResponse.json(
-        {
-          ...result,
-          source: repo.kind,
-        },
-        { status }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        ...result,
-        source: repo.kind,
-      },
-      { status: 201 }
-    );
+    return NextResponse.json(result.body, { status: result.status });
   } catch (err: unknown) {
     const message =
       err instanceof Error

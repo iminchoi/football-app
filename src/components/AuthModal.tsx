@@ -18,6 +18,31 @@ import {
   Info,
 } from "lucide-react";
 import { useTradeStore } from "@/store/useTradeStore";
+import { isSupabaseAuthConfigured } from "@/lib/supabase/config";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+
+function translateSupabaseAuthError(rawMessage: string): string {
+  const lower = rawMessage.toLowerCase();
+  if (lower.includes("invalid login credentials")) {
+    return "이메일 또는 비밀번호가 일치하지 않습니다.";
+  }
+  if (lower.includes("email not confirmed")) {
+    return "이메일 인증이 완료되지 않았습니다. 받은 편지함에서 인증 링크를 확인해주세요.";
+  }
+  if (lower.includes("user already registered")) {
+    return "이미 가입된 이메일입니다. 로그인 탭을 이용해주세요.";
+  }
+  if (lower.includes("password should be at least")) {
+    return "비밀번호는 최소 6자 이상으로 입력해주세요.";
+  }
+  if (lower.includes("unable to validate email") || lower.includes("invalid email")) {
+    return "올바른 이메일 형식을 입력해주세요.";
+  }
+  if (lower.includes("rate limit") || lower.includes("too many requests")) {
+    return "요청이 너무 많습니다. 잠시 후 다시 시도해주세요.";
+  }
+  return rawMessage || "인증 처리 중 오류가 발생했습니다.";
+}
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -28,7 +53,12 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const user = useTradeStore((s) => s.user);
   const login = useTradeStore((s) => s.login);
   const signup = useTradeStore((s) => s.signup);
-  const logout = useTradeStore((s) => s.logout);
+  const signOutAll = useTradeStore((s) => s.signOutAll);
+  const syncAuthSessionFromServer = useTradeStore(
+    (s) => s.syncAuthSessionFromServer
+  );
+
+  const isSupabaseMode = isSupabaseAuthConfigured();
 
   const [mode, setMode] = useState<"LOGIN" | "SIGNUP">("LOGIN");
   const [userId, setUserId] = useState<string>("");
@@ -40,14 +70,19 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const trimmedId = userId.trim();
   const hasIdSpace = /\s/.test(trimmedId);
-  const isIdLengthValid = trimmedId.length >= 3 && trimmedId.length <= 20;
+  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedId);
+  const isIdLengthValid = isSupabaseMode
+    ? isEmailValid
+    : trimmedId.length >= 3 && trimmedId.length <= 20;
   const isIdValid = trimmedId.length > 0 && !hasIdSpace && isIdLengthValid;
-  const isPasswordLengthValid = password.length >= 4;
+  const minPasswordLength = isSupabaseMode ? 6 : 4;
+  const isPasswordLengthValid = password.length >= minPasswordLength;
   const hasConfirmInput = confirmPassword.length > 0;
   const isPasswordMatch =
     hasConfirmInput && password.length > 0 && password === confirmPassword;
@@ -61,11 +96,13 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     setShowConfirmPassword(false);
     setIsSubmitting(false);
     setErrorMsg(null);
+    setInfoMsg(null);
   };
 
   const handleClose = () => {
     if (isSubmitting) return;
     setErrorMsg(null);
+    setInfoMsg(null);
     onClose();
   };
 
@@ -73,10 +110,11 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     if (isSubmitting) return;
     setMode(nextMode);
     setErrorMsg(null);
+    setInfoMsg(null);
     setConfirmPassword("");
   };
 
-  const handleSubmitForm = (e: React.FormEvent) => {
+  const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
 
@@ -84,11 +122,21 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     const cleanNickname = nickname.trim();
 
     if (!cleanId) {
-      setErrorMsg("아이디를 입력해주세요.");
+      setErrorMsg(
+        isSupabaseMode ? "이메일을 입력해주세요." : "아이디를 입력해주세요."
+      );
       return;
     }
     if (/\s/.test(cleanId)) {
-      setErrorMsg("아이디에는 공백을 포함할 수 없습니다.");
+      setErrorMsg(
+        isSupabaseMode
+          ? "이메일에는 공백을 포함할 수 없습니다."
+          : "아이디에는 공백을 포함할 수 없습니다."
+      );
+      return;
+    }
+    if (isSupabaseMode && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanId)) {
+      setErrorMsg("올바른 이메일 형식을 입력해주세요.");
       return;
     }
     if (!password) {
@@ -97,12 +145,14 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     }
 
     if (mode === "SIGNUP") {
-      if (cleanId.length < 3 || cleanId.length > 20) {
+      if (!isSupabaseMode && (cleanId.length < 3 || cleanId.length > 20)) {
         setErrorMsg("아이디는 3자 이상 20자 이하로 입력해주세요.");
         return;
       }
-      if (password.length < 4) {
-        setErrorMsg("비밀번호는 최소 4자 이상으로 입력해주세요.");
+      if (password.length < minPasswordLength) {
+        setErrorMsg(
+          `비밀번호는 최소 ${minPasswordLength}자 이상으로 입력해주세요.`
+        );
         return;
       }
       if (password !== confirmPassword) {
@@ -113,6 +163,69 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
 
     setIsSubmitting(true);
     setErrorMsg(null);
+    setInfoMsg(null);
+
+    if (isSupabaseMode) {
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) {
+        setErrorMsg("Supabase Auth 클라이언트를 초기화할 수 없습니다.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      try {
+        if (mode === "SIGNUP") {
+          const resolvedNickname =
+            cleanNickname || cleanId.split("@")[0] || "트레이더";
+          const { data, error } = await supabase.auth.signUp({
+            email: cleanId,
+            password,
+            options: {
+              data: { nickname: resolvedNickname },
+            },
+          });
+          if (error) {
+            setErrorMsg(translateSupabaseAuthError(error.message));
+            setIsSubmitting(false);
+            return;
+          }
+          if (!data.session) {
+            setInfoMsg(
+              "가입 확인 이메일을 발송했습니다. 이메일 인증을 완료한 뒤 로그인해주세요."
+            );
+            setMode("LOGIN");
+            setPassword("");
+            setConfirmPassword("");
+            setIsSubmitting(false);
+            return;
+          }
+        } else {
+          const { error } = await supabase.auth.signInWithPassword({
+            email: cleanId,
+            password,
+          });
+          if (error) {
+            setErrorMsg(translateSupabaseAuthError(error.message));
+            setIsSubmitting(false);
+            return;
+          }
+        }
+
+        // Sync cookie session and ensure `users` table record (100,000 P initial seed)
+        await syncAuthSessionFromServer();
+        resetFormState();
+        onClose();
+        return;
+      } catch (err: unknown) {
+        setErrorMsg(
+          err instanceof Error
+            ? translateSupabaseAuthError(err.message)
+            : "인증 요청 중 오류가 발생했습니다."
+        );
+        setIsSubmitting(false);
+        return;
+      }
+    }
 
     setTimeout(() => {
       const res =
@@ -190,15 +303,16 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                 <p className="mt-0.5 font-extrabold text-gray-900 truncate">
                   {user.name}{" "}
                   <span className="font-mono font-normal text-gray-500">
-                    (@{user.id})
+                    ({user.email ?? `@${user.id}`})
                   </span>
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  logout();
-                  resetFormState();
+                  void signOutAll().then(() => {
+                    resetFormState();
+                  });
                 }}
                 disabled={isSubmitting}
                 className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 active:scale-95"
@@ -249,14 +363,14 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
 
           {/* Login / Signup Form (Supports Enter key submit) */}
           <form onSubmit={handleSubmitForm} className="space-y-3.5" noValidate>
-            {/* 1. User ID Field */}
+            {/* 1. User ID / Email Field */}
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <label
                   htmlFor="auth-user-id"
                   className="text-xs font-extrabold text-gray-800"
                 >
-                  아이디
+                  {isSupabaseMode ? "이메일" : "아이디"}
                 </label>
                 {mode === "SIGNUP" ? (
                   <span
@@ -268,7 +382,13 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                         : "text-rose-500"
                     }`}
                   >
-                    {trimmedId.length === 0
+                    {isSupabaseMode
+                      ? trimmedId.length === 0
+                        ? "로그인에 사용할 이메일 입력"
+                        : isEmailValid
+                        ? "사용 가능한 이메일 형식입니다"
+                        : "올바른 이메일 형식을 입력해주세요"
+                      : trimmedId.length === 0
                       ? "3~20자 이내 · 공백 불가"
                       : hasIdSpace
                       ? "공백은 사용할 수 없습니다"
@@ -292,8 +412,8 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                 />
                 <input
                   id="auth-user-id"
-                  type="text"
-                  autoComplete="username"
+                  type={isSupabaseMode ? "email" : "text"}
+                  autoComplete={isSupabaseMode ? "email" : "username"}
                   disabled={isSubmitting}
                   value={userId}
                   onChange={(e) => {
@@ -301,7 +421,9 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                     if (errorMsg) setErrorMsg(null);
                   }}
                   placeholder={
-                    mode === "SIGNUP"
+                    isSupabaseMode
+                      ? "name@example.com"
+                      : mode === "SIGNUP"
                       ? "아이디 입력 (3~20자, 공백 제외)"
                       : "등록된 아이디를 입력하세요"
                   }
@@ -379,10 +501,10 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                     }`}
                   >
                     {password.length === 0
-                      ? "최소 4자 이상 입력"
+                      ? `최소 ${minPasswordLength}자 이상 입력`
                       : isPasswordLengthValid
                       ? "사용 가능한 비밀번호입니다"
-                      : "최소 4자 이상 입력해주세요"}
+                      : `최소 ${minPasswordLength}자 이상 입력해주세요`}
                   </span>
                 ) : (
                   password.length > 0 && (
@@ -412,7 +534,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                   }}
                   placeholder={
                     mode === "SIGNUP"
-                      ? "비밀번호를 입력하세요 (최소 4자 이상)"
+                      ? `비밀번호를 입력하세요 (최소 ${minPasswordLength}자 이상)`
                       : "비밀번호를 입력하세요"
                   }
                   className="h-12 w-full rounded-2xl border border-gray-200 bg-gray-50/70 pl-10 pr-10 text-sm font-semibold text-gray-900 placeholder:text-[13px] placeholder:font-normal placeholder:text-gray-400 focus:border-[#00985f] focus:bg-white focus:ring-2 focus:ring-[#00985f]/15 focus:outline-none transition disabled:opacity-60"
@@ -536,6 +658,17 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                     <strong>PT</strong>는 실제 화폐가 아닌 서비스 내 가상 투자 포인트입니다.
                   </span>
                 </div>
+              </div>
+            )}
+
+            {/* Info Banner (e.g., email confirmation sent) */}
+            {infoMsg && (
+              <div
+                role="status"
+                className="flex items-center gap-2 rounded-2xl bg-emerald-50 px-3.5 py-2.5 text-xs font-bold text-[#00985f] border border-emerald-200"
+              >
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>{infoMsg}</span>
               </div>
             )}
 

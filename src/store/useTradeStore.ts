@@ -87,6 +87,7 @@ import {
   validateSquadDraft,
   type SquadValidationErrorCode,
 } from "@/lib/squadFeed";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export {
   getAvailableShares,
@@ -344,6 +345,8 @@ interface TradeStoreState {
   login: (id: string, password: string) => AuthActionResult;
   signup: (id: string, password: string, name?: string) => AuthActionResult;
   logout: () => void;
+  syncAuthSessionFromServer: () => Promise<UserSession | null>;
+  signOutAll: () => Promise<void>;
 
   // Market & Trade Actions
   setSelectedDate: (date: DateKey) => void;
@@ -1174,6 +1177,103 @@ export const useTradeStore = create<TradeStoreState>()(
       },
 
       logout: () => {
+        const state = get();
+        const nextAccounts = syncActiveUserToAccounts(state);
+        set({
+          accounts: nextAccounts,
+          user: null,
+          cash: INITIAL_CASH,
+          realizedPnL: 0,
+          holdings: {},
+          transactions: [],
+          watchlist: [],
+        });
+        if (typeof window !== "undefined") {
+          const supabase = getSupabaseBrowserClient();
+          if (supabase) {
+            void supabase.auth.signOut().catch(() => {});
+          }
+        }
+      },
+
+      syncAuthSessionFromServer: async () => {
+        if (typeof window === "undefined" || typeof fetch !== "function") {
+          return get().user;
+        }
+        try {
+          const res = await fetch("/api/auth/me", {
+            method: "GET",
+            cache: "no-store",
+          });
+          if (!res.ok) return get().user;
+          const data = (await res.json()) as {
+            success: boolean;
+            authEnabled?: boolean;
+            user?: UserSession | null;
+          };
+          if (!data.authEnabled) {
+            return get().user;
+          }
+
+          if (!data.user) {
+            const current = get();
+            if (current.user) {
+              set({
+                user: null,
+                cash: INITIAL_CASH,
+                realizedPnL: 0,
+                holdings: {},
+                transactions: [],
+                watchlist: [],
+              });
+            }
+            return null;
+          }
+
+          const nextUser: UserSession = {
+            id: data.user.id,
+            name: data.user.name,
+            role: data.user.role,
+            cash: roundToTen(data.user.cash),
+            email: data.user.email,
+            authProvider: "supabase",
+          };
+          const prevUser = get().user;
+          const isDifferentUser =
+            !prevUser ||
+            normalizeAccountKey(prevUser.id) !==
+              normalizeAccountKey(nextUser.id);
+
+          set({
+            user: nextUser,
+            cash: nextUser.cash,
+            ...(isDifferentUser
+              ? { holdings: {}, transactions: [], realizedPnL: 0 }
+              : {}),
+          });
+
+          await get().hydratePortfolioFromServer({
+            id: nextUser.id,
+            name: nextUser.name,
+          });
+          void get().hydrateSquadFeedsFromServer();
+          return nextUser;
+        } catch {
+          return get().user;
+        }
+      },
+
+      signOutAll: async () => {
+        if (typeof window !== "undefined") {
+          const supabase = getSupabaseBrowserClient();
+          if (supabase) {
+            try {
+              await supabase.auth.signOut();
+            } catch {
+              // Proceed to clear client state even if network signOut fails
+            }
+          }
+        }
         const state = get();
         const nextAccounts = syncActiveUserToAccounts(state);
         set({

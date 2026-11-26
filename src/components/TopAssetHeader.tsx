@@ -99,7 +99,7 @@ export default function TopAssetHeader({
   const transactions = useTradeStore((s) => s.transactions);
   const activeTab = useTradeStore((s) => s.activeTab);
   const setActiveTab = useTradeStore((s) => s.setActiveTab);
-  const logout = useTradeStore((s) => s.logout);
+  const signOutAll = useTradeStore((s) => s.signOutAll);
 
   const syncedHeaderMatch = useMemo(
     () => resolveSyncedMatchFromContext(activeMatchContext, matches),
@@ -413,7 +413,7 @@ export default function TopAssetHeader({
               </button>
               <button
                 type="button"
-                onClick={logout}
+                onClick={() => void signOutAll()}
                 title="로그아웃"
                 className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
               >

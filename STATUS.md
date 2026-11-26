@@ -1,13 +1,16 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); all 3 Supabase PostgreSQL + Drizzle ORM DB phases are implemented and schema (`fixtures_cache`, `users`, `holdings`, `ledger_entries`, `squad_posts`, `squad_slots`, `squad_comments`) is pushed to live Supabase (`[✓] Changes applied`).
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (100/100 across all 16 suites, 100% offline/mocked).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); Supabase PostgreSQL + Drizzle ORM (Phases 1-3, 7 tables pushed live) and Supabase Auth SSR session-based authentication & API ownership enforcement are implemented with safe fallbacks when env vars are unset.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (104/104 across all 17 suites, 100% offline/mocked).
 
 ## Recent Changes
-- `drizzle.config.ts`: Added built-in `.env.local` / `.env` loader (`loadEnvFile`) so `drizzle-kit` CLI reads `DIRECT_URL` and `DATABASE_URL` directly without extra dependencies.
-- `.env.local` (gitignored): Converted from UTF-16 LE to UTF-8, removed `$env:` PowerShell prefix, fixed `DIRECT_URL` typo, and pointed `DIRECT_URL` to Supabase Session Pooler (port `5432`) for IPv4 compatibility; ran `drizzle-kit push --force` successfully.
+- `package.json`, `package-lock.json`, `.env.example`: Added `@supabase/ssr` & `@supabase/supabase-js` and documented `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
+- `src/lib/supabase/config.ts`, `client.ts`, `server.ts`, `src/middleware.ts`: Implemented browser/SSR cookie clients, server-verified `getAuthenticatedUser()`, session refresh middleware, and unconfigured safe no-op fallback.
+- `src/lib/auth/apiAuthService.ts`, `src/app/api/auth/me/route.ts`, `portfolio`, `orders`, `squad-feed` routes: Enforced session-based actor binding (`401` unauthenticated, `403` cross-user spoofing & non-author delete), `users` auto-init (`100,000 P`, `onConflictDoNothing`), and offline fallback compatibility.
+- `src/components/AuthModal.tsx`, `TopAssetHeader.tsx`, `src/app/page.tsx`, `src/store/useTradeStore.ts`, `src/types/index.ts`: Connected email login/signup/logout & `onAuthStateChange` sync with Supabase Auth while preserving local demo auth fallback.
+- `tests/authAuthorization.test.ts`: Added 4 test cases covering Supabase Auth config/role mapping, session enforcement on portfolio/orders/squad-feed/comments, cross-user tampering blocks (`401`/`403`), and unconfigured fallback compatibility.
 
 ## Known Issues & Next Steps
-- Live app smoke verification against Supabase in `npm run dev` (orders, portfolio hydration, squad feed publish/comments, API-Football DB cache).
+- Live Supabase Auth browser smoke test once `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` (or `PUBLISHABLE_KEY`) are added to `.env.local`.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

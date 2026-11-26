@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isSupabaseAuthConfigured } from "../../../lib/supabase/config.ts";
+import { getAuthenticatedUser } from "../../../lib/supabase/server.ts";
 import {
   getDefaultSquadFeedRepository,
   type SquadSlotDraftInput,
 } from "../../../lib/repositories/squadFeedRepository.ts";
+import { handleSquadPostCreate } from "../../../lib/auth/apiAuthService.ts";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -53,47 +56,18 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const authorId = (body.authorId ?? "").trim();
-  if (!authorId) {
-    return NextResponse.json(
-      {
-        success: false,
-        code: "AUTH_REQUIRED",
-        message: "로그인이 필요한 서비스입니다.",
-      },
-      { status: 401 }
-    );
-  }
-
   try {
+    const authConfigured = isSupabaseAuthConfigured();
+    const sessionUser = authConfigured ? await getAuthenticatedUser() : null;
     const repo = getDefaultSquadFeedRepository();
-    const result = await repo.createPost({
-      authorId,
-      authorName: body.authorName,
-      title: body.title ?? "",
-      description: body.description,
-      formation: body.formation,
-      slots: Array.isArray(body.slots) ? body.slots : [],
+
+    const result = await handleSquadPostCreate({
+      auth: { authConfigured, sessionUser },
+      repo,
+      body,
     });
 
-    if (!result.success) {
-      const status = result.code === "AUTH_REQUIRED" ? 401 : 422;
-      return NextResponse.json(
-        {
-          ...result,
-          source: repo.kind,
-        },
-        { status }
-      );
-    }
-
-    return NextResponse.json(
-      {
-        ...result,
-        source: repo.kind,
-      },
-      { status: 201 }
-    );
+    return NextResponse.json(result.body, { status: result.status });
   } catch (err: unknown) {
     const message =
       err instanceof Error
