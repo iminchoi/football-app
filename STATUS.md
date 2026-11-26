@@ -1,12 +1,16 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); formation `grid` columns now align left-to-right (`col=1` LB/LW -> `col=N` RB/RW), player display names are unified to English (with Korean auxiliary search retained), Market tab defaults to major-league paginated rows (30/page) with full-universe search, and Hot Player Spotlight dynamically selects 6 distinct leaders with quantitative evidence badges.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (84/84 across all 13 suites, 100% mocked/offline).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); Phase 1 Supabase PostgreSQL + Drizzle ORM foundation and 3-tier API-Football DB cache (`memory -> fixtures_cache -> external API`) are implemented with permanent `FT` retention (`expires_at = NULL`) and safe in-memory fallback when `DATABASE_URL` is unset.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (89/89 across all 14 suites, 100% offline/mocked).
 
 ## Recent Changes
-- `src/lib/providers/ApiFootballProvider.ts`, `src/lib/lineupBuilder.ts`, `src/types/index.ts`: Fixed grid horizontal orientation to ascending `col` (`col=1` LB/LAM/LW left -> `col=N` RB/RAM/RW right) and matched `derivePositionFromGrid` flank mapping.
-- `src/lib/playerDisplayName.ts`, `src/components/squad/SquadPlayerPickerModal.tsx`: Unified `resolvePlayerDisplayName` and `canonicalizeIncomingPlayerNames` to canonical English display names while preserving Korean search (`matchesPlayerSearchQuery`) and cross-script event identity matching.
-- `src/lib/marketListing.ts`, `src/components/market/MarketChartTabView.tsx`: Added major-league default filtering (excluding minor-league clutter like `Viking`/`Sabah FA` unless searched or toggled), 30-item pagination (`더 보기`), and dynamic 6-card evidence-based Hot Player Spotlight (`selectHotSpotlightPlayers`) replacing hardcoded `SPOTLIGHT_IDS`.
-- `tests/gridAndCandle.test.ts`, `tests/playerDisplayName.test.ts`, `tests/marketListing.test.ts`: Verified ascending `grid` col placement, English name unification with Korean search compatibility, major-league filtering/pagination, and dynamic spotlight selection.
+- `package.json`, `package-lock.json`, `drizzle.config.ts`, `.env.example`: Added `drizzle-orm`, `postgres`, `drizzle-kit`, `db:generate`/`db:push` scripts, and `DATABASE_URL`/`DIRECT_URL` templates.
+- `src/db/schema.ts`, `src/db/index.ts`: Defined core PostgreSQL tables (`fixtures_cache`, `users`, `holdings`, `ledger_entries`, `squad_posts`, `squad_slots`, `squad_comments`) and HMR/PgBouncer-safe (`prepare: false`) singleton client with `isDatabaseConfigured()` guard.
+- `src/lib/repositories/fixtureCacheRepository.ts`, `src/lib/providers/ApiFootballProvider.ts`: Implemented `FixtureCacheRepository` (`PostgresFixtureCacheRepository` + `MemoryFixtureCacheRepository` fallback) and wired 3-tier caching (`getMatchesByDate`/`fetchMatchesForDate`, `fetchFixtureDetail`), permanent `FT` caching, per-fixture FT detail reuse, and stale DB fallback.
+- `tests/fixtureCacheRepository.test.ts`: Added offline tests covering unset `DATABASE_URL` fallback, 0-call permanent `FT` DB cache hits after memory clear, `LIVE`/`PRE` TTL expiry & FT upgrade, stale 429 DB fallback, and schema exports.
+
+## Known Issues & Next Steps
+- Phase 2: Migrate user accounts, portfolio holdings, and append-only trade ledger to PostgreSQL (`users`, `holdings`, `ledger_entries`).
+- Phase 3: Migrate 11-player squad feed and comments to PostgreSQL (`squad_posts`, `squad_slots`, `squad_comments`).
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

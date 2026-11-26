@@ -11,6 +11,13 @@ import {
   type MatchParticipant,
 } from "../priceEngine.ts";
 import { diffScoreSnapshotsToTeamEvents } from "./scoreDiff.ts";
+import {
+  clearDefaultFixtureCacheRepositoryForTesting,
+  deriveDateMatchesStatus,
+  deriveSingleFixtureStatus,
+  getDefaultFixtureCacheRepository,
+  type FixtureCacheRepository,
+} from "../repositories/fixtureCacheRepository.ts";
 import type {
   MatchDataProvider,
   ProviderEvaluationResult,
@@ -1052,15 +1059,18 @@ export class ApiFootballProvider implements MatchDataProvider {
   private readonly apiKey: string;
   private readonly fetchImpl: typeof fetch;
   private readonly nowFn: () => number;
+  private readonly cacheRepo: FixtureCacheRepository;
 
   constructor(options?: {
     apiKey?: string;
     fetchImpl?: typeof fetch;
     nowFn?: () => number;
+    cacheRepo?: FixtureCacheRepository;
   }) {
     this.apiKey = (options?.apiKey ?? process.env.API_FOOTBALL_KEY ?? "").trim();
     this.fetchImpl = options?.fetchImpl ?? fetch;
     this.nowFn = options?.nowFn ?? (() => Date.now());
+    this.cacheRepo = options?.cacheRepo ?? getDefaultFixtureCacheRepository();
   }
 
   static isConfigured(rawKey = process.env.API_FOOTBALL_KEY): boolean {
@@ -1076,6 +1086,7 @@ export class ApiFootballProvider implements MatchDataProvider {
     ApiFootballProvider.eventsByFixtureCache.clear();
     ApiFootballProvider.playersByFixtureCache.clear();
     ApiFootballProvider.batchIdsSupported = null;
+    clearDefaultFixtureCacheRepositoryForTesting();
   }
 
   private async requestJson<T>(endpointWithQuery: string): Promise<T> {
@@ -1260,9 +1271,34 @@ export class ApiFootballProvider implements MatchDataProvider {
     return { lineups, events, players, normalized };
   }
 
+  private getFixtureDetailDbTtlMs(status: MatchStatus): number | null {
+    if (status === "FT") return null; // Permanent retention in DB cache
+    if (status === "LIVE") return CACHE_TTL_MS.LIVE_EVENTS;
+    return CACHE_TTL_MS.PRE_LINEUPS;
+  }
+
+  private async persistFixtureDetailToRepo(
+    fixtureId: number,
+    normalized: Match,
+    now: number,
+    patchDateLists = false
+  ): Promise<void> {
+    await this.cacheRepo.setFixtureDetail({
+      fixtureId,
+      match: normalized,
+      status: deriveSingleFixtureStatus(normalized),
+      fetchedAtMs: now,
+      ttlMs: this.getFixtureDetailDbTtlMs(normalized.status),
+    });
+    if (patchDateLists) {
+      await this.cacheRepo.patchFixtureInCachedDates(normalized);
+    }
+  }
+
   /**
    * Fetch full detail (lineups, bench, formation, coach, events, player ratings)
-   * for a single fixture via `GET /fixtures?id={fixtureId}` (1 API call on Free Plan).
+   * for a single fixture with 3-tier lookup:
+   * 1) in-memory cache -> 2) DB cache (`fixtures_cache`) -> 3) external API (`/fixtures?id={fixtureId}`).
    */
   async fetchFixtureDetail(
     fixtureId: number
@@ -1273,8 +1309,23 @@ export class ApiFootballProvider implements MatchDataProvider {
       return { match: cached.value, fromCache: true };
     }
 
+    const dbCached = await this.cacheRepo.getFixtureDetail(fixtureId, now);
+    if (dbCached) {
+      ApiFootballProvider.fixtureDetailCache.set(fixtureId, {
+        value: dbCached.match,
+        expiresAt:
+          dbCached.expiresAtMs ?? now + CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS,
+        updatedAt: dbCached.fetchedAtMs,
+      });
+      return { match: dbCached.match, fromCache: true };
+    }
+
     if (!ApiFootballProvider.isConfigured(this.apiKey)) {
-      return { match: cached?.value ?? null, fromCache: Boolean(cached) };
+      if (cached) {
+        return { match: cached.value, fromCache: true };
+      }
+      const staleDb = await this.cacheRepo.getStaleFixtureDetail(fixtureId);
+      return { match: staleDb?.match ?? null, fromCache: Boolean(staleDb) };
     }
 
     try {
@@ -1283,13 +1334,29 @@ export class ApiFootballProvider implements MatchDataProvider {
       );
       const raw = items[0];
       if (!raw) {
-        return { match: cached?.value ?? null, fromCache: Boolean(cached) };
+        if (cached) {
+          return { match: cached.value, fromCache: true };
+        }
+        const staleDb = await this.cacheRepo.getStaleFixtureDetail(fixtureId);
+        return { match: staleDb?.match ?? null, fromCache: Boolean(staleDb) };
       }
       const stored = this.storeFixtureDetailCaches(raw);
+      if (stored) {
+        await this.persistFixtureDetailToRepo(
+          fixtureId,
+          stored.normalized,
+          now,
+          true
+        );
+      }
       return { match: stored?.normalized ?? null, fromCache: false };
     } catch (err) {
       if (cached) {
         return { match: cached.value, fromCache: true };
+      }
+      const staleDb = await this.cacheRepo.getStaleFixtureDetail(fixtureId);
+      if (staleDb) {
+        return { match: staleDb.match, fromCache: true };
       }
       throw err;
     }
@@ -1318,6 +1385,7 @@ export class ApiFootballProvider implements MatchDataProvider {
     >();
     if (items.length === 0) return result;
 
+    const now = this.nowFn();
     const statusById = new Map<number, MatchStatus>();
     for (const entry of items) {
       statusById.set(entry.fixtureId, entry.status);
@@ -1342,6 +1410,7 @@ export class ApiFootballProvider implements MatchDataProvider {
             if (!fId) continue;
             const stored = this.storeFixtureDetailCaches(item, statusById.get(fId));
             if (stored) {
+              await this.persistFixtureDetailToRepo(fId, stored.normalized, now);
               result.set(fId, {
                 lineups: stored.lineups,
                 events: stored.events,
@@ -1374,6 +1443,11 @@ export class ApiFootballProvider implements MatchDataProvider {
           if (!item) continue;
           const stored = this.storeFixtureDetailCaches(item, entry.status);
           if (stored) {
+            await this.persistFixtureDetailToRepo(
+              entry.fixtureId,
+              stored.normalized,
+              now
+            );
             result.set(entry.fixtureId, {
               lineups: stored.lineups,
               events: stored.events,
@@ -1392,7 +1466,22 @@ export class ApiFootballProvider implements MatchDataProvider {
   }
 
   /**
-   * Fetch and normalize matches for `targetDate` (YYYY-MM-DD) with differential TTL caching.
+   * Alias for `fetchMatchesForDate` matching the `FixtureCacheRepository` naming contract.
+   */
+  async getMatchesByDate(
+    targetDate: string,
+    options?: { enrichTopDetailsCount?: number }
+  ): Promise<{
+    matches: Match[];
+    fromCache: boolean;
+    staleFallback: boolean;
+  }> {
+    return this.fetchMatchesForDate(targetDate, options);
+  }
+
+  /**
+   * Fetch and normalize matches for `targetDate` (YYYY-MM-DD) with 3-tier caching:
+   * 1) in-memory cache -> 2) DB cache (`fixtures_cache`, permanent for FT) -> 3) external API.
    * On 429 or timeout, returns the last cached snapshot if available (`staleFallback: true`).
    */
   async fetchMatchesForDate(
@@ -1413,6 +1502,21 @@ export class ApiFootballProvider implements MatchDataProvider {
       };
     }
 
+    const dbCached = await this.cacheRepo.getMatchesByDate(targetDate, now);
+    if (dbCached) {
+      ApiFootballProvider.fixturesByDateCache.set(targetDate, {
+        value: dbCached.matches,
+        expiresAt:
+          dbCached.expiresAtMs ?? now + CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS,
+        updatedAt: dbCached.fetchedAtMs,
+      });
+      return {
+        matches: dbCached.matches,
+        fromCache: true,
+        staleFallback: false,
+      };
+    }
+
     const cachedPlanErr =
       ApiFootballProvider.planWindowErrorCache.get(targetDate);
     if (!cached && cachedPlanErr && now < cachedPlanErr.expiresAt) {
@@ -1422,6 +1526,14 @@ export class ApiFootballProvider implements MatchDataProvider {
     if (!ApiFootballProvider.isConfigured(this.apiKey)) {
       if (cached) {
         return { matches: cached.value, fromCache: true, staleFallback: true };
+      }
+      const staleDb = await this.cacheRepo.getStaleMatchesByDate(targetDate);
+      if (staleDb) {
+        return {
+          matches: staleDb.matches,
+          fromCache: true,
+          staleFallback: true,
+        };
       }
       throw new Error("API_FOOTBALL_KEY_MISSING_OR_INVALID");
     }
@@ -1447,6 +1559,7 @@ export class ApiFootballProvider implements MatchDataProvider {
       const explicitEnrichLimit = options?.enrichTopDetailsCount;
       const shouldEnrichDetails = explicitEnrichLimit !== 0;
 
+      const dbReusedDetails = new Map<number, Match>();
       const itemsNeedingDetails: Array<{ fixtureId: number; status: MatchStatus }> = [];
       if (shouldEnrichDetails) {
         const prioritizedCandidates: Array<{
@@ -1477,6 +1590,20 @@ export class ApiFootballProvider implements MatchDataProvider {
             (cachedEvents !== undefined && now < cachedEvents.expiresAt);
 
           if (!lineupsFresh || !eventsFresh) {
+            const dbDetail = await this.cacheRepo.getFixtureDetail(fId, now);
+            const expectedCacheStatus =
+              st === "FT" ? "FT" : st === "LIVE" ? "LIVE" : "PRE";
+            if (dbDetail && dbDetail.status === expectedCacheStatus) {
+              dbReusedDetails.set(fId, dbDetail.match);
+              ApiFootballProvider.fixtureDetailCache.set(fId, {
+                value: dbDetail.match,
+                expiresAt:
+                  dbDetail.expiresAtMs ??
+                  now + CACHE_TTL_MS.LOCKED_LINEUPS_OR_FT_EVENTS,
+                updatedAt: dbDetail.fetchedAtMs,
+              });
+              continue;
+            }
             prioritizedCandidates.push({
               fixtureId: fId,
               status: st,
@@ -1514,9 +1641,18 @@ export class ApiFootballProvider implements MatchDataProvider {
       const normalized: Match[] = [];
       for (const item of selectedRaw) {
         const fId = item.fixture?.id;
+        if (fId && dbReusedDetails.has(fId)) {
+          normalized.push(dbReusedDetails.get(fId)!);
+          continue;
+        }
+
         let lineups = item.lineups;
         let events = item.events;
         let players = item.players;
+        const hadInlineDetail =
+          (Array.isArray(item.lineups) && item.lineups.length > 0) ||
+          (Array.isArray(item.events) && item.events.length > 0) ||
+          (Array.isArray(item.players) && item.players.length > 0);
 
         if (fId) {
           const detail = fetchedDetailsMap.get(fId);
@@ -1548,26 +1684,40 @@ export class ApiFootballProvider implements MatchDataProvider {
           }
         }
 
-        normalized.push(
-          normalizeApiFootballFixture({
-            ...item,
-            ...(lineups && lineups.length > 0 ? { lineups } : {}),
-            ...(events && events.length > 0 ? { events } : {}),
-            ...(players && players.length > 0 ? { players } : {}),
-          })
-        );
+        const normalizedMatch = normalizeApiFootballFixture({
+          ...item,
+          ...(lineups && lineups.length > 0 ? { lineups } : {}),
+          ...(events && events.length > 0 ? { events } : {}),
+          ...(players && players.length > 0 ? { players } : {}),
+        });
+
+        if (fId && hadInlineDetail && !fetchedDetailsMap.has(fId)) {
+          await this.persistFixtureDetailToRepo(fId, normalizedMatch, now);
+        }
+
+        normalized.push(normalizedMatch);
       }
 
       const hasLive = normalized.some((m) => m.status === "LIVE");
       const ttl = hasLive
         ? CACHE_TTL_MS.LIVE_FIXTURES
         : CACHE_TTL_MS.STATIC_FIXTURES;
+      const dateStatus = deriveDateMatchesStatus(normalized);
+      const dbDateTtlMs =
+        dateStatus === "FT" && explicitEnrichLimit !== 0 ? null : ttl;
 
       ApiFootballProvider.planWindowErrorCache.delete(targetDate);
       ApiFootballProvider.fixturesByDateCache.set(targetDate, {
         value: normalized,
         expiresAt: now + ttl,
         updatedAt: now,
+      });
+      await this.cacheRepo.setMatchesByDate({
+        date: targetDate,
+        matches: normalized,
+        status: dateStatus,
+        fetchedAtMs: now,
+        ttlMs: dbDateTtlMs,
       });
 
       return {
@@ -1579,6 +1729,14 @@ export class ApiFootballProvider implements MatchDataProvider {
       if (cached) {
         return {
           matches: cached.value,
+          fromCache: true,
+          staleFallback: true,
+        };
+      }
+      const staleDb = await this.cacheRepo.getStaleMatchesByDate(targetDate);
+      if (staleDb) {
+        return {
+          matches: staleDb.matches,
           fromCache: true,
           staleFallback: true,
         };
