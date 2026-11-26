@@ -10,7 +10,10 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import { Player, PositionLine, getPositionLine } from "@/types";
-import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
+import {
+  formatPlayerDisplayName,
+  matchesPlayerSearchQuery,
+} from "@/lib/playerDisplayName";
 import { type SquadFormationSlot } from "@/lib/squadFeed";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
@@ -86,15 +89,9 @@ export default function SquadPlayerPickerModal({
           return false;
         }
         if (!q) return true;
-        const fullKo = formatPlayerDisplayName(item.player, "full").toLowerCase();
-        const en = (item.player.englishName ?? "").toLowerCase();
-        const team = item.player.teamName.toLowerCase();
-        const pos = item.player.position.toLowerCase();
         return (
-          fullKo.includes(q) ||
-          en.includes(q) ||
-          team.includes(q) ||
-          pos.includes(q)
+          matchesPlayerSearchQuery(item.player, q) ||
+          item.player.position.toLowerCase().includes(q)
         );
       })
       .sort((a, b) => {

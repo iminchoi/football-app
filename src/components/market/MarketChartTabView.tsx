@@ -16,10 +16,8 @@ import {
 } from "@/store/useTradeStore";
 import {
   Player,
-  PositionLine,
   PricePoint,
   TradeType,
-  getPositionLine,
 } from "@/types";
 import { WEIGHTS } from "@/lib/weights";
 import {
@@ -29,10 +27,17 @@ import {
   resolveSyncedMatch,
 } from "@/lib/matchSync";
 import { PlayerQuote, resolvePlayerQuote } from "@/lib/playerQuote";
+import { formatPlayerDisplayName } from "@/lib/playerDisplayName";
 import {
-  formatPlayerDisplayName,
-  matchesPlayerSearchQuery,
-} from "@/lib/playerDisplayName";
+  DEFAULT_MARKET_PAGE_SIZE,
+  buildMarketRankingList,
+  paginateMarketPlayers,
+  selectHotSpotlightPlayers,
+  type HotSpotlightItem,
+  type MarketLeagueFilter,
+  type MarketPositionFilter,
+  type MarketSortMode,
+} from "@/lib/marketListing";
 import PlayerAvatar from "@/components/PlayerAvatar";
 
 interface MarketChartTabViewProps {
@@ -42,73 +47,17 @@ interface MarketChartTabViewProps {
   onSelectPlayerTrade: (player: Player, type: TradeType) => void;
 }
 
-type PositionFilter = "ALL" | PositionLine;
-type LeagueFilter =
-  | "ALL"
-  | "EPL"
-  | "LALIGA"
-  | "BUNDESLIGA"
-  | "SERIEA"
-  | "LIGUE1"
-  | "AMATCH";
-type SortMode = "GAINERS" | "LOSERS" | "PRICE" | "RATING";
+type PositionFilter = MarketPositionFilter;
+type LeagueFilter = MarketLeagueFilter;
+type SortMode = MarketSortMode;
 
-const SPOTLIGHT_IDS = [
-  "p-son",
-  "p-haaland",
-  "p-bellingham",
-  "p-lee",
-  "p-kim",
-  "p-mbappe",
-];
-
-const EplTeams = new Set([
-  "토트넘 홋스퍼",
-  "아스널",
-  "아스날",
-  "Arsenal",
-  "뉴캐슬",
-  "뉴캐슬 유나이티드",
-  "Newcastle",
-  "맨체스터 시티",
-  "리버풀",
-  "첼시",
-  "맨체스터 유나이티드",
-  "울버햄튼",
-  "브라이튼",
-  "크리스탈 팰리스",
-  "스토크 시티",
-]);
-const LaLigaTeams = new Set([
-  "레알 마드리드",
-  "FC 바르셀로나",
-  "아틀레티코 마드리드",
-  "레알 소시에다드",
-  "아틀레틱 빌바오",
-]);
-const BundesligaTeams = new Set([
-  "바이에른 뮌헨",
-  "레버쿠젠",
-  "도르트문트",
-  "마인츠",
-  "슈투트가르트",
-  "묀헨글라트바흐",
-  "라이프치히",
-  "프라이부르크",
-]);
-const SerieATeams = new Set([
-  "인테르 밀란",
-  "유벤투스",
-  "AC 밀란",
-  "나폴리",
-  "파르마",
-]);
-const Ligue1Teams = new Set([
-  "파리 생제르맹",
-  "AS 모나코",
-  "스타드 랭스",
-  "마르세유",
-]);
+const SPOTLIGHT_BADGE_TONE: Record<HotSpotlightItem["tone"], string> = {
+  emerald: "bg-[#00A878]/10 text-[#008C63] border-[#00A878]/25",
+  sky: "bg-sky-50 text-sky-700 border-sky-200/80",
+  amber: "bg-amber-50 text-amber-800 border-amber-200/80",
+  violet: "bg-violet-50 text-violet-700 border-violet-200/80",
+  slate: "bg-slate-100 text-slate-700 border-slate-200/80",
+};
 
 function buildSparklinePoints(
   history: PricePoint[],
@@ -142,6 +91,7 @@ export default function MarketChartTabView({
   const hasFetchedTodayMatches = useTradeStore((s) => s.hasFetchedTodayMatches);
   const fetchTodayMatches = useTradeStore((s) => s.fetchTodayMatches);
   const watchlist = useTradeStore((s) => s.watchlist);
+  const holdings = useTradeStore((s) => s.holdings);
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
   const setActiveTab = useTradeStore((s) => s.setActiveTab);
 
@@ -158,64 +108,34 @@ export default function MarketChartTabView({
   const [onlySurge5, setOnlySurge5] = useState<boolean>(false);
   const [onlyWonderkid, setOnlyWonderkid] = useState<boolean>(false);
   const [onlyWatchlist, setOnlyWatchlist] = useState<boolean>(false);
+  const [includeMinorLeagues, setIncludeMinorLeagues] = useState<boolean>(false);
+  const [visibleCount, setVisibleCount] = useState<number>(DEFAULT_MARKET_PAGE_SIZE);
 
-  const spotlightPlayers = useMemo(() => {
-    return SPOTLIGHT_IDS.map((id) => players.find((p) => p.id === id)).filter(
-      (p): p is Player => Boolean(p)
-    );
-  }, [players]);
+  // Reset pagination whenever filters, sort order, or search query change
+  useEffect(() => {
+    setVisibleCount(DEFAULT_MARKET_PAGE_SIZE);
+  }, [
+    searchQuery,
+    posFilter,
+    leagueFilter,
+    sortMode,
+    onlySurge5,
+    onlyWonderkid,
+    onlyWatchlist,
+    includeMinorLeagues,
+  ]);
 
   const todayKeyMatches = useMemo(() => {
     return todayMatches.slice(0, 4).map((m) => resolveSyncedMatch(m, matches));
   }, [todayMatches, matches]);
 
-  const doesPlayerMatchLeague = (
-    player: Player,
-    league: LeagueFilter
-  ): boolean => {
-    if (league === "ALL") return true;
-    const playerMatch = matches.find(
-      (m) => m.id === player.matchId || doesPlayerBelongToMatch(player, m)
-    );
-    const lid = (playerMatch?.leagueId || "").toLowerCase();
-    const club = player.teamName.trim();
-
-    if (league === "AMATCH") {
-      return (
-        Boolean(player.nationalTeam && player.nationalTeam !== "기타") &&
-        (isNationalTeamMatch(playerMatch) ||
-          [
-            "대한민국",
-            "일본",
-            "잉글랜드",
-            "스페인",
-            "노르웨이",
-            "포르투갈",
-          ].includes(player.nationalTeam))
-      );
+  const heldPlayerIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [id, h] of Object.entries(holdings)) {
+      if (h && h.quantity > 0) ids.add(id);
     }
-    if (league === "EPL") {
-      return (
-        lid === "epl" ||
-        lid === "pl" ||
-        lid === "pl-2021" ||
-        EplTeams.has(club)
-      );
-    }
-    if (league === "LALIGA") {
-      return lid === "laliga" || lid === "pd" || LaLigaTeams.has(club);
-    }
-    if (league === "BUNDESLIGA") {
-      return lid === "bundesliga" || lid === "bl1" || BundesligaTeams.has(club);
-    }
-    if (league === "SERIEA") {
-      return lid === "seriea" || lid === "sa" || SerieATeams.has(club);
-    }
-    if (league === "LIGUE1") {
-      return lid === "ligue1" || lid === "fl1" || Ligue1Teams.has(club);
-    }
-    return true;
-  };
+    return ids;
+  }, [holdings]);
 
   const hasActiveFilter =
     searchQuery.trim() !== "" ||
@@ -223,7 +143,8 @@ export default function MarketChartTabView({
     leagueFilter !== "ALL" ||
     onlySurge5 ||
     onlyWonderkid ||
-    onlyWatchlist;
+    onlyWatchlist ||
+    includeMinorLeagues;
 
   const handleResetFilters = () => {
     onSearchQueryChange("");
@@ -232,6 +153,8 @@ export default function MarketChartTabView({
     setOnlySurge5(false);
     setOnlyWonderkid(false);
     setOnlyWatchlist(false);
+    setIncludeMinorLeagues(false);
+    setVisibleCount(DEFAULT_MARKET_PAGE_SIZE);
   };
 
   const quoteByPlayerId = useMemo<Map<string, PlayerQuote>>(() => {
@@ -251,64 +174,59 @@ export default function MarketChartTabView({
   const getCachedMarketQuote = (p: Player): PlayerQuote =>
     quoteByPlayerId.get(p.id) ?? resolvePlayerQuote(p, "LIVE");
 
-  const rankedPlayers = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+  const spotlightItems = useMemo(
+    () =>
+      selectHotSpotlightPlayers({
+        players,
+        matches,
+        quoteByPlayerId,
+        count: 6,
+        belongsToMatch: doesPlayerBelongToMatch,
+      }),
+    [players, matches, quoteByPlayerId]
+  );
 
-    const filtered = players.filter((p) => {
-      if (q && !matchesPlayerSearchQuery(p, q)) {
-        return false;
-      }
+  const rankingResult = useMemo(
+    () =>
+      buildMarketRankingList({
+        players,
+        matches,
+        quoteByPlayerId,
+        searchQuery,
+        posFilter,
+        leagueFilter,
+        sortMode,
+        onlySurge5,
+        onlyWonderkid,
+        onlyWatchlist,
+        watchlist,
+        heldPlayerIds,
+        includeMinorLeagues,
+        belongsToMatch: doesPlayerBelongToMatch,
+        isNationalTeamMatchFn: isNationalTeamMatch,
+      }),
+    [
+      players,
+      matches,
+      quoteByPlayerId,
+      searchQuery,
+      posFilter,
+      leagueFilter,
+      sortMode,
+      onlySurge5,
+      onlyWonderkid,
+      onlyWatchlist,
+      watchlist,
+      heldPlayerIds,
+      includeMinorLeagues,
+    ]
+  );
 
-      if (posFilter !== "ALL" && getPositionLine(p.position) !== posFilter) {
-        return false;
-      }
-
-      if (!doesPlayerMatchLeague(p, leagueFilter)) {
-        return false;
-      }
-
-      const pct = (
-        quoteByPlayerId.get(p.id) ?? resolvePlayerQuote(p, "LIVE")
-      ).changePct;
-      if (onlySurge5 && pct < 5) {
-        return false;
-      }
-
-      if (onlyWonderkid && p.tier !== "C" && (p.basePrice ?? p.initialPrice) >= 5000) {
-        return false;
-      }
-
-      if (onlyWatchlist && !watchlist.includes(p.id)) {
-        return false;
-      }
-
-      return true;
-    });
-
-    return filtered.sort((a, b) => {
-      const quoteA =
-        quoteByPlayerId.get(a.id) ?? resolvePlayerQuote(a, "LIVE");
-      const quoteB =
-        quoteByPlayerId.get(b.id) ?? resolvePlayerQuote(b, "LIVE");
-
-      if (sortMode === "GAINERS") return quoteB.changePct - quoteA.changePct;
-      if (sortMode === "LOSERS") return quoteA.changePct - quoteB.changePct;
-      if (sortMode === "PRICE") return quoteB.currentPrice - quoteA.currentPrice;
-      return b.stats.rating - a.stats.rating;
-    });
-  }, [
-    players,
-    matches,
-    quoteByPlayerId,
-    searchQuery,
-    posFilter,
-    leagueFilter,
-    onlySurge5,
-    onlyWonderkid,
-    onlyWatchlist,
-    watchlist,
-    sortMode,
-  ]);
+  const rankedPlayers = rankingResult.items;
+  const paginated = useMemo(
+    () => paginateMarketPlayers(rankedPlayers, visibleCount, DEFAULT_MARKET_PAGE_SIZE),
+    [rankedPlayers, visibleCount]
+  );
 
   return (
     <div className="px-4 lg:px-6 pt-5 pb-10 space-y-5">
@@ -324,13 +242,13 @@ export default function MarketChartTabView({
               </h2>
             </div>
             <span className="whitespace-nowrap text-[11px] font-medium text-gray-400">
-              카드 클릭 시 즉시 차트 · 주문 패널 연결
+              수익률 · 거래량 · 평점 · 공격P 실시간 근거 기반 자동 선정
             </span>
           </div>
 
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-2.5">
-            {spotlightPlayers.map((p) => {
-              const quote = getCachedMarketQuote(p);
+            {spotlightItems.map((item) => {
+              const { player: p, quote, reasonLabel, tone } = item;
               const rawPct = quote.changePct;
               const maxPct = WEIGHTS.CAP_LIMIT * 100;
               const pct = Math.max(-maxPct, Math.min(maxPct, rawPct));
@@ -345,7 +263,7 @@ export default function MarketChartTabView({
 
               return (
                 <button
-                  key={p.id}
+                  key={`${item.category}-${p.id}`}
                   type="button"
                   onClick={() => onSelectPlayerTrade(p, "BUY")}
                   className={`flex min-w-0 flex-col justify-between rounded-xl border p-2.5 sm:p-3 text-left transition hover:border-[#00A878]/60 active:scale-[0.99] ${
@@ -354,6 +272,16 @@ export default function MarketChartTabView({
                       : "border-gray-200/80 bg-[#F7F9F8]"
                   }`}
                 >
+                  {/* 0단: 동적 선정 근거 배지 */}
+                  <div className="mb-1.5 flex w-full items-center justify-between gap-1">
+                    <span
+                      data-testid={`spotlight-reason-${p.id}`}
+                      className={`inline-flex max-w-full truncate rounded-full border px-2 py-0.5 text-[9.5px] font-extrabold leading-tight ${SPOTLIGHT_BADGE_TONE[tone]}`}
+                    >
+                      {reasonLabel}
+                    </span>
+                  </div>
+
                   {/* 1단: 좌측 PlayerAvatar + 우측 미니 스파크라인 */}
                   <div className="flex w-full items-center justify-between gap-1.5">
                     <PlayerAvatar player={p} size={30} />
@@ -589,6 +517,24 @@ export default function MarketChartTabView({
               ★ 관심만
             </button>
 
+            {(rankingResult.minorExcludedCount > 0 || includeMinorLeagues) &&
+              searchQuery.trim() === "" &&
+              leagueFilter === "ALL" && (
+                <button
+                  type="button"
+                  onClick={() => setIncludeMinorLeagues((v) => !v)}
+                  className={`h-8 rounded-xl border px-3 text-xs font-bold transition ${
+                    includeMinorLeagues
+                      ? "border-gray-900 bg-gray-900 text-white"
+                      : "border-gray-200 bg-[#F7F9F8] text-gray-600 hover:text-gray-900"
+                  }`}
+                >
+                  {includeMinorLeagues
+                    ? "기타 리그 포함 중"
+                    : `기타 리그 포함 (+${rankingResult.minorExcludedCount})`}
+                </button>
+              )}
+
             {hasActiveFilter && (
               <button
                 type="button"
@@ -601,8 +547,10 @@ export default function MarketChartTabView({
             )}
           </div>
 
-          <span className="text-[11px] font-semibold text-gray-400">
-            총 {rankedPlayers.length}명
+          <span className="font-mono text-[11px] font-semibold text-gray-400 tabular-nums">
+            {searchQuery.trim()
+              ? `전체 검색 ${rankedPlayers.length}명`
+              : `표시 ${paginated.visibleItems.length} / ${rankedPlayers.length}명`}
           </span>
         </div>
 
@@ -621,8 +569,9 @@ export default function MarketChartTabView({
             </button>
           </div>
         ) : (
+          <>
           <div className="divide-y divide-gray-100">
-            {rankedPlayers.map((p, idx) => {
+            {paginated.visibleItems.map((p, idx) => {
               const quote = getCachedMarketQuote(p);
               const diff = quote.diff;
               const pct = quote.changePct;
@@ -744,6 +693,23 @@ export default function MarketChartTabView({
               );
             })}
           </div>
+
+          {paginated.hasMore && (
+            <div className="border-t border-gray-100 bg-[#F9FAFB] px-4 py-3 text-center">
+              <button
+                type="button"
+                data-testid="market-load-more-btn"
+                onClick={() => setVisibleCount(paginated.nextVisibleCount)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-5 py-2 text-xs font-extrabold text-gray-700 shadow-sm transition hover:border-[#00A878] hover:text-[#00A878]"
+              >
+                <span>
+                  더 보기 (+{Math.min(DEFAULT_MARKET_PAGE_SIZE, paginated.remainingCount)}명 · 남은{" "}
+                  {paginated.remainingCount}명)
+                </span>
+              </button>
+            </div>
+          )}
+          </>
         )}
       </section>
     </div>

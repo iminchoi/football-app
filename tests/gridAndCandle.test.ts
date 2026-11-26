@@ -35,18 +35,18 @@ describe("API-Football Grid Formation Layout & Candlestick OHLC Smoothing", () =
           team: { id: 40, name: "Liverpool" },
           coach: { id: 10, name: "Arne Slot" },
           formation: "4-2-3-1",
-          // Intentionally scrambled input order to prove sorting relies on grid, not array order
+          // Intentionally scrambled input order; API-Football col=1 is Left (LB/LAM/LW) -> col=N is Right (RB/RAM/RW)
           startXI: [
-            { player: { id: 11, name: "M. Salah", number: 11, pos: "M", grid: "4:1" } },
+            { player: { id: 11, name: "M. Salah", number: 11, pos: "M", grid: "4:3" } },
             { player: { id: 1, name: "Alisson", number: 1, pos: "G", grid: "1:1" } },
-            { player: { id: 30, name: "J. Frimpong", number: 30, pos: "D", grid: "2:1" } },
-            { player: { id: 6, name: "M. Kerkez", number: 6, pos: "D", grid: "2:4" } },
-            { player: { id: 38, name: "R. Gravenberch", number: 38, pos: "M", grid: "3:1" } },
-            { player: { id: 5, name: "I. Konate", number: 5, pos: "D", grid: "2:2" } },
-            { player: { id: 4, name: "V. van Dijk", number: 4, pos: "D", grid: "2:3" } },
-            { player: { id: 10, name: "A. Mac Allister", number: 10, pos: "M", grid: "3:2" } },
+            { player: { id: 30, name: "J. Frimpong", number: 30, pos: "D", grid: "2:4" } },
+            { player: { id: 6, name: "M. Kerkez", number: 6, pos: "D", grid: "2:1" } },
+            { player: { id: 38, name: "R. Gravenberch", number: 38, pos: "M", grid: "3:2" } },
+            { player: { id: 5, name: "I. Konate", number: 5, pos: "D", grid: "2:3" } },
+            { player: { id: 4, name: "V. van Dijk", number: 4, pos: "D", grid: "2:2" } },
+            { player: { id: 10, name: "A. Mac Allister", number: 10, pos: "M", grid: "3:1" } },
             { player: { id: 7, name: "F. Wirtz", number: 7, pos: "M", grid: "4:2" } },
-            { player: { id: 18, name: "C. Gakpo", number: 18, pos: "M", grid: "4:3" } },
+            { player: { id: 18, name: "C. Gakpo", number: 18, pos: "M", grid: "4:1" } },
             { player: { id: 22, name: "H. Ekitike", number: 22, pos: "F", grid: "5:1" } },
           ],
           substitutes: [
@@ -59,16 +59,16 @@ describe("API-Football Grid Formation Layout & Candlestick OHLC Smoothing", () =
           formation: "4-3-3",
           startXI: [
             { player: { id: 201, name: "D. Raya", number: 22, pos: "G", grid: "1:1" } },
-            { player: { id: 202, name: "J. Timber", number: 12, pos: "D", grid: "2:1" } },
-            { player: { id: 203, name: "W. Saliba", number: 2, pos: "D", grid: "2:2" } },
-            { player: { id: 204, name: "Gabriel", number: 6, pos: "D", grid: "2:3" } },
-            { player: { id: 205, name: "R. Calafiori", number: 33, pos: "D", grid: "2:4" } },
-            { player: { id: 206, name: "M. Odegaard", number: 8, pos: "M", grid: "3:1" } },
+            { player: { id: 205, name: "R. Calafiori", number: 33, pos: "D", grid: "2:1" } },
+            { player: { id: 204, name: "Gabriel", number: 6, pos: "D", grid: "2:2" } },
+            { player: { id: 203, name: "W. Saliba", number: 2, pos: "D", grid: "2:3" } },
+            { player: { id: 202, name: "J. Timber", number: 12, pos: "D", grid: "2:4" } },
+            { player: { id: 208, name: "M. Merino", number: 23, pos: "M", grid: "3:1" } },
             { player: { id: 207, name: "D. Rice", number: 41, pos: "M", grid: "3:2" } },
-            { player: { id: 208, name: "M. Merino", number: 23, pos: "M", grid: "3:3" } },
-            { player: { id: 209, name: "B. Saka", number: 7, pos: "F", grid: "4:1" } },
+            { player: { id: 206, name: "M. Odegaard", number: 8, pos: "M", grid: "3:3" } },
+            { player: { id: 211, name: "G. Martinelli", number: 11, pos: "F", grid: "4:1" } },
             { player: { id: 210, name: "K. Havertz", number: 29, pos: "F", grid: "4:2" } },
-            { player: { id: 211, name: "G. Martinelli", number: 11, pos: "F", grid: "4:3" } },
+            { player: { id: 209, name: "B. Saka", number: 7, pos: "F", grid: "4:3" } },
           ],
           substitutes: [],
         },
@@ -78,23 +78,23 @@ describe("API-Football Grid Formation Layout & Candlestick OHLC Smoothing", () =
 
     const match = normalizeApiFootballFixture(fixture);
 
-    // 1. Verify ApiLineupPlayer preserves grid and maps col=1 -> RB / col=4 -> LB cleanly
+    // 1. Verify ApiLineupPlayer preserves grid and maps col=1 -> LB / col=4 -> RB cleanly
     const frimpongApi = match.homeTeam.lineup?.find((p) => p.name === "J. Frimpong");
     const kerkezApi = match.homeTeam.lineup?.find((p) => p.name === "M. Kerkez");
     const salahApi = match.homeTeam.lineup?.find((p) => p.name === "M. Salah");
     const gakpoApi = match.homeTeam.lineup?.find((p) => p.name === "C. Gakpo");
     const wirtzApi = match.homeTeam.lineup?.find((p) => p.name === "F. Wirtz");
 
-    assert.equal(frimpongApi?.grid, "2:1");
-    assert.equal(frimpongApi?.position, "RB");
-    assert.equal(kerkezApi?.grid, "2:4");
+    assert.equal(kerkezApi?.grid, "2:1");
     assert.equal(kerkezApi?.position, "LB");
-    assert.equal(salahApi?.grid, "4:1");
-    assert.equal(salahApi?.position, "RAM");
+    assert.equal(frimpongApi?.grid, "2:4");
+    assert.equal(frimpongApi?.position, "RB");
+    assert.equal(gakpoApi?.grid, "4:1");
+    assert.equal(gakpoApi?.position, "LAM");
     assert.equal(wirtzApi?.grid, "4:2");
     assert.equal(wirtzApi?.position, "CAM");
-    assert.equal(gakpoApi?.grid, "4:3");
-    assert.equal(gakpoApi?.position, "LAM");
+    assert.equal(salahApi?.grid, "4:3");
+    assert.equal(salahApi?.position, "RAM");
 
     // 2. Verify buildTeamLineupForMatch + buildFormationRows produces exact 5 rows (1-3-2-4-1)
     const homeBuilt = buildTeamLineupForMatch(match, "HOME", []);
@@ -116,17 +116,17 @@ describe("API-Football Grid Formation Layout & Candlestick OHLC Smoothing", () =
       homeRows[0].map((p) => p.englishName),
       ["H. Ekitike"]
     );
-    // Row 1: Attacking Midfield 2선 (row 4, Left -> Right: 4:3, 4:2, 4:1)
+    // Row 1: Attacking Midfield 2선 (row 4, Left -> Right: 4:1, 4:2, 4:3)
     assert.deepEqual(
       homeRows[1].map((p) => p.englishName),
       ["C. Gakpo", "F. Wirtz", "M. Salah"]
     );
-    // Row 2: Double Pivot 3선 (row 3, Left -> Right: 3:2, 3:1)
+    // Row 2: Double Pivot 3선 (row 3, Left -> Right: 3:1, 3:2)
     assert.deepEqual(
       homeRows[2].map((p) => p.englishName),
       ["A. Mac Allister", "R. Gravenberch"]
     );
-    // Row 3: Back-4 Defense (row 2, Left -> Right: Kerkez LB 2:4 -> Van Dijk -> Konate -> Frimpong RB 2:1)
+    // Row 3: Back-4 Defense (row 2, Left -> Right: Kerkez LB 2:1 -> Van Dijk -> Konate -> Frimpong RB 2:4)
     assert.deepEqual(
       homeRows[3].map((p) => p.englishName),
       ["M. Kerkez", "V. van Dijk", "I. Konate", "J. Frimpong"]
@@ -141,7 +141,7 @@ describe("API-Football Grid Formation Layout & Candlestick OHLC Smoothing", () =
     assert.equal(homeRows[4][0].position, "GK");
     assert.equal(homeRows[4][0].grid, "1:1");
 
-    // 3. Verify 4-3-3 away lineup also orders Left -> Right accurately (LW -> ST -> RW, LB -> CB -> CB -> RB)
+    // 3. Verify 4-3-3 away lineup also orders Left -> Right accurately (col 1 -> col N)
     const awayBuilt = buildTeamLineupForMatch(match, "AWAY", []);
     const awayRows = buildFormationRows(
       awayBuilt.startingLineup,
@@ -153,11 +153,11 @@ describe("API-Football Grid Formation Layout & Candlestick OHLC Smoothing", () =
     );
     assert.deepEqual(
       awayRows[0].map((p) => p.grid),
-      ["4:3", "4:2", "4:1"]
+      ["4:1", "4:2", "4:3"]
     );
     assert.deepEqual(
       awayRows[2].map((p) => p.grid),
-      ["2:4", "2:3", "2:2", "2:1"]
+      ["2:1", "2:2", "2:3", "2:4"]
     );
   });
 

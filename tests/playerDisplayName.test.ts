@@ -26,7 +26,7 @@ test("normalizePlayerNameKey folds diacritics and non-decomposing Latin characte
   assert.equal(normalizePlayerNameKey("İlkay Gündoğan"), "ilkay gundogan");
 });
 
-test("resolvePlayerDisplayName unifies mixed Korean/English players consistently across pitch, bench, and chart", () => {
+test("resolvePlayerDisplayName unifies mixed Korean/English players to canonical English across pitch, bench, and chart", () => {
   // Same player arriving as accented English surname (m-new-ars), English full name (API), or Korean store player
   const fromFixture = resolvePlayerDisplayName({
     id: "p-ars-odegaard",
@@ -44,61 +44,78 @@ test("resolvePlayerDisplayName unifies mixed Korean/English players consistently
     englishName: "Martin Odegaard",
   });
 
-  assert.equal(fromFixture.full, "마르틴 외데고르");
-  assert.equal(fromApi.full, "마르틴 외데고르");
-  assert.equal(fromStore.full, "마르틴 외데고르");
+  assert.equal(fromFixture.full, "Martin Ødegaard");
+  assert.equal(fromApi.full, "Martin Ødegaard");
+  assert.equal(fromStore.full, "Martin Ødegaard");
 
-  assert.equal(fromFixture.pitch, "외데고르");
-  assert.equal(fromApi.pitch, "외데고르");
-  assert.equal(fromStore.pitch, "외데고르");
+  assert.equal(fromFixture.pitch, "Ødegaard");
+  assert.equal(fromApi.pitch, "Ødegaard");
+  assert.equal(fromStore.pitch, "Ødegaard");
 
-  assert.equal(fromFixture.hasDistinctEnglish, true);
+  assert.equal(fromFixture.hasDistinctEnglish, false);
   assert.equal(fromFixture.english, "Martin Ødegaard");
 
-  // Bench/starter Newcastle & Arsenal fixture players unify to Korean full + pitch labels
+  // Legacy Korean dummy names unify cleanly to English display names
   assert.deepEqual(
     {
-      full: formatPlayerDisplayName({ id: "p-ars-white", name: "Ben White" }, "full"),
-      pitch: formatPlayerDisplayName({ id: "p-ars-white", name: "Ben White" }, "pitch"),
+      full: formatPlayerDisplayName({ id: "p-ars-white", name: "벤 화이트" }, "full"),
+      pitch: formatPlayerDisplayName({ id: "p-ars-white", name: "벤 화이트" }, "pitch"),
     },
-    { full: "벤 화이트", pitch: "화이트" }
+    { full: "Ben White", pitch: "White" }
   );
   assert.deepEqual(
     {
-      full: formatPlayerDisplayName({ id: "p-new-burn", name: "Burn" }, "full"),
-      pitch: formatPlayerDisplayName({ id: "p-new-burn", name: "Burn" }, "pitch"),
+      full: formatPlayerDisplayName({ id: "p-new-burn", name: "댄 번" }, "full"),
+      pitch: formatPlayerDisplayName({ id: "p-new-burn", name: "댄 번" }, "pitch"),
     },
-    { full: "댄 번", pitch: "번" }
+    { full: "Dan Burn", pitch: "Burn" }
   );
   assert.deepEqual(
     {
-      full: formatPlayerDisplayName({ id: "p-ars-saliba", name: "William Saliba" }, "full"),
-      pitch: formatPlayerDisplayName({ id: "p-ars-saliba", name: "William Saliba" }, "pitch"),
+      full: formatPlayerDisplayName({ id: "p-ars-timber", name: "위리엔 팀버" }, "full"),
+      pitch: formatPlayerDisplayName({ id: "p-ars-timber", name: "위리엔 팀버" }, "pitch"),
     },
-    { full: "윌리엄 살리바", pitch: "살리바" }
+    { full: "Jurriën Timber", pitch: "Timber" }
+  );
+  assert.equal(
+    formatPlayerDisplayName({ id: "p-leao", name: "하파엘 레앙", englishName: "Rafael Leao" }, "full"),
+    "Rafael Leão"
+  );
+  assert.equal(
+    formatPlayerDisplayName({ id: "af-p-1", name: "알리송", englishName: "Alisson" }, "full"),
+    "Alisson Becker"
+  );
+  // Unlisted dummy player with Korean name + English fallback renders in English
+  assert.equal(
+    formatPlayerDisplayName({ id: "p-custom-99", name: "테스트 선수", englishName: "Test Player" }, "full"),
+    "Test Player"
   );
 });
 
-test("pitch labels preserve East Asian family-name-first ordering and full 3-char Korean names", () => {
+test("pitch labels use compact English surnames consistently for Asian and European players", () => {
+  assert.equal(
+    formatPlayerDisplayName({ id: "p-son", name: "손흥민", englishName: "Heung-Min Son" }, "full"),
+    "Heung-Min Son"
+  );
   assert.equal(
     formatPlayerDisplayName({ id: "p-son", name: "손흥민", englishName: "Heung-Min Son" }, "pitch"),
-    "손흥민"
+    "Son"
   );
   assert.equal(
     formatPlayerDisplayName({ id: "p-kim", name: "김민재", englishName: "Min-Jae Kim" }, "pitch"),
-    "김민재"
+    "Kim"
   );
   assert.equal(
     formatPlayerDisplayName({ id: "p-mitoma", name: "미토마 카오루", englishName: "Kaoru Mitoma" }, "pitch"),
-    "미토마"
+    "Mitoma"
   );
   assert.equal(
     formatPlayerDisplayName({ id: "p-ueda", name: "우에다 아야세", englishName: "Ayase Ueda" }, "pitch"),
-    "우에다"
+    "Ueda"
   );
   assert.equal(
     formatPlayerDisplayName({ id: "p-endo", name: "엔도 와타루", englishName: "Wataru Endo" }, "pitch"),
-    "엔도"
+    "Endo"
   );
 });
 
@@ -136,14 +153,14 @@ test("canonicalization, identity matching, and search work across scripts withou
     name: "Havertz",
     englishName: "Havertz",
   });
-  assert.equal(canonical.name, "카이 하베르츠");
+  assert.equal(canonical.name, "Kai Havertz");
   assert.equal(canonical.englishName, "Kai Havertz");
 
   const odegaard = {
     id: "p-odegaard",
-    name: "마르틴 외데고르",
-    englishName: "Martin Odegaard",
-    teamName: "아스날",
+    name: "Martin Ødegaard",
+    englishName: "Martin Ødegaard",
+    teamName: "Arsenal",
     teamShort: "ARS",
     nationalTeam: "노르웨이",
   };
@@ -152,6 +169,7 @@ test("canonicalization, identity matching, and search work across scripts withou
   assert.equal(doesIdentityMatchPlayer(odegaard, "p-ars-odegaard", "Ødegaard"), true);
   assert.equal(matchesPlayerSearchQuery(odegaard, "odegaard"), true);
   assert.equal(matchesPlayerSearchQuery(odegaard, "Ødegaard"), true);
+  // Korean auxiliary search still matches English-displayed players seamlessly
   assert.equal(matchesPlayerSearchQuery(odegaard, "외데고르"), true);
 
   // Distinct players sharing a surname must not collide

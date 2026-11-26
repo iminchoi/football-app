@@ -352,7 +352,7 @@ export function parseApiFootballGrid(
 
 /**
  * Derive a detailed position from API-Football `grid` ("row:col").
- * API-Football convention: row 1 = GK -> maxRow = strikers; col 1 = right flank (RB/RAM/RW) -> col N = left flank (LB/LAM/LW).
+ * API-Football convention: row 1 = GK -> maxRow = strikers; col 1 = left flank (LB/LAM/LW) -> col N = right flank (RB/RAM/RW).
  */
 function derivePositionFromGrid(
   rawPos: string | undefined,
@@ -364,24 +364,24 @@ function derivePositionFromGrid(
   const code = String(rawPos || "").trim().toUpperCase();
   if (row === 1 || code === "G" || code === "GK") return "GK";
 
-  // Row 2: Defensive line (col 1 = RB on pitch right, col rowSize = LB on pitch left)
+  // Row 2: Defensive line (col 1 = LB on pitch left, col rowSize = RB on pitch right)
   if (row === 2) {
     if (rowSize >= 4) {
-      if (col === 1) return "RB";
-      if (col === rowSize) return "LB";
+      if (col === 1) return "LB";
+      if (col === rowSize) return "RB";
       return "CB";
     }
     if (rowSize === 2) {
-      return col === 1 ? "RB" : "LB";
+      return col === 1 ? "LB" : "RB";
     }
     return "CB";
   }
 
-  // Highest row (row >= 3): Front attacking line
+  // Highest row (row >= 3): Front attacking line (col 1 = LW left, col rowSize = RW right)
   if (maxGridRow >= 3 && row >= maxGridRow) {
     if (rowSize >= 3) {
-      if (col === 1) return "RW";
-      if (col === rowSize) return "LW";
+      if (col === 1) return "LW";
+      if (col === rowSize) return "RW";
       return "ST";
     }
     return "ST";
@@ -391,14 +391,14 @@ function derivePositionFromGrid(
   if (maxGridRow >= 5) {
     if (row === maxGridRow - 1) {
       if (rowSize === 1) return "CAM";
-      if (rowSize === 2) return col === 1 ? "RAM" : "LAM";
+      if (rowSize === 2) return col === 1 ? "LAM" : "RAM";
       if (rowSize === 3) {
-        if (col === 1) return "RAM";
-        if (col === 3) return "LAM";
+        if (col === 1) return "LAM";
+        if (col === 3) return "RAM";
         return "CAM";
       }
-      if (col === 1) return "RAM";
-      if (col === rowSize) return "LAM";
+      if (col === 1) return "LAM";
+      if (col === rowSize) return "RAM";
       return "CM";
     }
     if (row === 3) {
@@ -413,8 +413,8 @@ function derivePositionFromGrid(
     if (rowSize === 1) return "DM";
     if (rowSize === 2) return "CM";
     if (rowSize === 3) return col === 2 ? "DM" : "CM";
-    if (col === 1) return "RAM";
-    if (col === rowSize) return "LAM";
+    if (col === 1) return "LAM";
+    if (col === rowSize) return "RAM";
     return "CM";
   }
 
@@ -443,13 +443,13 @@ function mapPosCode(
   const code = String(rawPos || "").trim().toUpperCase();
   if (code === "G" || code === "GK") return "GK";
   if (code === "D" || code === "DF") {
-    const cycle: Position[] = ["RB", "CB", "CB", "LB"];
+    const cycle: Position[] = ["LB", "CB", "CB", "RB"];
     const pos = cycle[counts.df % cycle.length];
     counts.df += 1;
     return pos;
   }
   if (code === "F" || code === "FW") {
-    const cycle: Position[] = ["RW", "ST", "LW"];
+    const cycle: Position[] = ["LW", "ST", "RW"];
     const pos = cycle[counts.fw % cycle.length];
     counts.fw += 1;
     return pos;

@@ -238,7 +238,7 @@ export interface Player {
   teamShort: string;
   teamColor: string; // Hex color for team badge
   position: Position;
-  grid?: string; // API-Football "row:col" formation coordinate (row 1=GK, col 1=right -> N=left)
+  grid?: string; // API-Football "row:col" formation coordinate (row 1=GK, col 1=left -> N=right)
   backNumber: number;
   tier: PlayerTier;
   totalShares: number; // 총 발행 주식 수 (S티어 500, A티어 1000, B티어 2500, C티어 5000)
@@ -295,7 +295,7 @@ export interface ApiLineupPlayer {
   externalId?: string;
   name: string;
   position?: Position | string;
-  grid?: string; // API-Football "row:col" formation coordinate (row 1=GK, col 1=right -> N=left)
+  grid?: string; // API-Football "row:col" formation coordinate (row 1=GK, col 1=left -> N=right)
   shirtNumber?: number;
   team?: string;
   nationalTeam?: string;

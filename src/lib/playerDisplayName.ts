@@ -1423,14 +1423,13 @@ function deriveFallbackPitchLabel(fullName: string): string {
 }
 
 /**
- * Resolve a player's unified display names across pitch nodes, bench/accordion rows,
+ * Resolve a player's unified English display names across pitch nodes, bench/accordion rows,
  * market lists, search results, charts, and detail modals.
  *
  * Convention:
- * - `full`: Canonical Korean full name whenever known (e.g. "마르틴 외데고르", "카이 하베르츠"),
- *   or cleaned original name for unknown external API players.
- * - `pitch`: Compact label for narrow formation pitch nodes (e.g. "외데고르", "하베르츠", "손흥민", "미토마").
- * - `english`: Canonical English name for secondary subtitle / search matching.
+ * - `full`: Canonical English full name (`entry.enFull` or Latin `englishName`/`name`) so API and curated players share one consistent language.
+ * - `pitch`: Compact English surname/label for narrow formation pitch nodes (e.g. "Ødegaard", "Timber", "van Dijk", "Son").
+ * - `english`: Same canonical English string; Korean entries remain indexed for auxiliary search and cross-script event matching.
  */
 export function resolvePlayerDisplayName(
   player: Pick<Player, "name"> & {
@@ -1448,20 +1447,24 @@ export function resolvePlayerDisplayName(
 
   if (entry) {
     const english = entry.enFull || rawEnglish || rawName;
+    const pitch = deriveFallbackPitchLabel(english);
     return {
-      full: entry.koFull,
-      pitch: entry.koPitch,
+      full: english,
+      pitch,
       english,
-      hasDistinctEnglish:
-        Boolean(english) &&
-        normalizePlayerNameKey(english) !== normalizePlayerNameKey(entry.koFull),
+      hasDistinctEnglish: false,
     };
   }
 
-  // Fallback when player is not in the curated dictionary
-  const full = rawName || rawEnglish || "선수";
-  const english =
-    rawEnglish || (LATIN_REGEX.test(rawName) && !HANGUL_REGEX.test(rawName) ? rawName : "");
+  // Prefer Latin/English source whenever available so legacy Korean dummy names unify to English
+  const hasEnglishLatin = Boolean(rawEnglish) && LATIN_REGEX.test(rawEnglish) && !HANGUL_REGEX.test(rawEnglish);
+  const hasNameLatin = Boolean(rawName) && LATIN_REGEX.test(rawName) && !HANGUL_REGEX.test(rawName);
+  const full = hasEnglishLatin
+    ? rawEnglish
+    : hasNameLatin
+    ? rawName
+    : rawEnglish || rawName || "Player";
+  const english = hasEnglishLatin ? rawEnglish : hasNameLatin ? rawName : rawEnglish;
   const pitch = deriveFallbackPitchLabel(full);
 
   return {
@@ -1486,8 +1489,8 @@ export function formatPlayerDisplayName(
 }
 
 /**
- * Normalize incoming API/fixture player names so newly listed or lineup-built players
- * carry unified Korean `name` (when known) while preserving canonical `englishName`.
+ * Normalize incoming API/fixture player names so all listed or lineup-built players
+ * carry unified canonical English `name` and `englishName`.
  */
 export function canonicalizeIncomingPlayerNames(params: {
   id?: string | number;
@@ -1497,7 +1500,7 @@ export function canonicalizeIncomingPlayerNames(params: {
   const resolved = resolvePlayerDisplayName(params);
   return {
     name: resolved.full,
-    englishName: resolved.english || params.englishName?.trim() || params.name.trim(),
+    englishName: resolved.english || resolved.full,
   };
 }
 
@@ -1568,8 +1571,8 @@ export function doesPlayerNameMatch(
 }
 
 /**
- * Match a user search query against a player's unified Korean display name,
- * pitch label, English name (accent-folded), team, and national team.
+ * Match a user search query against a player's English display name, pitch label,
+ * auxiliary Korean dictionary names/aliases, team, and national team.
  */
 export function matchesPlayerSearchQuery(
   player: Pick<Player, "id" | "name" | "englishName" | "teamName" | "teamShort" | "nationalTeam">,
@@ -1580,12 +1583,20 @@ export function matchesPlayerSearchQuery(
   if (!qRaw && !qNorm) return true;
 
   const resolved = resolvePlayerDisplayName(player);
-  const fields = [
+  const entry = findKnownPlayerNameEntry({
+    id: player.id,
+    name: player.name,
+    englishName: player.englishName,
+  });
+  const fields: Array<string | undefined> = [
     player.name,
     player.englishName,
     resolved.full,
     resolved.pitch,
     resolved.english,
+    entry?.koFull,
+    entry?.koPitch,
+    ...(entry?.aliases ?? []),
     player.teamName,
     player.teamShort,
     player.nationalTeam,

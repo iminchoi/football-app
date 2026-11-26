@@ -1,12 +1,12 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); API-Football `grid` (`row:col`) coordinates now drive exact formation rows & left-to-right flanks on the pitch, and candlestick charts render proportionate wicks with softened single-event transitions while preserving exact `currentPrice`/`changeRate`.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (82/82 across all 12 suites, 100% mocked/offline).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); formation `grid` columns now align left-to-right (`col=1` LB/LW -> `col=N` RB/RW), player display names are unified to English (with Korean auxiliary search retained), Market tab defaults to major-league paginated rows (30/page) with full-universe search, and Hot Player Spotlight dynamically selects 6 distinct leaders with quantitative evidence badges.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (84/84 across all 13 suites, 100% mocked/offline).
 
 ## Recent Changes
-- `src/types/index.ts`, `src/lib/providers/ApiFootballProvider.ts`, `src/app/api/matches/route.ts`, `src/lib/lineupStatus.ts`: Preserved API-Football `startXI[].player.grid` through `ApiLineupPlayer` and `Player`, and derived accurate positions respecting `col=1` (right: RB/RAM/RW) to `col=N` (left: LB/LAM/LW).
-- `src/lib/lineupBuilder.ts`, `src/components/matches/FormationPitchModal.tsx`: Updated `buildTeamLineupForMatch` and `buildFormationRows` to group by `grid.row` DESC (ST → AM → DM → DF → GK) and sort each row by `grid.col` DESC (left → right) with automatic fallback when `grid` is absent; improved 5-row pitch vertical spacing.
-- `src/lib/priceEngine.ts`, `src/components/market/FullScreenCandleChartModal.tsx`: Tightened minute-bar and daily wick ratios proportional to candle body, added `smoothIntradayCandlesForDisplay` to soften single-bar vertical event cliffs while preserving exact `openPrice`, `currentPrice`, and event markers, and balanced modal Y-axis headroom & High/Low readout consistency.
-- `tests/gridAndCandle.test.ts`: Added unit tests verifying 4-2-3-1 `grid` placement (Kerkez LB left → Frimpong RB right, 2nd/3rd line separation), no-grid fallback, candlestick wick ratios, cliff softening, and final close/marker integrity.
+- `src/lib/providers/ApiFootballProvider.ts`, `src/lib/lineupBuilder.ts`, `src/types/index.ts`: Fixed grid horizontal orientation to ascending `col` (`col=1` LB/LAM/LW left -> `col=N` RB/RAM/RW right) and matched `derivePositionFromGrid` flank mapping.
+- `src/lib/playerDisplayName.ts`, `src/components/squad/SquadPlayerPickerModal.tsx`: Unified `resolvePlayerDisplayName` and `canonicalizeIncomingPlayerNames` to canonical English display names while preserving Korean search (`matchesPlayerSearchQuery`) and cross-script event identity matching.
+- `src/lib/marketListing.ts`, `src/components/market/MarketChartTabView.tsx`: Added major-league default filtering (excluding minor-league clutter like `Viking`/`Sabah FA` unless searched or toggled), 30-item pagination (`더 보기`), and dynamic 6-card evidence-based Hot Player Spotlight (`selectHotSpotlightPlayers`) replacing hardcoded `SPOTLIGHT_IDS`.
+- `tests/gridAndCandle.test.ts`, `tests/playerDisplayName.test.ts`, `tests/marketListing.test.ts`: Verified ascending `grid` col placement, English name unification with Korean search compatibility, major-league filtering/pagination, and dynamic spotlight selection.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.

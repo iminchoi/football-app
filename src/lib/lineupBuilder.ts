@@ -691,7 +691,7 @@ export function parseGridCoord(
  * and left-to-right columns (LB/LW on left -> RB/RW on right).
  *
  * When API-Football `grid` ("row:col") is present, uses exact grid rows (descending: maxRow -> 1)
- * and columns (descending: col N = left flank -> col 1 = right flank).
+ * and columns (ascending: col 1 = left flank -> col N = right flank).
  * Falls back to formation-label / position slicing only when `grid` is unavailable.
  */
 export function buildFormationRows(
@@ -735,15 +735,15 @@ export function buildFormationRows(
           ? Math.max(3, maxRow)
           : Math.min(Math.max(3, maxRow - 1), 3);
       const list = byRow.get(fallbackRow) ?? [];
-      list.push({ player: extra, col: 0 });
+      list.push({ player: extra, col: 99 });
       byRow.set(fallbackRow, list);
     }
 
     const sortedRowNums = Array.from(byRow.keys()).sort((a, b) => b - a);
     return sortedRowNums.map((rowNum) =>
       (byRow.get(rowNum) ?? [])
-        // API-Football col 1 = right flank (RB/RAM/RW) -> col N = left flank (LB/LAM/LW)
-        .sort((a, b) => b.col - a.col)
+        // API-Football col 1 = left flank (LB/LAM/LW) -> col N = right flank (RB/RAM/RW)
+        .sort((a, b) => a.col - b.col)
         .map((item) => item.player)
     );
   }
@@ -1094,13 +1094,13 @@ export function buildTeamLineupForMatch(
     hasExplicitLineup && formation !== "4-3-3" && formation !== "4-2-3-1";
 
   if (hasGridLayout) {
-    // Sort directly by API-Football grid: row DESC (Attack -> GK), col DESC (Left flank -> Right flank)
+    // Sort directly by API-Football grid: row DESC (Attack -> GK), col ASC (Left flank -> Right flank)
     starters = [...starterCandidates].sort((a, b) => {
       const ga = parseGridCoord(a.grid);
       const gb = parseGridCoord(b.grid);
       if (ga && gb) {
         if (ga.row !== gb.row) return gb.row - ga.row;
-        return gb.col - ga.col;
+        return ga.col - gb.col;
       }
       if (ga && !gb) return -1;
       if (!ga && gb) return 1;
