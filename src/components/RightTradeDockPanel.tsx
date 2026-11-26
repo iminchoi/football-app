@@ -54,10 +54,10 @@ export default function RightTradeDockPanel({
   const holdings = useTradeStore((s) => s.holdings);
   const watchlist = useTradeStore((s) => s.watchlist);
   const toggleWatchlist = useTradeStore((s) => s.toggleWatchlist);
-  const buyPlayer = useTradeStore((s) => s.buyPlayer);
-  const sellPlayer = useTradeStore((s) => s.sellPlayer);
+  const submitOrder = useTradeStore((s) => s.submitOrder);
 
   const [quantity, setQuantity] = useState<number>(1);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<{
     type: "success" | "error";
     text: string;
@@ -130,7 +130,8 @@ export default function RightTradeDockPanel({
   const totalAmount = roundToTen(displayPrice * quantity);
   const isCircuitLocked = cbRemainingSec > 0;
 
-  const handleSubmitOrder = () => {
+  const handleSubmitOrder = async () => {
+    if (isSubmittingOrder) return;
     if (!user) {
       onRequireAuth();
       return;
@@ -139,46 +140,37 @@ export default function RightTradeDockPanel({
       setFeedback({ type: "error", text: "1주 이상 입력해주세요." });
       return;
     }
-    if (tradeType === "BUY") {
-      if (isMatchFinished) {
-        setFeedback({
-          type: "error",
-          text: "경기 종료 · 거래 마감된 종목은 주문할 수 없습니다.",
-        });
-        return;
-      }
-      if (isAtUpperLimit) {
-        setFeedback({
-          type: "error",
-          text: "상한가(+15%) 도달 · 매수 제한",
-        });
-        return;
-      }
-      const res = buyPlayer(player.id, quantity);
+    if (isMatchFinished) {
+      setFeedback({
+        type: "error",
+        text: "경기 종료 · 거래 마감된 종목은 주문할 수 없습니다.",
+      });
+      return;
+    }
+    if (tradeType === "BUY" && isAtUpperLimit) {
+      setFeedback({
+        type: "error",
+        text: "상한가(+15%) 도달 · 매수 제한",
+      });
+      return;
+    }
+    if (tradeType === "SELL" && isAtLowerLimit) {
+      setFeedback({
+        type: "error",
+        text: "하한가(-15%) 도달 · 매도 제한",
+      });
+      return;
+    }
+
+    setIsSubmittingOrder(true);
+    try {
+      const res = await submitOrder(tradeType, player.id, quantity);
       setFeedback({
         type: res.success ? "success" : "error",
         text: res.message,
       });
-    } else {
-      if (isMatchFinished) {
-        setFeedback({
-          type: "error",
-          text: "경기 종료 · 거래 마감된 종목은 주문할 수 없습니다.",
-        });
-        return;
-      }
-      if (isAtLowerLimit) {
-        setFeedback({
-          type: "error",
-          text: "하한가(-15%) 도달 · 매도 제한",
-        });
-        return;
-      }
-      const res = sellPlayer(player.id, quantity);
-      setFeedback({
-        type: res.success ? "success" : "error",
-        text: res.message,
-      });
+    } finally {
+      setIsSubmittingOrder(false);
     }
   };
 
@@ -430,6 +422,7 @@ export default function RightTradeDockPanel({
               <button
                 type="button"
                 disabled={
+                  isSubmittingOrder ||
                   isMatchFinished ||
                   isCircuitLocked ||
                   (tradeType === "BUY" && isAtUpperLimit) ||

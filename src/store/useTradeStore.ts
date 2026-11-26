@@ -116,6 +116,109 @@ interface TradeExecutionResult {
   executedPrice?: number;
 }
 
+interface ServerLedgerEntryPayload {
+  id: string;
+  userId: string;
+  playerId: string;
+  side: "BUY" | "SELL";
+  quantity: number;
+  unitPrice: number;
+  totalAmount: number;
+  createdAt: string;
+  playerName?: string;
+  teamShort?: string;
+  balanceAfter?: number;
+  realizedPnL?: number;
+}
+
+interface ServerPortfolioPayload {
+  success: boolean;
+  source?: "file" | "postgres";
+  cashBalance: number;
+  holdings: Record<string, Holding>;
+  entries: ServerLedgerEntryPayload[];
+}
+
+interface ServerOrderResponsePayload {
+  success: boolean;
+  code?: string;
+  source?: "file" | "postgres";
+  message: string;
+  executedPrice?: number;
+  totalAmount?: number;
+  realizedPnL?: number;
+  entry?: ServerLedgerEntryPayload;
+  portfolio?: {
+    cashBalance: number;
+    holdings: Record<string, Holding>;
+    entries: ServerLedgerEntryPayload[];
+  };
+}
+
+function formatLedgerTimestamp(isoString: string): string {
+  try {
+    const dt = new Date(isoString);
+    if (Number.isNaN(dt.getTime())) return isoString;
+    return dt.toLocaleTimeString("ko-KR", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return isoString;
+  }
+}
+
+function mapServerEntriesToTransactions(
+  entries: ServerLedgerEntryPayload[],
+  players: Player[],
+  existingTransactions: PointTransaction[],
+  fallbackBalance: number
+): PointTransaction[] {
+  const existingById = new Map<string, PointTransaction>();
+  for (const tx of existingTransactions) {
+    existingById.set(tx.id, tx);
+  }
+  const playersById = new Map<string, Player>();
+  for (const p of players) {
+    playersById.set(p.id, p);
+  }
+
+  return entries.slice(0, 40).map((entry) => {
+    const prevTx = existingById.get(entry.id);
+    const matchedPlayer = playersById.get(entry.playerId);
+    const playerName =
+      entry.playerName ??
+      prevTx?.playerName ??
+      (matchedPlayer
+        ? formatPlayerDisplayName(matchedPlayer, "full")
+        : entry.playerId);
+    const teamShort =
+      entry.teamShort ?? prevTx?.teamShort ?? matchedPlayer?.teamShort ?? "CLB";
+
+    return {
+      id: entry.id,
+      type: entry.side,
+      playerId: entry.playerId,
+      playerName,
+      teamShort,
+      quantity: entry.quantity,
+      unitPrice: roundToTen(entry.unitPrice),
+      totalAmount: roundToTen(entry.totalAmount),
+      balanceAfter: roundToTen(
+        entry.balanceAfter ?? prevTx?.balanceAfter ?? fallbackBalance
+      ),
+      ...(entry.realizedPnL !== undefined
+        ? { realizedPnL: roundToTen(entry.realizedPnL) }
+        : prevTx?.realizedPnL !== undefined
+        ? { realizedPnL: prevTx.realizedPnL }
+        : {}),
+      timestamp: formatLedgerTimestamp(entry.createdAt),
+    };
+  });
+}
+
 export interface SquadActionResult {
   success: boolean;
   message: string;
@@ -165,6 +268,15 @@ interface TradeStoreState {
   tickMarket: () => void;
   buyPlayer: (playerId: string, quantity: number) => TradeExecutionResult;
   sellPlayer: (playerId: string, quantity: number) => TradeExecutionResult;
+  hydratePortfolioFromServer: (userOverride?: {
+    id: string;
+    name?: string;
+  }) => Promise<void>;
+  submitOrder: (
+    side: "BUY" | "SELL",
+    playerId: string,
+    quantity: number
+  ) => Promise<TradeExecutionResult>;
   addAdminCash: (amount?: number) => { added: number; nextCash: number };
   triggerForceGoalEvent: (targetPlayerId?: string) => ForceGoalResult | null;
   triggerMatchEvent: (
@@ -792,6 +904,10 @@ export const useTradeStore = create<TradeStoreState>()(
                 cash: adminCash,
               },
             });
+            void get().hydratePortfolioFromServer({
+              id: "Admin",
+              name: "총괄관리자",
+            });
             return {
               success: true,
               message: "총괄관리자(Admin) 계정으로 로그인되었습니다.",
@@ -842,6 +958,10 @@ export const useTradeStore = create<TradeStoreState>()(
             role: targetAccount.role,
             cash: restoredCash,
           },
+        });
+        void get().hydratePortfolioFromServer({
+          id: targetAccount.id,
+          name: targetAccount.name,
         });
         return {
           success: true,
@@ -929,6 +1049,11 @@ export const useTradeStore = create<TradeStoreState>()(
             role: "user",
             cash: INITIAL_CASH,
           },
+        });
+
+        void get().hydratePortfolioFromServer({
+          id: trimmedId,
+          name: displayName,
         });
 
         return {
@@ -2739,6 +2864,236 @@ export const useTradeStore = create<TradeStoreState>()(
         };
       },
 
+      hydratePortfolioFromServer: async (userOverride) => {
+        if (typeof window === "undefined" || typeof fetch !== "function") return;
+        const targetUser = userOverride ?? get().user;
+        if (!targetUser?.id) return;
+
+        try {
+          const qs = new URLSearchParams({
+            userId: targetUser.id,
+            ...(targetUser.name ? { nickname: targetUser.name } : {}),
+          });
+          const res = await fetch(`/api/portfolio?${qs.toString()}`, {
+            method: "GET",
+            cache: "no-store",
+          });
+          if (!res.ok) return;
+          const data = (await res.json()) as ServerPortfolioPayload;
+          if (!data.success) return;
+
+          const currentState = get();
+          if (
+            !currentState.user ||
+            normalizeAccountKey(currentState.user.id) !==
+              normalizeAccountKey(targetUser.id)
+          ) {
+            return;
+          }
+
+          const hasServerActivity =
+            data.entries.length > 0 ||
+            Object.keys(data.holdings ?? {}).length > 0 ||
+            roundToTen(data.cashBalance) !== INITIAL_CASH;
+
+          // Always trust PostgreSQL; for local file fallback, avoid wiping pre-existing local demo state when file is empty
+          if (data.source !== "postgres" && !hasServerActivity) {
+            return;
+          }
+
+          const nextCash = roundToTen(data.cashBalance);
+          const nextHoldings = data.holdings ?? {};
+          const nextTransactions = mapServerEntriesToTransactions(
+            data.entries ?? [],
+            currentState.players,
+            currentState.transactions,
+            nextCash
+          );
+          const nextAccounts = syncActiveUserToAccounts({
+            ...currentState,
+            cash: nextCash,
+            holdings: nextHoldings,
+            transactions: nextTransactions,
+          });
+
+          set({
+            accounts: nextAccounts,
+            cash: nextCash,
+            holdings: nextHoldings,
+            transactions: nextTransactions,
+            user: {
+              ...currentState.user,
+              cash: nextCash,
+            },
+          });
+        } catch {
+          // Non-fatal: keep local store state when offline
+        }
+      },
+
+      submitOrder: async (side, playerId, quantity) => {
+        if (!Number.isInteger(quantity) || quantity <= 0) {
+          return {
+            success: false,
+            message: "수량은 1주 이상의 정수로 입력해주세요.",
+          };
+        }
+
+        const {
+          user,
+          cash,
+          realizedPnL,
+          players,
+          matches,
+          holdings,
+          transactions,
+          activeMatchContext,
+        } = get();
+        if (!user) {
+          return {
+            success: false,
+            message: "로그인이 필요한 서비스입니다.",
+          };
+        }
+
+        const player = players.find((p) => p.id === playerId);
+        if (!player) {
+          return { success: false, message: "선수 정보를 찾을 수 없습니다." };
+        }
+
+        const prevHolding = holdings[playerId];
+        const effectiveContext =
+          side === "SELL"
+            ? activeMatchContext ?? prevHolding?.matchContext ?? null
+            : activeMatchContext;
+        const playerMatch = resolveMatchForPlayerView({
+          player,
+          storeMatches: matches,
+          activeMatchContext: effectiveContext,
+          belongsToMatch: doesPlayerBelongToMatch,
+        });
+        const effectiveStatus = resolveMatchClock(
+          playerMatch,
+          playerMatch ? null : effectiveContext
+        ).status;
+        const basePrice = roundToTen(
+          player.basePrice ?? player.initialPrice ?? player.currentPrice
+        );
+        const effectiveCurrent = resolvePlayerQuote(
+          player,
+          effectiveStatus
+        ).currentPrice;
+
+        // Fast client pre-check using the exact same orderGate before network round-trip
+        const preGate = validateTradeOrder({
+          side,
+          matchStatus: effectiveStatus,
+          basePrice,
+          currentPrice: effectiveCurrent,
+          quantity,
+          cash,
+          holdingQuantity: prevHolding?.quantity ?? 0,
+          lastMajorEventAt: player.lastMajorEventAt,
+        });
+        if (!preGate.allowed) {
+          return {
+            success: false,
+            message: preGate.message ?? "주문을 실행할 수 없습니다.",
+            executedPrice: preGate.executedPrice,
+          };
+        }
+
+        if (typeof window === "undefined" || typeof fetch !== "function") {
+          return side === "BUY"
+            ? get().buyPlayer(playerId, quantity)
+            : get().sellPlayer(playerId, quantity);
+        }
+
+        const displayName = formatPlayerDisplayName(player, "full");
+        const resolvedHoldingContext = playerMatch
+          ? buildActiveMatchContext(playerMatch)
+          : activeMatchContext ?? prevHolding?.matchContext ?? null;
+
+        try {
+          const res = await fetch("/api/orders", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: user.id,
+              nickname: user.name,
+              side,
+              playerId: player.id,
+              playerName: displayName,
+              teamShort: player.teamShort,
+              quantity,
+              matchStatus: effectiveStatus,
+              basePrice,
+              currentPrice: effectiveCurrent,
+              lastMajorEventAt: player.lastMajorEventAt,
+              matchContext: resolvedHoldingContext,
+            }),
+          });
+
+          const data = (await res.json()) as ServerOrderResponsePayload;
+          if (!res.ok || !data.success || !data.portfolio) {
+            if (
+              data.code === "INSUFFICIENT_FUNDS" ||
+              data.code === "INSUFFICIENT_HOLDINGS"
+            ) {
+              void get().hydratePortfolioFromServer();
+            }
+            return {
+              success: false,
+              message: data.message ?? "주문을 실행할 수 없습니다.",
+              executedPrice: data.executedPrice,
+            };
+          }
+
+          const latestState = get();
+          const nextCash = roundToTen(data.portfolio.cashBalance);
+          const nextHoldings = data.portfolio.holdings ?? {};
+          const nextRealizedPnL =
+            side === "SELL" && data.realizedPnL !== undefined
+              ? roundToTen(realizedPnL + data.realizedPnL)
+              : latestState.realizedPnL;
+
+          const nextTransactions = mapServerEntriesToTransactions(
+            data.portfolio.entries ?? [],
+            latestState.players,
+            latestState.transactions,
+            nextCash
+          );
+          const nextAccounts = syncActiveUserToAccounts({
+            ...latestState,
+            cash: nextCash,
+            realizedPnL: nextRealizedPnL,
+            holdings: nextHoldings,
+            transactions: nextTransactions,
+          });
+
+          set({
+            accounts: nextAccounts,
+            cash: nextCash,
+            realizedPnL: nextRealizedPnL,
+            user: latestState.user
+              ? { ...latestState.user, cash: nextCash }
+              : null,
+            holdings: nextHoldings,
+            transactions: nextTransactions,
+          });
+
+          return {
+            success: true,
+            executedPrice: data.executedPrice,
+            message: data.message,
+          };
+        } catch {
+          return side === "BUY"
+            ? get().buyPlayer(playerId, quantity)
+            : get().sellPlayer(playerId, quantity);
+        }
+      },
+
       addAdminCash: (amount = 1000000) => {
         const state = get();
         const { user, cash } = state;
@@ -2759,6 +3114,18 @@ export const useTradeStore = create<TradeStoreState>()(
           cash: nextCash,
           user: user ? { ...user, cash: nextCash } : null,
         });
+        if (typeof window !== "undefined" && typeof fetch === "function") {
+          void fetch("/api/portfolio", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "ADMIN_TOPUP",
+              userId: user.id,
+              nickname: user.name,
+              amount: added,
+            }),
+          }).catch(() => {});
+        }
         return { added, nextCash };
       },
 
@@ -3252,8 +3619,23 @@ export const useTradeStore = create<TradeStoreState>()(
           squadFeeds: [],
           selectedDate: "TODAY",
           expandedMatchIds: ["m-new-ars", "m-tot-ars", "m-mci-liv", "m-kor-jpn"],
-      activeMatchContext: null,
+          activeMatchContext: null,
         });
+        if (
+          user &&
+          typeof window !== "undefined" &&
+          typeof fetch === "function"
+        ) {
+          void fetch("/api/portfolio", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "RESET",
+              userId: user.id,
+              nickname: user.name,
+            }),
+          }).catch(() => {});
+        }
       },
     }),
     {

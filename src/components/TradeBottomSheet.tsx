@@ -472,11 +472,11 @@ export default function TradeBottomSheet({
   const accounts = useTradeStore((state) => state.accounts);
   const watchlist = useTradeStore((state) => state.watchlist);
   const toggleWatchlist = useTradeStore((state) => state.toggleWatchlist);
-  const buyPlayer = useTradeStore((state) => state.buyPlayer);
-  const sellPlayer = useTradeStore((state) => state.sellPlayer);
+  const submitOrder = useTradeStore((state) => state.submitOrder);
 
   const [tradeType, setTradeType] = useState<TradeType>(initialTradeType);
   const [quantity, setQuantity] = useState<number>(1);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState<boolean>(false);
   const [period, setPeriod] = useState<ChartPeriod>("TICK");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState<boolean>(false);
@@ -678,7 +678,8 @@ export default function TradeBottomSheet({
   // When unauthenticated (user === null), button is always clickable to open AuthModal immediately
   const canExecute = !user
     ? true
-    : isMatchFinished ||
+    : isSubmittingOrder ||
+      isMatchFinished ||
       isCircuitLocked ||
       isBuyBlockedByCap ||
       isSellBlockedByFloor ||
@@ -707,8 +708,9 @@ export default function TradeBottomSheet({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingOrder) return;
 
     // Auth Guard: Block trade execution when user is not logged in
     if (!user) {
@@ -725,9 +727,9 @@ export default function TradeBottomSheet({
     }
 
     const execQty = quantity;
-
-    if (tradeType === "BUY") {
-      const res = buyPlayer(player.id, execQty);
+    setIsSubmittingOrder(true);
+    try {
+      const res = await submitOrder(tradeType, player.id, execQty);
       const unitExec = res.executedPrice ?? currentPrice;
       const execTotal = roundToTen(unitExec * execQty);
       setFeedback({
@@ -735,29 +737,24 @@ export default function TradeBottomSheet({
         text: res.message,
       });
       if (res.success) {
-        const nextRemaining = Math.max(0, availableShares - execQty);
-        setQuantity(nextRemaining > 0 ? Math.min(quantity, nextRemaining) : 1);
-        triggerToast(
-          `✓ 체결 완료: ${playerDisplayName} ${execQty}주를 ${execTotal.toLocaleString()}P (단가 ${unitExec.toLocaleString()}P)에 매수했습니다.`,
-          "BUY"
-        );
+        if (tradeType === "BUY") {
+          const nextRemaining = Math.max(0, availableShares - execQty);
+          setQuantity(nextRemaining > 0 ? Math.min(quantity, nextRemaining) : 1);
+          triggerToast(
+            `✓ 체결 완료: ${playerDisplayName} ${execQty}주를 ${execTotal.toLocaleString()}P (단가 ${unitExec.toLocaleString()}P)에 매수했습니다.`,
+            "BUY"
+          );
+        } else {
+          const nextOwned = Math.max(0, ownedQty - execQty);
+          setQuantity(nextOwned > 0 ? Math.min(quantity, nextOwned) : 1);
+          triggerToast(
+            `✓ 체결 완료: ${playerDisplayName} ${execQty}주를 ${execTotal.toLocaleString()}P (단가 ${unitExec.toLocaleString()}P)에 매도했습니다.`,
+            "SELL"
+          );
+        }
       }
-    } else {
-      const res = sellPlayer(player.id, execQty);
-      const unitExec = res.executedPrice ?? currentPrice;
-      const execTotal = roundToTen(unitExec * execQty);
-      setFeedback({
-        type: res.success ? "success" : "error",
-        text: res.message,
-      });
-      if (res.success) {
-        const nextOwned = Math.max(0, ownedQty - execQty);
-        setQuantity(nextOwned > 0 ? Math.min(quantity, nextOwned) : 1);
-        triggerToast(
-          `✓ 체결 완료: ${playerDisplayName} ${execQty}주를 ${execTotal.toLocaleString()}P (단가 ${unitExec.toLocaleString()}P)에 매도했습니다.`,
-          "SELL"
-        );
-      }
+    } finally {
+      setIsSubmittingOrder(false);
     }
   };
 

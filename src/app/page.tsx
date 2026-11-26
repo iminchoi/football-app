@@ -17,8 +17,12 @@ import AdminPanel from "@/components/AdminPanel";
 
 export default function HomePage() {
   const activeTab = useTradeStore((state) => state.activeTab);
+  const user = useTradeStore((state) => state.user);
   const selectPlayer = useTradeStore((state) => state.selectPlayer);
   const fetchTodayMatches = useTradeStore((state) => state.fetchTodayMatches);
+  const hydratePortfolioFromServer = useTradeStore(
+    (state) => state.hydratePortfolioFromServer
+  );
 
   const [mounted, setMounted] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
@@ -33,6 +37,11 @@ export default function HomePage() {
     setMounted(true);
     void fetchTodayMatches();
   }, [fetchTodayMatches]);
+
+  useEffect(() => {
+    if (!mounted || !user?.id) return;
+    void hydratePortfolioFromServer();
+  }, [mounted, user?.id, hydratePortfolioFromServer]);
 
   const handleOpenTradeSheet = (
     player: Player,
