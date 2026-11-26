@@ -718,7 +718,7 @@ export default function FullScreenCandleChartModal({
       ? "rgba(240, 120, 104, 0.01)"
       : "rgba(0, 168, 120, 0.01)";
 
-    // Balance Y-axis scale so a single spike candle never occupies >55% of total price range
+    // Balance Y-axis scale with generous breathing room so single-event spikes look well-proportioned
     if (candles.length > 0) {
       let minLow = candles[0].low;
       let maxHigh = candles[0].high;
@@ -729,16 +729,16 @@ export default function FullScreenCandleChartModal({
         const span = c.high - c.low;
         if (span > maxSingleSpan) maxSingleSpan = span;
       }
-      const totalSpan = Math.max(100, maxHigh - minLow);
-      if (maxSingleSpan > totalSpan * 0.55) {
-        const targetSpan = maxSingleSpan / 0.55;
+      const totalSpan = Math.max(120, maxHigh - minLow);
+      if (maxSingleSpan > totalSpan * 0.45) {
+        const targetSpan = maxSingleSpan / 0.45;
         const extra = targetSpan - totalSpan;
         balancedRangeRef.current = {
-          minValue: Math.max(100, Math.round(minLow - extra * 0.6)),
-          maxValue: Math.round(maxHigh + extra * 0.4),
+          minValue: Math.max(100, Math.round(minLow - extra * 0.55)),
+          maxValue: Math.round(maxHigh + extra * 0.45),
         };
       } else {
-        const pad = Math.max(40, Math.round(totalSpan * 0.08));
+        const pad = Math.max(50, Math.round(totalSpan * 0.14));
         balancedRangeRef.current = {
           minValue: Math.max(100, minLow - pad),
           maxValue: maxHigh + pad,
@@ -789,18 +789,30 @@ export default function FullScreenCandleChartModal({
   if (!isOpen || !player || !ssotMetrics) return null;
 
   const isWatched = watchlist.includes(player.id);
+  const candleHigh =
+    candles.length > 0 ? Math.max(...candles.map((c) => c.high)) : openPrice;
+  const candleLow =
+    candles.length > 0 ? Math.min(...candles.map((c) => c.low)) : openPrice;
   const allHigh =
     isViewingLastMatch && lastMatchReview
-      ? lastMatchReview.marketData.highPrice
+      ? timeframe !== "1D"
+        ? Math.max(lastMatchReview.openPrice, candleHigh)
+        : lastMatchReview.marketData.highPrice
       : matchStatus === "UPCOMING"
       ? openPrice
-      : player.highPrice ?? ssotMetrics.highPrice;
+      : timeframe !== "1D"
+      ? Math.max(openPrice, closePrice, candleHigh)
+      : Math.max(player.highPrice ?? ssotMetrics.highPrice, closePrice);
   const allLow =
     isViewingLastMatch && lastMatchReview
-      ? lastMatchReview.marketData.lowPrice
+      ? timeframe !== "1D"
+        ? Math.min(lastMatchReview.openPrice, candleLow)
+        : lastMatchReview.marketData.lowPrice
       : matchStatus === "UPCOMING"
       ? openPrice
-      : player.lowPrice ?? ssotMetrics.lowPrice;
+      : timeframe !== "1D"
+      ? Math.min(openPrice, closePrice, candleLow)
+      : Math.min(player.lowPrice ?? ssotMetrics.lowPrice, closePrice);
   const isHalfTime = !isViewingLastMatch && matchClock.isHalfTime;
 
   const progressPct =

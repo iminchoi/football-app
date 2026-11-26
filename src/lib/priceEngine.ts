@@ -1192,14 +1192,21 @@ function buildMinuteBarsFromEvents(params: {
 
     const wickNoiseUp = seededNoise(`${playerId}-min-wick-up`, m);
     const wickNoiseDown = seededNoise(`${playerId}-min-wick-down`, m);
-    const wickScale = ev ? 0.008 : 0.0035;
-    const wickUp = roundToTen(
-      basePrice * (0.001 + wickNoiseUp * wickScale) * tierCfg.volatilityMultiplier
+    const body = Math.abs(close - prevClose);
+    const maxWickCap = roundToTen(
+      basePrice * (ev ? 0.004 : 0.0018) * Math.min(1.2, tierCfg.volatilityMultiplier)
     );
-    const wickDown = roundToTen(
-      basePrice *
-        (0.001 + wickNoiseDown * wickScale) *
-        tierCfg.volatilityMultiplier
+    const proportionalBase =
+      body > 0
+        ? Math.round(body * 0.45)
+        : roundToTen(basePrice * 0.0008);
+    const wickUp = Math.min(
+      maxWickCap,
+      roundToTen(proportionalBase * (0.2 + wickNoiseUp * 0.65))
+    );
+    const wickDown = Math.min(
+      maxWickCap,
+      roundToTen(proportionalBase * (0.2 + wickNoiseDown * 0.65))
     );
 
     const high = clampToPriceLimit(
@@ -1449,10 +1456,15 @@ export function deriveCandlesFromEvents(params: {
 
       const bodyMax = Math.max(open, close);
       const bodyMin = Math.min(open, close);
-      const wickUp = roundToTen((0.004 + n2 * 0.018) * basePrice);
-      const wickDown = roundToTen((0.004 + n3 * 0.018) * basePrice);
-      const high = clampToPriceLimit(bodyMax + wickUp, basePrice);
-      const low = clampToPriceLimit(bodyMin - wickDown, basePrice);
+      const body = bodyMax - bodyMin;
+      const maxDailyWick = Math.min(
+        roundToTen(basePrice * 0.008),
+        Math.max(10, roundToTen(body * 0.55))
+      );
+      const wickUp = roundToTen(maxDailyWick * (0.15 + n2 * 0.75));
+      const wickDown = roundToTen(maxDailyWick * (0.15 + n3 * 0.75));
+      const high = Math.max(bodyMax, clampToPriceLimit(bodyMax + wickUp, basePrice));
+      const low = Math.min(bodyMin, clampToPriceLimit(bodyMin - wickDown, basePrice));
       const volume = Math.max(60, Math.round(180 + n2 * 260));
 
       candles.push({
@@ -1554,7 +1566,173 @@ export function deriveCandlesFromEvents(params: {
     });
   }
 
-  return candles;
+  return smoothIntradayCandlesForDisplay(candles, {
+    playerId: params.playerId,
+    basePrice,
+    openPrice,
+    finalClose,
+    timeframe: params.timeframe,
+  });
+}
+
+/**
+ * Normalize intraday candlestick OHLC geometry for clean exchange-grade rendering:
+ * - Preserves exact 0' openPrice, exact finalClose (=== derived.currentPrice), and exact event markers/minutes.
+ * - Softens single-bar vertical event cliffs into a natural impulse + post-event digestion flow when subsequent bars exist.
+ * - Keeps upper/lower wicks tightly proportionate to each candle's body (eliminating oversized spikes on flat bodies).
+ */
+export function smoothIntradayCandlesForDisplay(
+  rawCandles: readonly CandleData[],
+  params: {
+    playerId: string;
+    basePrice: number;
+    openPrice: number;
+    finalClose: number;
+    timeframe: CandleTimeframe;
+  }
+): CandleData[] {
+  const n = rawCandles.length;
+  if (n <= 2) {
+    return rawCandles.map((c) => ({ ...c }));
+  }
+
+  const { playerId, basePrice, openPrice, finalClose, timeframe } = params;
+  const closes = rawCandles.map((c) => c.close);
+  closes[0] = openPrice;
+  closes[n - 1] = finalClose;
+
+  const transitionLocked = new Set<number>([0, n - 1]);
+  const bigJumpThreshold = Math.max(120, roundToTen(basePrice * 0.022));
+
+  // 1. Soften single-candle vertical event cliffs into impulse + follow-through/digestion
+  for (let k = 1; k < n - 1; k++) {
+    const evCandle = rawCandles[k];
+    if (!evCandle.matchEvent) continue;
+    if (rawCandles[k + 1]?.matchEvent) continue;
+
+    const preClose = rawCandles[k].open;
+    const postTarget = rawCandles[k].close;
+    const delta = postTarget - preClose;
+    if (Math.abs(delta) < bigJumpThreshold) continue;
+
+    // Keep the catalyst candle as the unmistakable dominant bar (~74% of the move)
+    const primaryClose = clampToPriceLimit(preClose + delta * 0.74, basePrice);
+    closes[k] = primaryClose;
+    transitionLocked.add(k);
+
+    const next1 = k + 1;
+    const next2 = k + 2;
+    if (next1 === n - 1) {
+      // Final bar opens at primaryClose and finishes at exact finalClose
+      transitionLocked.add(next1);
+    } else if (next2 < n - 1 && !rawCandles[next2]?.matchEvent) {
+      // Follow-through bar completes impulse (+4% momentum overshoot), next bar digests mildly (-2.5%)
+      closes[next1] = clampToPriceLimit(postTarget + delta * 0.04, basePrice);
+      closes[next2] = clampToPriceLimit(postTarget - delta * 0.025, basePrice);
+      transitionLocked.add(next1);
+      transitionLocked.add(next2);
+    } else {
+      closes[next1] = postTarget;
+      transitionLocked.add(next1);
+    }
+  }
+
+  // 2. Add subtle zero-mean micro-flow on completely flat non-event stretches so candles connect organically
+  const flatThreshold = Math.max(20, roundToTen(basePrice * 0.003));
+  const maxMicroSwing = Math.max(10, roundToTen(basePrice * 0.0026));
+  for (let i = 1; i < n - 1; i++) {
+    if (transitionLocked.has(i)) continue;
+    if (rawCandles[i].matchEvent) continue;
+    // Keep the bar immediately before an event aligned with the pre-event anchor
+    if (rawCandles[i + 1]?.matchEvent) continue;
+
+    const rawBody = Math.abs(rawCandles[i].close - rawCandles[i].open);
+    if (rawBody > flatThreshold) continue;
+
+    const waveNoise = seededNoise(`${playerId}-flow-${timeframe}`, i);
+    const waveDir = i % 2 === 0 ? 1 : -1;
+    const magnitude = Math.max(10, roundToTen(maxMicroSwing * (0.35 + waveNoise * 0.65)));
+    const candidate = clampToPriceLimit(
+      rawCandles[i].close + waveDir * magnitude,
+      basePrice
+    );
+    // Only apply micro-flow if it stays tightly anchored to the underlying level
+    if (Math.abs(candidate - rawCandles[i].close) <= maxMicroSwing) {
+      closes[i] = candidate;
+    }
+  }
+
+  // Re-pin exact anchors
+  closes[0] = openPrice;
+  closes[n - 1] = finalClose;
+
+  // 3. Re-stitch continuous bodies and normalize upper/lower wicks proportionally to body size
+  const smoothed: CandleData[] = [];
+  for (let i = 0; i < n; i++) {
+    const src = rawCandles[i];
+    if (i === 0) {
+      smoothed.push({
+        ...src,
+        open: openPrice,
+        high: openPrice,
+        low: openPrice,
+        close: openPrice,
+      });
+      continue;
+    }
+
+    const open = closes[i - 1];
+    const close = closes[i];
+    const bodyHigh = Math.max(open, close);
+    const bodyLow = Math.min(open, close);
+    const body = bodyHigh - bodyLow;
+
+    const u = seededNoise(`${playerId}-cw-up-${timeframe}`, i);
+    const d = seededNoise(`${playerId}-cw-dn-${timeframe}`, i);
+
+    let wickUp: number;
+    let wickDown: number;
+
+    if (src.matchEvent) {
+      const maxEventWick = Math.min(
+        roundToTen(basePrice * 0.0055),
+        Math.max(10, roundToTen(body * 0.35))
+      );
+      if (close >= open) {
+        wickUp = roundToTen(maxEventWick * (0.25 + u * 0.65));
+        wickDown = roundToTen(maxEventWick * (0.1 + d * 0.3));
+      } else {
+        wickUp = roundToTen(maxEventWick * (0.1 + u * 0.3));
+        wickDown = roundToTen(maxEventWick * (0.25 + d * 0.65));
+      }
+    } else {
+      const maxRegularWick = Math.min(
+        roundToTen(basePrice * 0.0028),
+        body > 0 ? Math.max(10, roundToTen(body * 0.55)) : 10
+      );
+      wickUp = roundToTen(maxRegularWick * (0.15 + u * 0.7));
+      wickDown = roundToTen(maxRegularWick * (0.15 + d * 0.7));
+    }
+
+    const high = Math.max(
+      bodyHigh,
+      clampToPriceLimit(bodyHigh + wickUp, basePrice)
+    );
+    const low = Math.min(
+      bodyLow,
+      clampToPriceLimit(bodyLow - wickDown, basePrice)
+    );
+
+    smoothed.push({
+      ...src,
+      open,
+      high,
+      low,
+      close,
+    });
+  }
+
+  return smoothed;
 }
 
 export function resolvePlayerMatchContext(

@@ -210,6 +210,7 @@ const PitchPlayerNode = React.memo(function PitchPlayerNode({
   return (
     <button
       type="button"
+      data-grid={player.grid}
       title={displayName.full}
       onClick={() => onSelect(player, "BUY")}
       className="group relative flex min-w-0 flex-1 max-w-[74px] sm:max-w-[92px] flex-col items-center rounded-xl sm:rounded-2xl border border-gray-200/90 bg-[#FFFFFF] px-1 pt-1.5 pb-1.5 sm:px-2 sm:pt-2 sm:pb-2 shadow-xs transition hover:-translate-y-0.5 hover:border-[#00A878] hover:shadow-sm focus:outline-none active:scale-95"
@@ -660,7 +661,13 @@ export function FormationPitchContent({
         </div>
 
         {/* Players Positioned by Formation Rows */}
-        <div className="relative z-10 flex min-h-[370px] sm:min-h-[430px] flex-col justify-between py-3.5 sm:py-5 px-1 sm:px-2">
+        <div
+          className={`relative z-10 flex flex-col justify-between gap-2 sm:gap-2.5 py-3.5 sm:py-5 px-1 sm:px-2 ${
+            startingRows.length >= 5
+              ? "min-h-[420px] sm:min-h-[485px]"
+              : "min-h-[370px] sm:min-h-[430px]"
+          }`}
+        >
           {startingRows.length === 0 ? (
             <div className="my-auto mx-auto max-w-[280px] rounded-2xl border border-[#00A878]/20 bg-white/95 px-4 py-5 text-center shadow-xs">
               <p className="text-xs font-extrabold text-gray-900">
@@ -682,6 +689,7 @@ export function FormationPitchContent({
             startingRows.map((row, rowIdx) => (
               <div
                 key={`${selectedSide}-row-${rowIdx}`}
+                data-formation-row={rowIdx}
                 className="flex items-center justify-around gap-1 sm:gap-1.5"
               >
                 {row.map((player) => (

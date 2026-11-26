@@ -672,16 +672,84 @@ export function resolvePitchFormationLabel(
   return normalizeSupportedFormation(rawFormation, side);
 }
 
+export function parseGridCoord(
+  rawGrid?: string | null
+): { row: number; col: number } | null {
+  if (typeof rawGrid !== "string") return null;
+  const match = /^\s*(\d+)\s*:\s*(\d+)\s*$/.exec(rawGrid);
+  if (!match) return null;
+  const row = Number(match[1]);
+  const col = Number(match[2]);
+  if (!Number.isInteger(row) || !Number.isInteger(col) || row < 1 || col < 1) {
+    return null;
+  }
+  return { row, col };
+}
+
 /**
- * Split starting players into top-to-bottom pitch rows (Attackers -> Midfield -> Defense -> GK).
+ * Group starting players into top-to-bottom pitch rows (Attack -> Midfield -> Defense -> GK)
+ * and left-to-right columns (LB/LW on left -> RB/RW on right).
+ *
+ * When API-Football `grid` ("row:col") is present, uses exact grid rows (descending: maxRow -> 1)
+ * and columns (descending: col N = left flank -> col 1 = right flank).
+ * Falls back to formation-label / position slicing only when `grid` is unavailable.
  */
 export function buildFormationRows(
   startingPlayers: Player[],
   formationLabel: string
 ): Player[][] {
   const capped = startingPlayers.slice(0, 11);
+  if (capped.length === 0) return [];
+
+  const gridded: Array<{ player: Player; row: number; col: number }> = [];
+  const ungridded: Player[] = [];
+  for (const p of capped) {
+    const parsed = parseGridCoord(p.grid);
+    if (parsed) {
+      gridded.push({ player: p, row: parsed.row, col: parsed.col });
+    } else {
+      ungridded.push(p);
+    }
+  }
+
+  // Use exact API-Football grid coordinates whenever the lineup provides them
+  if (gridded.length > 0 && gridded.length >= Math.ceil(capped.length * 0.7)) {
+    const byRow = new Map<number, Array<{ player: Player; col: number }>>();
+    let maxRow = 1;
+    for (const item of gridded) {
+      if (item.row > maxRow) maxRow = item.row;
+      const list = byRow.get(item.row) ?? [];
+      list.push({ player: item.player, col: item.col });
+      byRow.set(item.row, list);
+    }
+
+    // Place any rare player missing `grid` into the matching tactical row without dropping them
+    for (const extra of ungridded) {
+      const line = getPositionLine(extra.position);
+      const fallbackRow =
+        line === "GK"
+          ? 1
+          : line === "DF"
+          ? 2
+          : line === "FW"
+          ? Math.max(3, maxRow)
+          : Math.min(Math.max(3, maxRow - 1), 3);
+      const list = byRow.get(fallbackRow) ?? [];
+      list.push({ player: extra, col: 0 });
+      byRow.set(fallbackRow, list);
+    }
+
+    const sortedRowNums = Array.from(byRow.keys()).sort((a, b) => b - a);
+    return sortedRowNums.map((rowNum) =>
+      (byRow.get(rowNum) ?? [])
+        // API-Football col 1 = right flank (RB/RAM/RW) -> col N = left flank (LB/LAM/LW)
+        .sort((a, b) => b.col - a.col)
+        .map((item) => item.player)
+    );
+  }
+
   if (capped.length < 11) {
-    return capped.length > 0 ? [capped] : [];
+    return [capped];
   }
 
   if (formationLabel === "4-2-3-1") {
@@ -903,7 +971,9 @@ export function buildTeamLineupForMatch(
         ? normalizeDetailedPosition(entry.position)
         : normalizeDetailedPosition(matched.position);
       const matchedPos = normalizeDetailedPosition(matched.position);
+      const hasValidEntryGrid = parseGridCoord(entry.grid) !== null;
       const effectivePosition =
+        hasValidEntryGrid ||
         getPositionLine(entryPos) === getPositionLine(matchedPos)
           ? entryPos
           : matchedPos;
@@ -1013,10 +1083,31 @@ export function buildTeamLineupForMatch(
   }
 
   let starters: Player[] = [];
+  const griddedStarterCount = starterCandidates.filter(
+    (p) => parseGridCoord(p.grid) !== null
+  ).length;
+  const hasGridLayout =
+    hasExplicitLineup &&
+    griddedStarterCount > 0 &&
+    griddedStarterCount >= Math.ceil(starterCandidates.length * 0.7);
   const isCustomFormation =
     hasExplicitLineup && formation !== "4-3-3" && formation !== "4-2-3-1";
 
-  if (isCustomFormation) {
+  if (hasGridLayout) {
+    // Sort directly by API-Football grid: row DESC (Attack -> GK), col DESC (Left flank -> Right flank)
+    starters = [...starterCandidates].sort((a, b) => {
+      const ga = parseGridCoord(a.grid);
+      const gb = parseGridCoord(b.grid);
+      if (ga && gb) {
+        if (ga.row !== gb.row) return gb.row - ga.row;
+        return gb.col - ga.col;
+      }
+      if (ga && !gb) return -1;
+      if (!ga && gb) return 1;
+      return getLineSortRank(a.position) - getLineSortRank(b.position);
+    });
+    starters.forEach((p) => markUsed(p));
+  } else if (isCustomFormation) {
     starters = [...starterCandidates].sort(
       (a, b) => getLineSortRank(a.position) - getLineSortRank(b.position)
     );

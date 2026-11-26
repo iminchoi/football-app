@@ -530,6 +530,7 @@ export function applyLineupEntryMeta(
   if (stripMatchEvents) {
     return {
       ...player,
+      ...(entry.grid ? { grid: entry.grid } : {}),
       isCaptain: entry.isCaptain ?? player.isCaptain,
       subInMinute: undefined,
       subOutMinute: undefined,
@@ -589,6 +590,7 @@ export function applyLineupEntryMeta(
 
   return {
     ...player,
+    ...(entry.grid ? { grid: entry.grid } : {}),
     ...(entry.isCaptain !== undefined ? { isCaptain: entry.isCaptain } : {}),
     ...(isValidEventMinute(entry.subInMinute)
       ? { subInMinute: Math.max(1, Math.min(95, Math.round(entry.subInMinute))) }

@@ -336,29 +336,120 @@ function parsePassAccuracyPercent(val: unknown): number | undefined {
   return undefined;
 }
 
+export function parseApiFootballGrid(
+  rawGrid?: string | null
+): { row: number; col: number; normalized: string } | null {
+  if (typeof rawGrid !== "string") return null;
+  const match = /^\s*(\d+)\s*:\s*(\d+)\s*$/.exec(rawGrid);
+  if (!match) return null;
+  const row = Number(match[1]);
+  const col = Number(match[2]);
+  if (!Number.isInteger(row) || !Number.isInteger(col) || row < 1 || col < 1) {
+    return null;
+  }
+  return { row, col, normalized: `${row}:${col}` };
+}
+
+/**
+ * Derive a detailed position from API-Football `grid` ("row:col").
+ * API-Football convention: row 1 = GK -> maxRow = strikers; col 1 = right flank (RB/RAM/RW) -> col N = left flank (LB/LAM/LW).
+ */
+function derivePositionFromGrid(
+  rawPos: string | undefined,
+  row: number,
+  col: number,
+  rowSize: number,
+  maxGridRow: number
+): Position {
+  const code = String(rawPos || "").trim().toUpperCase();
+  if (row === 1 || code === "G" || code === "GK") return "GK";
+
+  // Row 2: Defensive line (col 1 = RB on pitch right, col rowSize = LB on pitch left)
+  if (row === 2) {
+    if (rowSize >= 4) {
+      if (col === 1) return "RB";
+      if (col === rowSize) return "LB";
+      return "CB";
+    }
+    if (rowSize === 2) {
+      return col === 1 ? "RB" : "LB";
+    }
+    return "CB";
+  }
+
+  // Highest row (row >= 3): Front attacking line
+  if (maxGridRow >= 3 && row >= maxGridRow) {
+    if (rowSize >= 3) {
+      if (col === 1) return "RW";
+      if (col === rowSize) return "LW";
+      return "ST";
+    }
+    return "ST";
+  }
+
+  // 5-row formations (e.g. 4-2-3-1, 4-1-4-1, 3-4-2-1): separate 2nd line (row 4 AM) from 3rd line (row 3 DM/CM)
+  if (maxGridRow >= 5) {
+    if (row === maxGridRow - 1) {
+      if (rowSize === 1) return "CAM";
+      if (rowSize === 2) return col === 1 ? "RAM" : "LAM";
+      if (rowSize === 3) {
+        if (col === 1) return "RAM";
+        if (col === 3) return "LAM";
+        return "CAM";
+      }
+      if (col === 1) return "RAM";
+      if (col === rowSize) return "LAM";
+      return "CM";
+    }
+    if (row === 3) {
+      if (rowSize <= 2) return "DM";
+      if (col === 1 || col === rowSize) return "CM";
+      return "DM";
+    }
+  }
+
+  // 4-row formations (e.g. 4-3-3, 4-4-2, 3-5-2): row 3 is central midfield
+  if (row === 3) {
+    if (rowSize === 1) return "DM";
+    if (rowSize === 2) return "CM";
+    if (rowSize === 3) return col === 2 ? "DM" : "CM";
+    if (col === 1) return "RAM";
+    if (col === rowSize) return "LAM";
+    return "CM";
+  }
+
+  return "CM";
+}
+
 function mapPosCode(
   rawPos: string | undefined,
   counts: { df: number; mf: number; fw: number },
   rawGrid?: string | null,
-  maxGridRow = 4
+  maxGridRow = 4,
+  rowSizes?: ReadonlyMap<number, number>
 ): Position {
-  let code = String(rawPos || "").trim().toUpperCase();
-  if (!code && rawGrid) {
-    const row = Number(String(rawGrid).split(":")[0]);
-    if (row === 1) code = "G";
-    else if (row === 2) code = "D";
-    else if (row >= maxGridRow && maxGridRow >= 3) code = "F";
-    else if (row > 2) code = "M";
+  const parsedGrid = parseApiFootballGrid(rawGrid);
+  if (parsedGrid) {
+    const rowSize = rowSizes?.get(parsedGrid.row) ?? 1;
+    return derivePositionFromGrid(
+      rawPos,
+      parsedGrid.row,
+      parsedGrid.col,
+      rowSize,
+      maxGridRow
+    );
   }
+
+  const code = String(rawPos || "").trim().toUpperCase();
   if (code === "G" || code === "GK") return "GK";
   if (code === "D" || code === "DF") {
-    const cycle: Position[] = ["LB", "CB", "CB", "RB"];
+    const cycle: Position[] = ["RB", "CB", "CB", "LB"];
     const pos = cycle[counts.df % cycle.length];
     counts.df += 1;
     return pos;
   }
   if (code === "F" || code === "FW") {
-    const cycle: Position[] = ["LW", "ST", "RW"];
+    const cycle: Position[] = ["RW", "ST", "LW"];
     const pos = cycle[counts.fw % cycle.length];
     counts.fw += 1;
     return pos;
@@ -377,17 +468,23 @@ export function normalizeApiFootballLineupList(
 ): ApiLineupPlayer[] | undefined {
   if (!Array.isArray(rawList) || rawList.length === 0) return undefined;
   const counts = { df: 0, mf: 0, fw: 0 };
-  const maxGridRow = rawList.reduce((max, item) => {
-    const row = Number(String(item.player?.grid || "").split(":")[0]);
-    return Number.isFinite(row) && row > max ? row : max;
-  }, 4);
+  const rowSizes = new Map<number, number>();
+  let maxGridRow = 0;
+  for (const item of rawList) {
+    const parsed = parseApiFootballGrid(item.player?.grid);
+    if (!parsed) continue;
+    rowSizes.set(parsed.row, (rowSizes.get(parsed.row) ?? 0) + 1);
+    if (parsed.row > maxGridRow) maxGridRow = parsed.row;
+  }
+  if (maxGridRow === 0) maxGridRow = 4;
 
   return rawList.map((item, idx) => {
     const p = item.player;
     const rawName = String(p?.name || `선수 ${idx + 1}`).trim();
     const numericId = typeof p?.id === "number" ? p.id : undefined;
     const externalId = numericId !== undefined ? String(numericId) : `${teamName}-${idx}`;
-    const position = mapPosCode(p?.pos, counts, p?.grid, maxGridRow);
+    const parsedGrid = parseApiFootballGrid(p?.grid);
+    const position = mapPosCode(p?.pos, counts, p?.grid, maxGridRow, rowSizes);
     const statMeta = numericId !== undefined ? playerStatsById?.get(numericId) : undefined;
 
     return {
@@ -395,6 +492,7 @@ export function normalizeApiFootballLineupList(
       externalId,
       name: rawName,
       position,
+      ...(parsedGrid ? { grid: parsedGrid.normalized } : {}),
       ...(typeof p?.number === "number" ? { shirtNumber: p.number } : {}),
       ...(statMeta?.rating !== undefined ? { rating: statMeta.rating } : {}),
       ...(statMeta?.isCaptain ? { isCaptain: true } : {}),

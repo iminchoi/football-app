@@ -214,6 +214,7 @@ interface FootballDataLineupPlayerRaw {
   externalId?: string;
   name?: string;
   position?: string;
+  grid?: string;
   shirtNumber?: number;
   team?: string;
   currentTeam?: { name?: string };
@@ -493,6 +494,9 @@ function normalizeLineupPlayers(
       externalId,
       name: rawName,
       position,
+      ...(typeof raw.grid === "string" && raw.grid.trim()
+        ? { grid: raw.grid.trim() }
+        : {}),
       shirtNumber:
         typeof raw.shirtNumber === "number" ? raw.shirtNumber : undefined,
       team: clubOrTeamName,
