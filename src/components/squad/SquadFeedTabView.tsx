@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Users,
   Plus,
@@ -161,15 +161,23 @@ export default function SquadFeedTabView({
   const playerPrices = useTradeStore((s) => s.playerPrices);
   const squadFeeds = useTradeStore((s) => s.squadFeeds);
   const setActiveTab = useTradeStore((s) => s.setActiveTab);
-  const publishSquadFeed = useTradeStore((s) => s.publishSquadFeed);
-  const deleteSquadFeed = useTradeStore((s) => s.deleteSquadFeed);
-  const addSquadComment = useTradeStore((s) => s.addSquadComment);
-  const deleteSquadComment = useTradeStore((s) => s.deleteSquadComment);
+  const hydrateSquadFeedsFromServer = useTradeStore(
+    (s) => s.hydrateSquadFeedsFromServer
+  );
+  const submitSquadFeedPost = useTradeStore((s) => s.submitSquadFeedPost);
+  const removeSquadFeedPost = useTradeStore((s) => s.removeSquadFeedPost);
+  const submitSquadComment = useTradeStore((s) => s.submitSquadComment);
+  const removeSquadComment = useTradeStore((s) => s.removeSquadComment);
 
   const [subView, setSubView] = useState<SquadSubView>(() =>
     squadFeeds.length > 0 ? "FEED" : "MAKER"
   );
   const [feedFilter, setFeedFilter] = useState<FeedFilterMode>("ALL");
+  const [isPublishing, setIsPublishing] = useState<boolean>(false);
+
+  useEffect(() => {
+    void hydrateSquadFeedsFromServer();
+  }, [hydrateSquadFeedsFromServer, subView]);
 
   // FC Online style interactive pitch maker state
   const [draftTitle, setDraftTitle] = useState<string>("");
@@ -389,37 +397,46 @@ export default function SquadFeedTabView({
     setMakerFeedback(null);
   };
 
-  const handlePublish = (e: React.FormEvent) => {
+  const handlePublish = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPublishing) return;
     if (!user) {
       onOpenAuthModal();
       return;
     }
 
-    const res = publishSquadFeed({
-      title: draftTitle,
-      description: draftDescription,
-      formation: draftFormation,
-      slotAssignments: activeSlotAssignments,
-      playerIds: assignedPlayerIds,
-    });
+    setIsPublishing(true);
+    try {
+      const res = await submitSquadFeedPost({
+        title: draftTitle,
+        description: draftDescription,
+        formation: draftFormation,
+        slotAssignments: activeSlotAssignments,
+        playerIds: assignedPlayerIds,
+      });
 
-    if (!res.success) {
-      setMakerFeedback({ type: "error", text: res.message });
-      return;
+      if (!res.success) {
+        setMakerFeedback({ type: "error", text: res.message });
+        return;
+      }
+
+      setDraftTitle("");
+      setDraftDescription("");
+      setSlotAssignments({});
+      setActiveSlotIndex(null);
+      setMakerFeedback({ type: "success", text: res.message });
+      setSubView("FEED");
+      setFeedFilter("ALL");
+    } finally {
+      setIsPublishing(false);
     }
-
-    setDraftTitle("");
-    setDraftDescription("");
-    setSlotAssignments({});
-    setActiveSlotIndex(null);
-    setMakerFeedback({ type: "success", text: res.message });
-    setSubView("FEED");
-    setFeedFilter("ALL");
   };
 
-  const handleDeleteFeed = (feedId: string) => {
-    deleteSquadFeed(feedId);
+  const handleDeleteFeed = async (feedId: string) => {
+    const res = await removeSquadFeedPost(feedId);
+    if (!res.success) {
+      setCommentErrorByFeed((prev) => ({ ...prev, [feedId]: res.message }));
+    }
   };
 
   const handleToggleRoster = (feedId: string) => {
@@ -430,14 +447,14 @@ export default function SquadFeedTabView({
     );
   };
 
-  const handleSubmitComment = (e: React.FormEvent, feedId: string) => {
+  const handleSubmitComment = async (e: React.FormEvent, feedId: string) => {
     e.preventDefault();
     if (!user) {
       onOpenAuthModal();
       return;
     }
     const text = commentInputs[feedId] ?? "";
-    const res = addSquadComment(feedId, text);
+    const res = await submitSquadComment(feedId, text);
     if (!res.success) {
       setCommentErrorByFeed((prev) => ({ ...prev, [feedId]: res.message }));
       return;
@@ -447,18 +464,21 @@ export default function SquadFeedTabView({
   };
 
   const renderFeedCard = (feed: SquadFeedPost) => {
-    const authorHoldings = resolveSquadAuthorHoldings({
-      authorId: feed.authorId,
-      activeUser: user,
-      activeHoldings: holdings,
-      accounts,
-    });
+    const isAuthorViewing =
+      Boolean(user) &&
+      normalizeAccountKey(user!.id) === normalizeAccountKey(feed.authorId);
+    const authorHoldings = isAuthorViewing
+      ? holdings
+      : feed.authorHoldings ??
+        resolveSquadAuthorHoldings({
+          authorId: feed.authorId,
+          activeUser: user,
+          activeHoldings: holdings,
+          accounts,
+        });
     const saleSummary = resolveSquadFeedSaleSummary(feed, authorHoldings);
 
-    const canDeletePost =
-      Boolean(user) &&
-      (normalizeAccountKey(user!.id) === normalizeAccountKey(feed.authorId) ||
-        user!.role === "admin");
+    const canDeletePost = isAuthorViewing;
 
     const placedSnapshots = placeSnapshotsOnFormation(
       feed.players,
@@ -725,8 +745,7 @@ export default function SquadFeedTabView({
                   (normalizeAccountKey(user!.id) ===
                     normalizeAccountKey(comment.authorId) ||
                     normalizeAccountKey(user!.id) ===
-                      normalizeAccountKey(feed.authorId) ||
-                    user!.role === "admin");
+                      normalizeAccountKey(feed.authorId));
 
                 return (
                   <div
@@ -749,7 +768,7 @@ export default function SquadFeedTabView({
                     {canDeleteComment && (
                       <button
                         type="button"
-                        onClick={() => deleteSquadComment(feed.id, comment.id)}
+                        onClick={() => void removeSquadComment(feed.id, comment.id)}
                         title="코멘트 삭제"
                         className="shrink-0 rounded-md p-1 text-gray-400 transition hover:bg-rose-50 hover:text-[#E11D48]"
                       >

@@ -84,6 +84,7 @@ import {
   deleteSquadFeedComment,
   deleteSquadFeedPost,
   sanitizePersistedSquadFeeds,
+  validateSquadDraft,
   type SquadValidationErrorCode,
 } from "@/lib/squadFeed";
 
@@ -227,6 +228,98 @@ export interface SquadActionResult {
   comment?: SquadFeedComment;
 }
 
+interface ServerSquadSlotPayload {
+  slotIndex: number;
+  slotLabel: string;
+  playerId: string;
+  playerName: string;
+  englishName?: string;
+  teamName: string;
+  teamShort: string;
+  teamColor: string;
+  position: Position;
+  backNumber: number;
+  snapshotQuantity: number;
+  snapshotPrice: number;
+  avgBuyPrice: number;
+  currentQuantity: number;
+  saleStatus: "HOLDING" | "PARTIAL_SOLD" | "FULL_SOLD";
+}
+
+interface ServerSquadPostPayload {
+  id: string;
+  authorId: string;
+  authorName: string;
+  title: string;
+  description: string;
+  formation: string;
+  createdAt: string;
+  slots: ServerSquadSlotPayload[];
+  comments: SquadFeedComment[];
+  authorHoldings?: Record<string, Holding>;
+}
+
+interface ServerSquadListResponse {
+  success: boolean;
+  source?: "file" | "postgres";
+  posts?: ServerSquadPostPayload[];
+  message?: string;
+}
+
+interface ServerSquadCreateResponse {
+  success: boolean;
+  source?: "file" | "postgres";
+  code?: SquadValidationErrorCode;
+  message?: string;
+  post?: ServerSquadPostPayload;
+}
+
+interface ServerSquadDeleteResponse {
+  success: boolean;
+  source?: "file" | "postgres";
+  message?: string;
+}
+
+interface ServerSquadCommentResponse {
+  success: boolean;
+  source?: "file" | "postgres";
+  message?: string;
+  comment?: SquadFeedComment;
+}
+
+function mapServerSquadPostToClient(
+  post: ServerSquadPostPayload
+): SquadFeedPost {
+  return {
+    id: post.id,
+    authorId: post.authorId,
+    authorName: post.authorName,
+    title: post.title,
+    description: post.description,
+    formation: post.formation,
+    createdAt: post.createdAt,
+    players: post.slots.map((s) => ({
+      playerId: s.playerId,
+      name: s.playerName,
+      ...(s.englishName ? { englishName: s.englishName } : {}),
+      teamName: s.teamName,
+      teamShort: s.teamShort,
+      teamColor: s.teamColor,
+      position: s.position,
+      backNumber: s.backNumber,
+      publishedQuantity: s.snapshotQuantity,
+      publishedPrice: s.snapshotPrice,
+      avgBuyPrice: s.avgBuyPrice,
+      slotIndex: s.slotIndex,
+      slotLabel: s.slotLabel,
+      currentQuantity: s.currentQuantity,
+      saleStatus: s.saleStatus,
+    })),
+    comments: Array.isArray(post.comments) ? post.comments : [],
+    ...(post.authorHoldings ? { authorHoldings: post.authorHoldings } : {}),
+  };
+}
+
 interface TradeStoreState {
   user: UserSession | null;
   accounts: Record<string, StoredUserAccount>;
@@ -295,6 +388,23 @@ interface TradeStoreState {
   deleteSquadFeed: (feedId: string) => SquadActionResult;
   addSquadComment: (feedId: string, content: string) => SquadActionResult;
   deleteSquadComment: (feedId: string, commentId: string) => SquadActionResult;
+  hydrateSquadFeedsFromServer: () => Promise<void>;
+  submitSquadFeedPost: (input: {
+    title: string;
+    description?: string;
+    formation?: string;
+    playerIds?: string[];
+    slotAssignments?: Record<number, string>;
+  }) => Promise<SquadActionResult>;
+  removeSquadFeedPost: (feedId: string) => Promise<SquadActionResult>;
+  submitSquadComment: (
+    feedId: string,
+    content: string
+  ) => Promise<SquadActionResult>;
+  removeSquadComment: (
+    feedId: string,
+    commentId: string
+  ) => Promise<SquadActionResult>;
 
   resetAll: () => void;
 }
@@ -3082,6 +3192,8 @@ export const useTradeStore = create<TradeStoreState>()(
             transactions: nextTransactions,
           });
 
+          void get().hydrateSquadFeedsFromServer();
+
           return {
             success: true,
             executedPrice: data.executedPrice,
@@ -3587,6 +3699,251 @@ export const useTradeStore = create<TradeStoreState>()(
         }
         set({ squadFeeds: res.feeds });
         return { success: true, message: res.message };
+      },
+
+      hydrateSquadFeedsFromServer: async () => {
+        if (typeof window === "undefined" || typeof fetch !== "function") return;
+        try {
+          const res = await fetch("/api/squad-feed", {
+            method: "GET",
+            cache: "no-store",
+          });
+          if (!res.ok) return;
+          const data = (await res.json()) as ServerSquadListResponse;
+          if (!data.success || !Array.isArray(data.posts)) return;
+
+          const mapped = data.posts.map(mapServerSquadPostToClient);
+          const currentLocal = get().squadFeeds;
+
+          // Always trust PostgreSQL; for local file fallback, avoid clearing pre-existing local posts when file is empty
+          if (
+            data.source !== "postgres" &&
+            mapped.length === 0 &&
+            currentLocal.length > 0
+          ) {
+            return;
+          }
+
+          set({ squadFeeds: mapped });
+        } catch {
+          // Non-fatal when offline
+        }
+      },
+
+      submitSquadFeedPost: async (input) => {
+        const state = get();
+        if (!state.user) {
+          return {
+            success: false,
+            code: "AUTH_REQUIRED",
+            message: "로그인이 필요한 서비스입니다.",
+          };
+        }
+
+        const draft = validateSquadDraft({
+          title: input.title,
+          description: input.description,
+          formation: input.formation,
+          selectedPlayerIds: input.playerIds,
+          slotAssignments: input.slotAssignments,
+          holdings: state.holdings,
+          players: state.players,
+          transactions: state.transactions,
+          playerPrices: state.playerPrices,
+        });
+        if (!draft.valid) {
+          return {
+            success: false,
+            code: draft.code,
+            message: draft.message,
+          };
+        }
+
+        if (typeof window === "undefined" || typeof fetch !== "function") {
+          return get().publishSquadFeed(input);
+        }
+
+        try {
+          const res = await fetch("/api/squad-feed", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              authorId: state.user.id,
+              authorName: state.user.name,
+              title: draft.title,
+              description: draft.description,
+              formation: draft.formation,
+              slots: draft.snapshots.map((snap, idx) => ({
+                slotIndex: snap.slotIndex ?? idx,
+                slotLabel: snap.slotLabel,
+                playerId: snap.playerId,
+                playerName: snap.name,
+                englishName: snap.englishName,
+                teamName: snap.teamName,
+                teamShort: snap.teamShort,
+                teamColor: snap.teamColor,
+                position: snap.position,
+                backNumber: snap.backNumber,
+                currentPrice: snap.publishedPrice,
+              })),
+            }),
+          });
+
+          const data = (await res.json()) as ServerSquadCreateResponse;
+          if (!res.ok || !data.success || !data.post) {
+            return {
+              success: false,
+              code: data.code,
+              message: data.message ?? "스쿼드 피드 발행에 실패했습니다.",
+            };
+          }
+
+          const mappedPost = mapServerSquadPostToClient(data.post);
+          const latest = get();
+          set({
+            squadFeeds: [
+              mappedPost,
+              ...latest.squadFeeds.filter((f) => f.id !== mappedPost.id),
+            ],
+            accounts: syncActiveUserToAccounts(latest),
+          });
+          return {
+            success: true,
+            message: data.message ?? "11명 스쿼드 피드가 발행되었습니다.",
+            feed: mappedPost,
+          };
+        } catch {
+          return get().publishSquadFeed(input);
+        }
+      },
+
+      removeSquadFeedPost: async (feedId) => {
+        const state = get();
+        if (!state.user) {
+          return { success: false, message: "로그인이 필요한 서비스입니다." };
+        }
+        if (typeof window === "undefined" || typeof fetch !== "function") {
+          return get().deleteSquadFeed(feedId);
+        }
+
+        try {
+          const qs = new URLSearchParams({ userId: state.user.id });
+          const res = await fetch(
+            `/api/squad-feed/${encodeURIComponent(feedId)}?${qs.toString()}`,
+            { method: "DELETE" }
+          );
+          const data = (await res.json()) as ServerSquadDeleteResponse;
+          if (!res.ok || !data.success) {
+            return {
+              success: false,
+              message: data.message ?? "스쿼드 피드 삭제에 실패했습니다.",
+            };
+          }
+          set({
+            squadFeeds: get().squadFeeds.filter((f) => f.id !== feedId),
+          });
+          return {
+            success: true,
+            message: data.message ?? "스쿼드 피드가 삭제되었습니다.",
+          };
+        } catch {
+          return get().deleteSquadFeed(feedId);
+        }
+      },
+
+      submitSquadComment: async (feedId, content) => {
+        const state = get();
+        if (!state.user) {
+          return {
+            success: false,
+            message: "로그인 후 코멘트를 작성할 수 있습니다.",
+          };
+        }
+        const trimmed = content.trim();
+        if (!trimmed) {
+          return { success: false, message: "코멘트 내용을 입력해주세요." };
+        }
+        if (typeof window === "undefined" || typeof fetch !== "function") {
+          return get().addSquadComment(feedId, content);
+        }
+
+        try {
+          const res = await fetch(
+            `/api/squad-feed/${encodeURIComponent(feedId)}/comments`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                authorId: state.user.id,
+                authorName: state.user.name,
+                content: trimmed,
+              }),
+            }
+          );
+          const data = (await res.json()) as ServerSquadCommentResponse;
+          if (!res.ok || !data.success || !data.comment) {
+            return {
+              success: false,
+              message: data.message ?? "코멘트 등록에 실패했습니다.",
+            };
+          }
+          const createdComment = data.comment;
+          set({
+            squadFeeds: get().squadFeeds.map((f) =>
+              f.id === feedId
+                ? { ...f, comments: [...f.comments, createdComment] }
+                : f
+            ),
+          });
+          return {
+            success: true,
+            message: data.message ?? "코멘트가 등록되었습니다.",
+            comment: createdComment,
+          };
+        } catch {
+          return get().addSquadComment(feedId, content);
+        }
+      },
+
+      removeSquadComment: async (feedId, commentId) => {
+        const state = get();
+        if (!state.user) {
+          return { success: false, message: "로그인이 필요한 서비스입니다." };
+        }
+        if (typeof window === "undefined" || typeof fetch !== "function") {
+          return get().deleteSquadComment(feedId, commentId);
+        }
+
+        try {
+          const qs = new URLSearchParams({ userId: state.user.id });
+          const res = await fetch(
+            `/api/squad-feed/${encodeURIComponent(feedId)}/comments/${encodeURIComponent(commentId)}?${qs.toString()}`,
+            { method: "DELETE" }
+          );
+          const data = (await res.json()) as ServerSquadDeleteResponse;
+          if (!res.ok || !data.success) {
+            return {
+              success: false,
+              message: data.message ?? "코멘트 삭제에 실패했습니다.",
+            };
+          }
+          set({
+            squadFeeds: get().squadFeeds.map((f) =>
+              f.id === feedId
+                ? {
+                    ...f,
+                    comments: f.comments.filter((c) => c.id !== commentId),
+                  }
+                : f
+            ),
+          });
+          return {
+            success: true,
+            message: data.message ?? "코멘트가 삭제되었습니다.",
+          };
+        } catch {
+          return get().deleteSquadComment(feedId, commentId);
+        }
       },
 
       resetAll: () => {

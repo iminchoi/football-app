@@ -413,6 +413,8 @@ export interface SquadFeedPlayerSnapshot {
   avgBuyPrice: number;
   slotIndex?: number;
   slotLabel?: string;
+  currentQuantity?: number;
+  saleStatus?: "HOLDING" | "PARTIAL_SOLD" | "FULL_SOLD";
 }
 
 export interface SquadFeedComment {
@@ -434,6 +436,8 @@ export interface SquadFeedPost {
   players: SquadFeedPlayerSnapshot[];
   createdAt: string;
   comments: SquadFeedComment[];
+  /** Server-resolved live holdings of the author for cross-user sell badge accuracy. */
+  authorHoldings?: Record<string, Holding>;
 }
 
 export interface ActiveMatchContext {

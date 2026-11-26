@@ -23,6 +23,9 @@ export default function HomePage() {
   const hydratePortfolioFromServer = useTradeStore(
     (state) => state.hydratePortfolioFromServer
   );
+  const hydrateSquadFeedsFromServer = useTradeStore(
+    (state) => state.hydrateSquadFeedsFromServer
+  );
 
   const [mounted, setMounted] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
@@ -36,7 +39,8 @@ export default function HomePage() {
   useEffect(() => {
     setMounted(true);
     void fetchTodayMatches();
-  }, [fetchTodayMatches]);
+    void hydrateSquadFeedsFromServer();
+  }, [fetchTodayMatches, hydrateSquadFeedsFromServer]);
 
   useEffect(() => {
     if (!mounted || !user?.id) return;

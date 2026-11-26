@@ -1,16 +1,15 @@
 ## Current State
-- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); Phase 1 (Drizzle + API-Football DB cache) and Phase 2 (transactional `users`/`holdings`/`ledger_entries` ledger repository + `/api/portfolio` & `/api/orders` routes) are implemented with safe local file fallback when `DATABASE_URL` is unset.
-- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (95/95 across all 15 suites, 100% offline/mocked).
+- PitchTrade engine v2.5 frozen (`v2.5-engine-freeze`); all 3 Supabase PostgreSQL + Drizzle ORM DB phases are implemented (`fixtures_cache` 3-tier cache, transactional `users`/`holdings`/`ledger_entries` ledger + order API, and `squad_posts`/`squad_slots`/`squad_comments` feed/comment API with dynamic sell badges) with safe local file/memory fallbacks when `DATABASE_URL` is unset.
+- `npx tsc --noEmit --incremental false` passes (0 errors); `node --experimental-strip-types --test` passes (100/100 across all 16 suites, 100% offline/mocked).
 
 ## Recent Changes
-- `src/lib/repositories/ledgerRepository.ts`: Implemented `LedgerRepository` (`PostgresLedgerRepository` with Drizzle `db.transaction` + `FOR UPDATE` row locking & conditional updates, and `FileLedgerRepository` with per-user async mutex & rollback preserving `.cache/ledger.json` isolation).
-- `src/app/api/portfolio/route.ts`, `src/app/api/orders/route.ts`: Added portfolio hydration/init (`INITIAL_SEED_CASH = 100,000 P`) and server-verified transactional BUY/SELL order execution routes wired to `getDefaultLedgerRepository()`.
-- `src/store/useTradeStore.ts`, `src/app/page.tsx`, `src/components/RightTradeDockPanel.tsx`, `src/components/TradeBottomSheet.tsx`: Added `hydratePortfolioFromServer` & `submitOrder` with double-click lock while keeping existing `buyPlayer`/`sellPlayer` actions compatible.
-- `tests/ledgerRepository.test.ts`: Verified BUY/weighted avg price, partial/full SELL & oversell rejection, `orderGate`/balance rollback, concurrent burst serialization, `DATABASE_URL` unset file fallback, and `PostgresLedgerRepository` `db.transaction`/`FOR UPDATE` rollback contract.
+- `src/lib/repositories/squadFeedRepository.ts`, `src/types/index.ts`: Implemented `SquadFeedRepository` (`PostgresSquadFeedRepository` + `FileSquadFeedRepository` fallback at `.cache/squad-feed.json`), transactional 11-owned-player + mandatory-GK publish validation, `snapshot_quantity` capture, author-only delete, comment CRUD, and dynamic `HOLDING`/`PARTIAL_SOLD`/`FULL_SOLD` badge evaluation from live holdings.
+- `src/app/api/squad-feed/route.ts`, `[postId]/route.ts`, `[postId]/comments/route.ts`, `[postId]/comments/[commentId]/route.ts`: Added immutable (no PUT/PATCH) squad feed & comment REST endpoints wired to `getDefaultSquadFeedRepository()`.
+- `src/store/useTradeStore.ts`, `src/app/page.tsx`, `src/components/squad/SquadFeedTabView.tsx`: Added server-synced squad feed actions (`hydrateSquadFeedsFromServer`, `submitSquadFeedPost`, `removeSquadFeedPost`, `submitSquadComment`, `removeSquadComment`) and cross-user server sell-badge display.
+- `tests/squadFeedRepository.test.ts`: Added 5 offline tests covering publish guards (<11/>11/duplicate/unowned/no-GK), dynamic sell badge transitions, multi-squad & author-only delete, comments, `DATABASE_URL` unset fallback, and `PostgresSquadFeedRepository` tx rollback contract.
 
 ## Known Issues & Next Steps
-- Phase 3: Migrate 11-player squad feed and comments to PostgreSQL (`squad_posts`, `squad_slots`, `squad_comments`).
-- Real Supabase verification (`npm run db:push` + live DB transaction test) pending `DATABASE_URL`/`DIRECT_URL` configuration.
+- Live Supabase verification (`npm run db:push` + live DB smoke test across Phases 1-3) pending `DATABASE_URL`/`DIRECT_URL` configuration in `.env.local`.
 
 ## 알려진 한계 (Known Limitations)
 - **선수 개인 엣지 미반영**: 기대치 `E`가 선수 개인이 아닌 포지션(`FW`/`MF`/`DF`/`GK`) 단위로만 산출됨.
